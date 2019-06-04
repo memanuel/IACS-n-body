@@ -4,10 +4,11 @@ Tue Jun  4 15:24:22 2019
 """
 
 import numpy as np
-import matplotlib as plt
+import tensorflow as tf
 import matplotlib.pyplot as plt
-import keras
+from utils import plot_style
 
+# *************************************************************************************************
 def make_ellipse(a, b):
     """
     Create an array of points corresponding to a 2D ellipse x^2/a^2 + y^2 / b^2 = 1
@@ -24,10 +25,30 @@ def make_ellipse(a, b):
     return q
 
 
-def plot_points(q):
-    """Plot the points in q= [x, y]"""
-    fig, ax = plt.subplots()
+# *************************************************************************************************
+def plot_points(q, title):
+    """Plot the points in q=[x, y]"""
+    # Unpack x and y from q
+    x = q[:, 0]
+    y = q[:, 1]
+    
+    # Make plot
+    fig, ax = plt.subplots(figsize=[12,12])
+    ax.set_title(title)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.plot(x, y, color = 'blue')
+    return fig, ax
 
-a = 1.01
-b = 1.0
+
+# *************************************************************************************************
+plot_style()
+# Ellipse shape
+a = 1.050
+b = 1.000
+# Eccentricity
+e = np.sqrt(1.0 - (b/a)**2)
+
 q = make_ellipse(a, b)
+title = f'Ellipse of Eccentricity {e:0.3f}'
+plot_points(q, title)
