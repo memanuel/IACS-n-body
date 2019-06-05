@@ -1,1 +1,1 @@
-# IACS Maseters Thesis
+# IACS Masters Thesis
