@@ -34,5 +34,19 @@ for i in range(25):
     plt.yticks([])
     plt.grid(False)
     plt.imshow(img_trn[i], cmap=plt.cm.binary)
-    plt.xlabel(class_names[label_trn[i]])
+    plt.xlabel(class_names[label_trn[i]], fontsize='10')
 plt.show()
+
+
+model = keras.Sequential([
+        keras.layers.Flatten(input_shape=(28,28)),
+        keras.layers.Dense(128, activation='relu'),
+        keras.layers.Dense(10, activation='softmax')
+        ])
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+model.fit(img_trn, label_trn, epochs=10)
+
+loss_tst, acc_tst = model.evaluate(img_tst, label_tst)
+print(f'Test loss={loss_tst:0.3f}, accuracy={acc_tst:0.3f}')
+
+pred = model.predict(img_tst)
