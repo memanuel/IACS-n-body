@@ -1,3 +1,13 @@
+# MSE
+# Model weights
+*.h5
+
+# Model checkpoints in specific directories
+src/tensorflow-tutorial/checkpoints
+src/tensorflow-tutorial/training_1
+src/tensorflow-tutorial/training_2
+
+# ******************************************************************************************
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
