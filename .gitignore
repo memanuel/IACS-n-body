@@ -1,7 +1,13 @@
+# ******************************************************************************************
 # MSE
+
 # Model weights
 *.h5
 
+# Serialized variables
+*.pickle
+
+# ******************************************************************************************
 # Model checkpoints in specific directories
 src/tensorflow-tutorial/checkpoints
 src/tensorflow-tutorial/training_1
