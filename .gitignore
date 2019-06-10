@@ -7,6 +7,10 @@
 # Serialized variables
 *.pickle
 
+# Data files
+*.csv
+*.tsv
+
 # ******************************************************************************************
 # Model checkpoints in specific directories
 src/tensorflow-tutorial/checkpoints
