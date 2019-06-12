@@ -10,6 +10,8 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pickle
+import tensorflow as tf
+
 from typing import Tuple, Dict, Callable
 
 # Type aliases
@@ -64,3 +66,9 @@ def save_vartbl(vartbl: Dict, fname: str) -> None:
     with open(fname, 'wb') as fh:
         pickle.dump(vartbl, fh)
 
+# *************************************************************************************************
+def gpu_grow_memory():
+	"""Set TensorFlow to grow memory of GPUs rather than grabbing it all at once."""
+	gpus = tf.config.experimental.list_physical_devices('GPU')
+	for gpu in gpus:
+		tf.config.experimental.set_memory_growth(gpu, True)
