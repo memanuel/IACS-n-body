@@ -11,11 +11,21 @@
 *.csv
 *.tsv
 
+# TensorBoard outputs
+*.v2
+
+# Images
+*.png
+*.jpg
+*.bmp
+
 # ******************************************************************************************
 # Model checkpoints in specific directories
 src/tensorflow-tutorial/checkpoints
 src/tensorflow-tutorial/training_1
 src/tensorflow-tutorial/training_2
+src/tensorflow-tutorial/weights
+
 
 # ******************************************************************************************
 # Byte-compiled / optimized / DLL files
