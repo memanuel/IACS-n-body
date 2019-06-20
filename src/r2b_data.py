@@ -1,6 +1,7 @@
 """
 Harvard IACS Masters Thesis
-Two Body Problem (Restricted)
+Restricted Two Body Problem
+Generate and plot training data (trajectories)
 
 Michael S. Emanuel
 Tue Jun  18 15:29 2019
@@ -13,9 +14,6 @@ import matplotlib.pyplot as plt
 
 # Aliases
 keras = tf.keras
-
-# Local imports
-import utils
 
 # ********************************************************************************************************************* 
 def make_traj_r2bc(r, theta0, n_years):
@@ -161,6 +159,97 @@ def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float
     return (inputs, outputs)
 
 # ********************************************************************************************************************* 
+def data_even_batch(inputs, outputs, batch_size=256):
+    """Prune the ragged end of a data set so it has an even number of batches"""
+    # The number of rows
+    size = inputs['t'].shape[0]
+    size = size - size % batch_size
+
+    # The fields shaped as 2D arrays
+    input_fields = ('q0', 'v0')
+    output_fields = ('q', 'v', 'a', 'q0_rec', 'v0_rec')
+    
+    # Prune the time array
+    inputs['t'] = inputs['t'][0:size]
+    
+    # Prune the input 2D arrays
+    for field in input_fields:
+        inputs[field] = inputs[field][0:size, :]
+    
+    # Prune the output 2D arrays
+    for field in output_fields:
+        outputs[field] = outputs[field][0:size, :]
+    
+    return inputs, outputs
+
+# ********************************************************************************************************************* 
+def make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size):
+    """Make datasets for the restricted 2 body problem for train, val and test"""
+    # Set the number of trajectories for train, validation and test
+    n_traj_trn = n_traj
+    n_traj_val = int(n_traj * vt_split)
+    n_traj_tst = n_traj_val
+    
+    # Set the random seeds
+    seed_trn = seed + 0
+    seed_val = seed + 1
+    seed_tst = seed + 2
+
+    # Generate inputs and outputs for orbits with r between 0.5 and 32.0
+    inputs_trn, outputs_trn = make_train_r2bc(n_traj=n_traj_trn, n_years=n_years, 
+                                              r_min=r_min, r_max=r_max, seed=seed_trn)
+    inputs_val, outputs_val = make_train_r2bc(n_traj=n_traj_val, n_years=n_years, 
+                                              r_min=r_min, r_max=r_max, seed=seed_val)
+    inputs_tst, outputs_tst = make_train_r2bc(n_traj=n_traj_tst, n_years=n_years, 
+                                              r_min=r_min, r_max=r_max, seed=seed_tst)
+
+    # Clean up data sets to have an even number of batchs
+    inputs_trn, outputs_trn = data_even_batch(inputs_trn, outputs_trn, batch_size)
+    inputs_val, outputs_val = data_even_batch(inputs_val, outputs_val, batch_size)
+    inputs_tst, outputs_tst = data_even_batch(inputs_tst, outputs_tst, batch_size)
+
+    # Create DataSet objects for train, val and test sets
+    ds_trn = tf.data.Dataset.from_tensor_slices((inputs_trn, outputs_trn))
+    ds_val = tf.data.Dataset.from_tensor_slices((inputs_val, outputs_val))
+    ds_tst = tf.data.Dataset.from_tensor_slices((inputs_tst, outputs_tst))
+    
+    # Set shuffle buffer size
+    buffer_size = batch_size * 256
+
+    # Shuffle and batch data sets
+    ds_trn = ds_trn.shuffle(buffer_size=buffer_size).batch(batch_size)
+    ds_val = ds_val.shuffle(buffer_size=buffer_size).batch(batch_size)
+    ds_tst = ds_tst.shuffle(buffer_size=buffer_size).batch(batch_size)
+    
+    return ds_trn, ds_val, ds_tst
+
+# ********************************************************************************************************************* 
+def make_datasets_earth(n_traj=1000, vt_split=0.20):
+    """Make 3 data sets for earth-like orbits with a=1"""
+    # Set the parameters for earth-like orbits
+    n_years = 2
+    r_min = 1.0
+    r_max = 1.0
+    seed = 42
+    batch_size = 256
+    
+    # Delegate to make_datasets_r2bc
+    return make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size)
+
+# ********************************************************************************************************************* 
+def make_datasets_solar(n_traj=10000, vt_split=0.20):
+    """Make 3 data sets for typical solar system orbits with a in [0.5, 32.0]"""
+    # Set the parameters for earth-like orbits
+    n_years = 2
+    r_min = 0.5
+    r_max = 32.0
+    seed = 42
+    batch_size = 256
+    
+    # Delegate to make_datasets_r2bc
+    return make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size)
+
+# ********************************************************************************************************************* 
 def plot_orbit_q(data):
     """Plot the orbit position in a training sample"""
     # Unpack data
@@ -268,51 +357,3 @@ def plot_orbit_energy(data):
 
     return fig, ax
 
-# ********************************************************************************************************************* 
-def make_datasets_earth():
-    """Make 3 data sets for earth-like orbits with a=1"""
-    # Generate inputs and outputs for the earth's orbit
-    inputs_earth_trn, outputs_earth_trn = make_train_r2bc(n_traj=100, n_years=2, r_min=1.0, r_max=1.0, seed=42)
-    inputs_earth_val, outputs_earth_val = make_train_r2bc(n_traj=20, n_years=2, r_min=1.0, r_max=1.0, seed=43)
-    inputs_earth_tst, outputs_earth_tst = make_train_r2bc(n_traj=20, n_years=2, r_min=1.0, r_max=1.0, seed=44)
-    
-    # Create DataSet objects for toy size problem - earth orbits only (a=1, e=0)
-    ds_earth_trn = tf.data.Dataset.from_tensor_slices((inputs_earth_trn, outputs_earth_trn))
-    ds_earth_val = tf.data.Dataset.from_tensor_slices((inputs_earth_val, outputs_earth_val))
-    ds_earth_tst = tf.data.Dataset.from_tensor_slices((inputs_earth_tst, outputs_earth_tst))
-    
-    # Set buffer and batch sizes
-    buffer_size = 16536
-    batch_size = 256
-    
-    # Shuffle and batch data sets
-    ds_earth_trn = ds_earth_trn.shuffle(buffer_size=buffer_size).batch(batch_size)
-    ds_earth_val = ds_earth_val.shuffle(buffer_size=buffer_size).batch(batch_size)
-    ds_earth_tst = ds_earth_tst.shuffle(buffer_size=buffer_size).batch(batch_size)    
-    
-    # Return the three dataset objects
-    return ds_earth_trn, ds_earth_val, ds_earth_tst
-
-# ********************************************************************************************************************* 
-def make_datasets_solar():
-    """Make 3 data sets for typical solar system orbits with a in [0.5, 32.0]"""
-    # Generate inputs and outputs for orbits with r between 0.5 and 32.0
-    inputs_trn, outputs_trn = make_train_r2bc(n_traj=10000, n_years=2, r_min=0.50, r_max=32.0, seed=42)
-    inputs_val, outputs_val = make_train_r2bc(n_traj=2000, n_years=2, r_min=0.50, r_max=32.0, seed=43)
-    inputs_tst, outputs_tst = make_train_r2bc(n_traj=2000, n_years=2, r_min=0.50, r_max=32.0, seed=44)
-    
-    # Create DataSet objects for train, val and test sets
-    ds_trn = tf.data.Dataset.from_tensor_slices((inputs_trn, outputs_trn))
-    ds_val = tf.data.Dataset.from_tensor_slices((inputs_val, outputs_val))
-    ds_tst = tf.data.Dataset.from_tensor_slices((inputs_tst, outputs_tst))
-    
-    # Set shuffle and batch size
-    buffer_size = 16536
-    batch_size = 256
-    
-    # Shuffle and batch data sets
-    ds_trn = ds_trn.shuffle(buffer_size=buffer_size).batch(batch_size)
-    ds_val = ds_val.shuffle(buffer_size=buffer_size).batch(batch_size)
-    ds_tst = ds_tst.shuffle(buffer_size=buffer_size).batch(batch_size)
-    
-    return ds_trn, ds_val, ds_tst

@@ -7,10 +7,11 @@ Tue Jun  4 15:24:22 2019
 """
 
 import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-import pickle
 import tensorflow as tf
+keras = tf.keras
+import matplotlib as mpl
+import pickle
+import time
 
 from typing import Tuple, Dict, Callable
 
@@ -72,3 +73,15 @@ def gpu_grow_memory():
 	gpus = tf.config.experimental.list_physical_devices('GPU')
 	for gpu in gpus:
 		tf.config.experimental.set_memory_growth(gpu, True)
+        
+# *************************************************************************************************
+# https://stackoverflow.com/questions/43178668/record-the-computation-time-for-each-epoch-in-keras-during-model-fit 
+class TimeHistory(keras.callbacks.Callback):
+    def on_train_begin(self, logs={}):
+        self.times = []
+
+    def on_epoch_begin(self, batch, logs={}):
+        self.epoch_time_start = time.time()
+
+    def on_epoch_end(self, batch, logs={}):
+        self.times.append(time.time() - self.epoch_time_start)
