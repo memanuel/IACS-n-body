@@ -93,7 +93,6 @@ def make_traj_r2bc(r, theta0, n_years):
     # Return the dicts
     return (inputs, outputs)
 
-
 # ********************************************************************************************************************* 
 def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float = 32.0, seed = 42):
     """
@@ -294,12 +293,13 @@ def make_datasets_earth():
     # Return the three dataset objects
     return ds_earth_trn, ds_earth_val, ds_earth_tst
 
+# ********************************************************************************************************************* 
 def make_datasets_solar():
-    """Make 3 data sets for typical solar system orbits with a in [0.25, 32.0]"""
-    # Generate inputs and outputs for orbits with r between 0.25 adn 32.0
-    inputs_trn, outputs_trn = make_train_r2bc(n_traj=10000, n_years=2, r_min=0.25, r_max=32.0, seed=42)
-    inputs_val, outputs_val = make_train_r2bc(n_traj=2000, n_years=2, r_min=0.25, r_max=32.0, seed=43)
-    inputs_tst, outputs_tst = make_train_r2bc(n_traj=2000, n_years=2, r_min=0.25, r_max=32.0, seed=44)
+    """Make 3 data sets for typical solar system orbits with a in [0.5, 32.0]"""
+    # Generate inputs and outputs for orbits with r between 0.5 and 32.0
+    inputs_trn, outputs_trn = make_train_r2bc(n_traj=10000, n_years=2, r_min=0.50, r_max=32.0, seed=42)
+    inputs_val, outputs_val = make_train_r2bc(n_traj=2000, n_years=2, r_min=0.50, r_max=32.0, seed=43)
+    inputs_tst, outputs_tst = make_train_r2bc(n_traj=2000, n_years=2, r_min=0.50, r_max=32.0, seed=44)
     
     # Create DataSet objects for train, val and test sets
     ds_trn = tf.data.Dataset.from_tensor_slices((inputs_trn, outputs_trn))
