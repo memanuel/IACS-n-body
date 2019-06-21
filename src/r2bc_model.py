@@ -15,7 +15,7 @@ import numpy as np
 keras = tf.keras
 
 # ********************************************************************************************************************* 
-def make_model_r2bc_analytic():
+def make_model_r2bc_math():
     """Create an anlytical model for the restricted two body circular problem"""
     # Create input layers
     t = keras.Input(shape=(1,), name='t')
@@ -95,7 +95,7 @@ def make_model_r2bc_analytic():
     # The combined output layers
     outputs = [q, v, a, q0_rec, v0_rec]
     
-    model = keras.Model(inputs=inputs, outputs=outputs, name='r2bc_analytic')
+    model = keras.Model(inputs=inputs, outputs=outputs, name='r2bc_math')
     return model
 
 # ********************************************************************************************************************* 
@@ -115,7 +115,7 @@ def make_model_r2bc():
     phi_1 = keras.layers.Dense(units=16, activation='tanh', name='phi_1')(config0)
     phi_2 = keras.layers.Dense(units=16, activation='tanh', name='phi_2')(phi_1)
     
-    # The radius r; this is the same at time 0 and t because x2 does not depend on t
+    # The radius r; this is the same at time 0 and t because phi_2 does not depend on t
     r = keras.layers.Dense(1, name='r')(phi_2)
   
     # The angular velocity omega

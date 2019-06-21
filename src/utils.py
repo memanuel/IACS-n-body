@@ -77,6 +77,7 @@ def gpu_grow_memory():
 # *************************************************************************************************
 # https://stackoverflow.com/questions/43178668/record-the-computation-time-for-each-epoch-in-keras-during-model-fit 
 class TimeHistory(keras.callbacks.Callback):
+    """Save the wall time after every epoch"""
     def on_train_begin(self, logs={}):
         self.times = []
 
@@ -85,3 +86,19 @@ class TimeHistory(keras.callbacks.Callback):
 
     def on_epoch_end(self, batch, logs={}):
         self.times.append(time.time() - self.epoch_time_start)
+
+# *************************************************************************************************
+class EpochLoss(tf.keras.callbacks.Callback):
+    """Log the loss every N epochs"""
+    def __init__(self, interval=10):
+        super(EpochLoss, self).__init__()
+        self.interval = interval
+
+    def log_to_screen(self, epoch, logs):
+        loss = logs['loss']
+        print(f'Epoch {epoch:04}; loss {loss:5.2e}')            
+        
+    def on_epoch_end(self, epoch, logs=None):
+        epoch = epoch+1
+        if epoch % self.interval == 0:
+            self.log_to_screen(epoch, logs)

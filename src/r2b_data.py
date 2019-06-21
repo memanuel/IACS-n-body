@@ -195,7 +195,7 @@ def make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size
     seed_val = seed + 1
     seed_tst = seed + 2
 
-    # Generate inputs and outputs for orbits with r between 0.5 and 32.0
+    # Generate inputs and outputs for orbits with input parameters
     inputs_trn, outputs_trn = make_train_r2bc(n_traj=n_traj_trn, n_years=n_years, 
                                               r_min=r_min, r_max=r_max, seed=seed_trn)
     inputs_val, outputs_val = make_train_r2bc(n_traj=n_traj_val, n_years=n_years, 
@@ -204,9 +204,9 @@ def make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size
                                               r_min=r_min, r_max=r_max, seed=seed_tst)
 
     # Clean up data sets to have an even number of batchs
-    inputs_trn, outputs_trn = data_even_batch(inputs_trn, outputs_trn, batch_size)
-    inputs_val, outputs_val = data_even_batch(inputs_val, outputs_val, batch_size)
-    inputs_tst, outputs_tst = data_even_batch(inputs_tst, outputs_tst, batch_size)
+    # inputs_trn, outputs_trn = data_even_batch(inputs_trn, outputs_trn, batch_size)
+    # inputs_val, outputs_val = data_even_batch(inputs_val, outputs_val, batch_size)
+    # inputs_tst, outputs_tst = data_even_batch(inputs_tst, outputs_tst, batch_size)
 
     # Create DataSet objects for train, val and test sets
     ds_trn = tf.data.Dataset.from_tensor_slices((inputs_trn, outputs_trn))
@@ -224,27 +224,25 @@ def make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size
     return ds_trn, ds_val, ds_tst
 
 # ********************************************************************************************************************* 
-def make_datasets_earth(n_traj=1000, vt_split=0.20):
+def make_datasets_earth(n_traj=1000, vt_split=0.20, batch_size=64):
     """Make 3 data sets for earth-like orbits with a=1"""
     # Set the parameters for earth-like orbits
     n_years = 2
     r_min = 1.0
     r_max = 1.0
     seed = 42
-    batch_size = 256
     
     # Delegate to make_datasets_r2bc
     return make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size)
 
 # ********************************************************************************************************************* 
-def make_datasets_solar(n_traj=10000, vt_split=0.20):
+def make_datasets_solar(n_traj=10000, vt_split=0.20, batch_size=64):
     """Make 3 data sets for typical solar system orbits with a in [0.5, 32.0]"""
-    # Set the parameters for earth-like orbits
+    # Set the parameters for solar system-like orbits
     n_years = 2
     r_min = 0.5
     r_max = 32.0
     seed = 42
-    batch_size = 256
     
     # Delegate to make_datasets_r2bc
     return make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size)
