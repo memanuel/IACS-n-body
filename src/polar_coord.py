@@ -13,6 +13,9 @@ import numpy as np
 # Aliases
 keras = tf.keras
 
+# Local imports
+from utils import EpochLoss, TimeHistory
+
 # ********************************************************************************************************************* 
 def make_data_sin(n):
     """Make data arrays for mapping between theta and y = sin(theta)"""
@@ -148,14 +151,14 @@ def make_dataset_sin(n, batch_size=None):
     # Create DataSet object for cartesian to cartesian autoencoder
     d2_c2c = tf.data.Dataset.from_tensor_slices((y, y))
 
-    # Set shuffle buffer size
-    # buffer_size = batch_size
+    # Set shuffle buffer size equal to size of data set
+    buffer_size = n+1
 
     # Shuffle and batch data sets
-    ds_p2c = ds_p2c.batch(batch_size)
-    ds_c2p = ds_c2p.batch(batch_size)
-    ds_p2p = ds_p2p.batch(batch_size)
-    ds_c2c = d2_c2c.batch(batch_size)
+    ds_p2c = ds_p2c.shuffle(buffer_size).batch(batch_size)
+    ds_c2p = ds_c2p.shuffle(buffer_size).batch(batch_size)
+    ds_p2p = ds_p2p.shuffle(buffer_size).batch(batch_size)
+    ds_c2c = d2_c2c.shuffle(buffer_size).batch(batch_size)
     
     return ds_p2c, ds_c2p, ds_p2p, ds_c2c
 
@@ -231,7 +234,7 @@ def make_dataset_circle(n, batch_size=None):
     d2_c2c = tf.data.Dataset.from_tensor_slices((cart, cart))
 
     # Set shuffle buffer size
-    # buffer_size = batch_size
+    # buffer_size = n+1
 
     # Shuffle and batch data sets
     ds_p2c = ds_p2c.batch(batch_size)
@@ -271,18 +274,65 @@ def make_model_sin_math():
     return model_p2c, model_c2p, model_p2p, model_c2c
 
 # ********************************************************************************************************************* 
-def make_model_sin(hidden_sizes):
-    """Neural net model of y = sin(theta)"""
+def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
+    # Compile the model
+    model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
+    model_name = model.name
+    filepath=f'../models/polar_{model_name}.h5'
+
+    # Create callbacks
+    interval = epochs // 20
+    cb_log = EpochLoss(interval=interval)
+    cb_time = TimeHistory()
+    cb_ckp = keras.callbacks.ModelCheckpoint(
+            filepath=filepath, 
+            save_freq=save_freq,
+            save_best_only=True,
+            save_weights_only=True,
+            monitor='loss',
+            verbose=0)    
+    cb_early_stop = keras.callbacks.EarlyStopping(
+            monitor='loss',
+            min_delta=1.0E-8,
+            patience=1000,
+            verbose=1,
+            restore_best_weights=True)    
+    callbacks = [cb_log, cb_time, cb_ckp, cb_early_stop]
+    
+    # Fit the model
+    hist = model.fit(ds, epochs=epochs, callbacks=callbacks, verbose=0)
+    # Add the times to the history
+    hist.history['time'] = cb_time.times
+    
+    # Restore the model to the best weights
+    model.load_weights(filepath)
+
+    return hist
+
+# ********************************************************************************************************************* 
+def make_model_odd(func_name, hidden_sizes):
+    """
+    Neural net model of odd functions, e.g. y = sin(theta)
+    Example call: model_sin_16_16 = make_model_odd(sin, [16, 16])
+    """
     # Input layer
     theta = keras.Input(shape=(1,), name='theta')
 
     # Number of hidden layers
     num_layers = len(hidden_sizes)
 
+    # Feature augmentation; odd powers up to 7
+    theta3 = keras.layers.Lambda(lambda x: tf.pow(x, 3), name='theta3')(theta)
+    theta5 = keras.layers.Lambda(lambda x: tf.pow(x, 5), name='theta5')(theta)
+    theta7 = keras.layers.Lambda(lambda x: tf.pow(x, 7), name='theta7')(theta)
+    
+    # Augmented feature layer
+    phi_0 = keras.layers.concatenate(inputs=[theta, theta3, theta5, theta7], name='phi_0')
+    
     # Dense feature layers
 
     # First hidden layer
-    phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(theta)
+    phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
 
     # Second hidden layer if applicable
     phi_2 = None
@@ -300,5 +350,6 @@ def make_model_sin(hidden_sizes):
     y = keras.layers.Dense(units=1, name='y')(phi_n)
 
     # Wrap into a model
-    model = keras.Model(inputs=theta, outputs=y, name='model_sin') 
+    model_name = f'model_{func_name}_' + str(hidden_sizes)
+    model = keras.Model(inputs=theta, outputs=y, name=model_name) 
     return model

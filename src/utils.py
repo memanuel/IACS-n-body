@@ -106,7 +106,7 @@ class EpochLoss(tf.keras.callbacks.Callback):
         
     def on_epoch_end(self, epoch, logs=None):
         epoch = epoch+1
-        if epoch % self.interval == 0:
+        if (epoch % self.interval == 0) or (epoch == 1):
             self.log_to_screen(epoch, logs)
             
 # ********************************************************************************************************************* 
