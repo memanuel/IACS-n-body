@@ -310,46 +310,80 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
     return hist
 
 # ********************************************************************************************************************* 
-def make_model_odd(func_name, hidden_sizes):
+def make_model_odd(func_name, input_name, output_name, hidden_sizes):
     """
     Neural net model of odd functions, e.g. y = sin(theta)
-    Example call: model_sin_16_16 = make_model_odd(sin, [16, 16])
+    Example call: model_sin_16_16 = make_model_odd('sin', [16, 16])
     """
     # Input layer
-    theta = keras.Input(shape=(1,), name='theta')
+    x = keras.Input(shape=(1,), name=input_name)
 
     # Number of hidden layers
     num_layers = len(hidden_sizes)
 
     # Feature augmentation; odd powers up to 7
-    theta3 = keras.layers.Lambda(lambda x: tf.pow(x, 3), name='theta3')(theta)
-    theta5 = keras.layers.Lambda(lambda x: tf.pow(x, 5), name='theta5')(theta)
-    theta7 = keras.layers.Lambda(lambda x: tf.pow(x, 7), name='theta7')(theta)
+    x3 = keras.layers.Lambda(lambda x: tf.pow(x, 3), name='x3')(x)
+    x5 = keras.layers.Lambda(lambda x: tf.pow(x, 5), name='x5')(x)
+    x7 = keras.layers.Lambda(lambda x: tf.pow(x, 7), name='x7')(x)
     
     # Augmented feature layer
-    phi_0 = keras.layers.concatenate(inputs=[theta, theta3, theta5, theta7], name='phi_0')
+    phi_0 = keras.layers.concatenate(inputs=[x, x3, x5, x7], name='phi_0')
     
     # Dense feature layers
 
     # First hidden layer
     phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
+    phi_n = phi_1
 
     # Second hidden layer if applicable
-    phi_2 = None
     if num_layers > 1:
         phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
-
-    # Lookup table for last feature layer
-    phi_tbl = {1: phi_1,
-               2: phi_2}
-
-    # The last feature layer
-    phi_n = phi_tbl[num_layers]
+        phi_n = phi_2
 
     # Output layer
-    y = keras.layers.Dense(units=1, name='y')(phi_n)
+    y = keras.layers.Dense(units=1, name=output_name)(phi_n)
 
     # Wrap into a model
     model_name = f'model_{func_name}_' + str(hidden_sizes)
-    model = keras.Model(inputs=theta, outputs=y, name=model_name) 
+    model = keras.Model(inputs=x, outputs=y, name=model_name) 
+    return model
+
+# ********************************************************************************************************************* 
+def make_model_even(func_name, input_name, output_name, hidden_sizes):
+    """
+    Neural net model of even functions, e.g. y = cos(theta)
+    Example call: model_cos_16_16 = make_model_even('cos', [16, 16])
+    """
+    # Input layer
+    x = keras.Input(shape=(1,), name=input_name)
+
+    # Number of hidden layers
+    num_layers = len(hidden_sizes)
+
+    # Feature augmentation; even powers up to 8
+    x2 = keras.layers.Lambda(lambda x: tf.pow(x, 2), name='x2')(x)
+    x4 = keras.layers.Lambda(lambda x: tf.pow(x, 4), name='x4')(x)
+    x6 = keras.layers.Lambda(lambda x: tf.pow(x, 6), name='x6')(x)
+    x8 = keras.layers.Lambda(lambda x: tf.pow(x, 8), name='x8')(x)
+    
+    # Augmented feature layer
+    phi_0 = keras.layers.concatenate(inputs=[x2, x4, x6, x8], name='phi_0')
+
+    # Dense feature layers
+
+    # First hidden layer
+    phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
+    phi_n = phi_1
+
+    # Second hidden layer if applicable
+    if num_layers > 1:
+        phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
+        phi_n = phi_2
+
+    # Output layer
+    y = keras.layers.Dense(units=1, name=output_name)(phi_n)
+
+    # Wrap into a model
+    model_name = f'model_{func_name}_' + str(hidden_sizes)
+    model = keras.Model(inputs=x, outputs=y, name=model_name) 
     return model

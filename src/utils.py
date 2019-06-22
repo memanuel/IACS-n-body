@@ -113,8 +113,8 @@ class EpochLoss(tf.keras.callbacks.Callback):
 def plot_loss_hist(hist,  model_name):
     """Plot loss vs. wall time"""
     # Extract loss and wall time arrays
-    loss = hist.history['loss']
-    time = hist.history['time']
+    loss = hist['loss']
+    time = hist['time']
     
     # Plot loss vs. wall time
     fig, ax = plt.subplots(figsize=[16,9])
