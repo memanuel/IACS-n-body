@@ -10,8 +10,10 @@ import numpy as np
 import tensorflow as tf
 keras = tf.keras
 import matplotlib as mpl
+plt = mpl.pyplot
 import pickle
 import time
+import datetime
 
 from typing import Tuple, Dict, Callable
 
@@ -80,12 +82,13 @@ class TimeHistory(keras.callbacks.Callback):
     """Save the wall time after every epoch"""
     def on_train_begin(self, logs={}):
         self.times = []
+        self.train_time_start = time.time()
 
-    def on_epoch_begin(self, batch, logs={}):
-        self.epoch_time_start = time.time()
+    # def on_epoch_begin(self, batch, logs={}):
+    #    self.epoch_time_start = time.time()
 
     def on_epoch_end(self, batch, logs={}):
-        self.times.append(time.time() - self.epoch_time_start)
+        self.times.append(time.time() - self.train_time_start)
 
 # *************************************************************************************************
 class EpochLoss(tf.keras.callbacks.Callback):
@@ -93,12 +96,33 @@ class EpochLoss(tf.keras.callbacks.Callback):
     def __init__(self, interval=10):
         super(EpochLoss, self).__init__()
         self.interval = interval
+        self.train_time_start = time.time()
 
     def log_to_screen(self, epoch, logs):
         loss = logs['loss']
-        print(f'Epoch {epoch:04}; loss {loss:5.2e}')            
+        elapsed = time.time() - self.train_time_start
+        elapsed_str = str(datetime.timedelta(seconds=np.round(elapsed)))
+        print(f'Epoch {epoch:04}; loss {loss:5.2e}; elapsed {elapsed_str}') 
         
     def on_epoch_end(self, epoch, logs=None):
         epoch = epoch+1
         if epoch % self.interval == 0:
             self.log_to_screen(epoch, logs)
+            
+# ********************************************************************************************************************* 
+def plot_loss_hist(hist,  model_name):
+    """Plot loss vs. wall time"""
+    # Extract loss and wall time arrays
+    loss = hist.history['loss']
+    time = hist.history['time']
+    
+    # Plot loss vs. wall time
+    fig, ax = plt.subplots(figsize=[16,9])
+    ax.set_title(f'Loss vs. Wall Time for {model_name}')
+    ax.set_xlabel('Wall Time (Seconds)')
+    ax.set_ylabel('Loss')
+    ax.plot(time, loss, color='blue')
+    ax.set_yscale('log')    
+    ax.grid()
+
+    return fig, ax
