@@ -35,7 +35,7 @@ def make_data_sin(n):
 def make_data_cos(n):
     """Make data arrays for mapping between theta and x = cos(theta)"""
     # Array of angles theta
-    theta = np.linspace(0.0, np.pi0, n+1)
+    theta = np.linspace(0.0, np.pi, n+1)
     
     # The cos of these angles
     x = np.cos(theta)
@@ -246,7 +246,7 @@ def make_dataset_circle(n, batch_size=None):
 
 # ********************************************************************************************************************* 
 def make_model_sin_math():
-    """Mathematical models transforming between y and sin(theta)"""
+    """Mathematical model transforming between y and sin(theta)"""
     # Input layers
     theta = keras.Input(shape=(1,), name='theta')
     y = keras.Input(shape=(1,), name='y')
@@ -274,11 +274,77 @@ def make_model_sin_math():
     return model_p2c, model_c2p, model_p2p, model_c2c
 
 # ********************************************************************************************************************* 
+def make_model_cos_math():
+    """Mathematical model transforming between x and cos(theta)"""
+    # Input layers
+    theta = keras.Input(shape=(1,), name='theta')
+    x = keras.Input(shape=(1,), name='x')
+    
+    # Layers to compute cos and arccos
+    cos = keras.layers.Activation(tf.math.cos, name='cos_theta')
+    arccos = keras.layers.Activation(tf.math.acos, name='arccos_x')
+    
+    # Compute sin(theta) and arcsin(y)
+    cos_theta = cos(theta)
+    arccos_x = arccos(x)
+    
+    # Compute the recovered values of y and theta for auto-encoder
+    theta_rec = arccos(cos_theta)
+    x_rec = cos(arccos_x)
+    
+    # Models for p2c and c2p
+    model_p2c = keras.Model(inputs=theta, outputs=cos_theta)
+    model_c2p = keras.Model(inputs=x, outputs=arccos_x)
+    
+    # Models for autoencoders p2p and c2c
+    model_p2p = keras.Model(inputs=theta, outputs=theta_rec)
+    model_c2c = keras.Model(inputs=x, outputs=x_rec)
+    
+    return model_p2c, model_c2p, model_p2p, model_c2c
+
+# ********************************************************************************************************************* 
+def make_model_circle_math():
+    """Mathematical model transforming between theta and (x, y) on unit circle"""
+    # Input layers
+    theta_in = keras.Input(shape=(1,), name='theta')
+    x_in = keras.Input(shape=(1,), name='x')
+    y_in = keras.Input(shape=(1,), name='y')
+
+    # Layers to compute sin and cos
+    cos = keras.layers.Activation(tf.math.cos, name='cos_theta')
+    sin = keras.layers.Activation(tf.math.sin, name='sin_theta')
+
+    # Layer to compute atan2
+    atan2 = keras.layers.Lambda(lambda x, y: tf.math.atan2(y, x), name='atan2')
+    
+    # Compute sin(theta) and cos(theta)
+    x_out = cos(theta_in)
+    y_out = sin(theta_in)
+    
+    # Compute atan2(y, x)
+    theta_out = atan2([x_in, y_in])
+
+    # Compute the recovered values of theta, x, y for auto-encoder
+    theta_rec = atan2([x_out, y_out])
+    x_rec = cos(theta_out)
+    y_rec = sin(theta_out)
+    
+    # Models for p2c and c2p
+    model_p2c = keras.Model(inputs=theta_in, outputs=[x_out, y_out])
+    model_c2p = keras.Model(inputs=[x_in, y_in], outputs=theta_out)
+
+    # Models for autoencoders p2p and c2c
+    model_p2p = keras.Model(inputs=theta_in, outputs=theta_rec)
+    model_c2c = keras.Model(inputs=[x_in, x_out], outputs=[x_rec, y_rec])
+    
+    return model_p2c, model_c2p, model_p2p, model_c2c
+
+# ********************************************************************************************************************* 
 def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
     # Compile the model
     model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
     model_name = model.name
-    filepath=f'../models/polar_{model_name}.h5'
+    filepath=f'../models/polar/{model_name}.h5'
 
     # Create callbacks
     interval = epochs // 20
@@ -368,6 +434,49 @@ def make_model_even(func_name, input_name, output_name, hidden_sizes):
     
     # Augmented feature layer
     phi_0 = keras.layers.concatenate(inputs=[x2, x4, x6, x8], name='phi_0')
+
+    # Dense feature layers
+
+    # First hidden layer
+    phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
+    phi_n = phi_1
+
+    # Second hidden layer if applicable
+    if num_layers > 1:
+        phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
+        phi_n = phi_2
+
+    # Output layer
+    y = keras.layers.Dense(units=1, name=output_name)(phi_n)
+
+    # Wrap into a model
+    model_name = f'model_{func_name}_' + str(hidden_sizes)
+    model = keras.Model(inputs=x, outputs=y, name=model_name) 
+    return model
+
+# ********************************************************************************************************************* 
+def make_model_pow(func_name, input_name, output_name, hidden_sizes):
+    """
+    Neural net model of functions using powers of x as features
+    Example call: model_cos_16_16 = make_model_even('cos', [16, 16])
+    """
+    # Input layer
+    x = keras.Input(shape=(1,), name=input_name)
+
+    # Number of hidden layers
+    num_layers = len(hidden_sizes)
+
+    # Feature augmentation; all powers up to 8
+    x2 = keras.layers.Lambda(lambda x: tf.pow(x, 2), name='x2')(x)
+    x3 = keras.layers.Lambda(lambda x: tf.pow(x, 3), name='x3')(x)
+    x4 = keras.layers.Lambda(lambda x: tf.pow(x, 4), name='x4')(x)
+    x5 = keras.layers.Lambda(lambda x: tf.pow(x, 5), name='x5')(x)
+    x6 = keras.layers.Lambda(lambda x: tf.pow(x, 6), name='x6')(x)
+    x7 = keras.layers.Lambda(lambda x: tf.pow(x, 7), name='x7')(x)
+    x8 = keras.layers.Lambda(lambda x: tf.pow(x, 8), name='x8')(x)
+    
+    # Augmented feature layer
+    phi_0 = keras.layers.concatenate(inputs=[x, x2, x3, x4, x5, x6, x7, x8], name='phi_0')
 
     # Dense feature layers
 
