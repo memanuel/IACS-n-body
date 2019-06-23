@@ -387,3 +387,20 @@ def make_model_even(func_name, input_name, output_name, hidden_sizes):
     model_name = f'model_{func_name}_' + str(hidden_sizes)
     model = keras.Model(inputs=x, outputs=y, name=model_name) 
     return model
+
+# ********************************************************************************************************************* 
+def make_model_autoencoder(model_p2c, model_c2p):
+    """Generate two autoencoder models"""
+    # autoencoder from p to p
+    theta_in = keras.Input(shape=(1,), name='theta')
+    y = model_p2c(theta_in)
+    theta_out = model_c2p(y)
+    model_p2p = keras.Model(theta_in, theta_out)
+    
+    # autoencoder from c to c
+    y_in = keras.Input(shape=(1,), name='y')
+    theta = model_c2p(y_in)
+    y_out = model_p2c(theta)
+    model_c2c = keras.Model(y_in, y_out)
+
+    return model_p2p, model_c2c
