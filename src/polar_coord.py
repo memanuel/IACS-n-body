@@ -20,7 +20,7 @@ from utils import EpochLoss, TimeHistory
 def make_data_sin(n):
     """Make data arrays for mapping between theta and y = sin(theta)"""
     # Array of angles theta
-    theta = np.linspace(-np.pi/2.0, np.pi/2.0, n+1)
+    theta = np.linspace(-np.pi/2.0, np.pi/2.0, n+1, dtype=np.float32)
     
     # The sin of these angles
     y = np.sin(theta)
@@ -35,7 +35,7 @@ def make_data_sin(n):
 def make_data_cos(n):
     """Make data arrays for mapping between theta and x = cos(theta)"""
     # Array of angles theta
-    theta = np.linspace(0.0, np.pi, n+1)
+    theta = np.linspace(0.0, np.pi, n+1, dtype=np.float32)
     
     # The cos of these angles
     x = np.cos(theta)
@@ -50,7 +50,7 @@ def make_data_cos(n):
 def make_data_circle(n):
     """Make data arrays for mapping between theta and (x,y) on unit circle"""
     # Array of angles theta
-    theta = np.linspace(-np.pi, np.pi0, n+1)
+    theta = np.linspace(-np.pi, np.pi0, n+1, dtype=np.float32)
     
     # The cos and sin of these angles
     x = np.cos(theta)
@@ -74,9 +74,9 @@ def make_data_polar(n_r, n_theta, r_min=0.5, r_max=32.0):
     n_r += 1
 
     # Array of radius r to sample
-    r_ = np.linspace(r_min, r_max, n_r)
+    r_ = np.linspace(r_min, r_max, n_r, dtype=np.float32)
     # Array of angle theta to sample
-    theta_ = np.linspace(-np.pi, np.pi, n_theta)
+    theta_ = np.linspace(-np.pi, np.pi, n_theta, dtype=np.float32)
     
     # Repeat r_ to generate r
     r = np.repeat(r_, repeats=n_theta)
@@ -105,8 +105,8 @@ def make_data_cart(n_a, a):
     n_a += 1
 
     # Array of x and y to sample
-    x_ = np.linspace(-a, a, n_a)
-    y_ = np.linspace(-a, a, n_a)
+    x_ = np.linspace(-a, a, n_a, dtype=np.float32)
+    y_ = np.linspace(-a, a, n_a, dtype=np.float32)
 
     # Repeat x_ to generate x
     x = np.repeat(x_, repeats=n_a)
@@ -128,10 +128,6 @@ def make_data_cart(n_a, a):
 # ********************************************************************************************************************* 
 def make_dataset_sin(n, batch_size=None):
     """Make datasets for mapping between y and sin(theta)"""
-    # Default batch_size is n
-    if batch_size is None:
-        batch_size = n+1
-
     # Make data dictionary
     data = make_data_sin(n)
     
@@ -151,8 +147,12 @@ def make_dataset_sin(n, batch_size=None):
     # Create DataSet object for cartesian to cartesian autoencoder
     d2_c2c = tf.data.Dataset.from_tensor_slices((y, y))
 
+    # Default batch_size is all the data
+    if batch_size is None:
+        batch_size = theta.shape[0]
+
     # Set shuffle buffer size equal to size of data set
-    buffer_size = n+1
+    buffer_size = theta.shape[0]
 
     # Shuffle and batch data sets
     ds_p2c = ds_p2c.shuffle(buffer_size).batch(batch_size)
@@ -165,10 +165,6 @@ def make_dataset_sin(n, batch_size=None):
 # ********************************************************************************************************************* 
 def make_dataset_cos(n, batch_size=None):
     """Make datasets for mapping between x and cos(theta)"""
-    # Default batch_size is n
-    if batch_size is None:
-        batch_size = n+1
-
     # Make data dictionary
     data = make_data_cos(n)
     
@@ -188,24 +184,24 @@ def make_dataset_cos(n, batch_size=None):
     # Create DataSet object for cartesian to cartesian autoencoder
     d2_c2c = tf.data.Dataset.from_tensor_slices((x, x))
 
-    # Set shuffle buffer size
-    # buffer_size = batch_size
+    # Default batch_size is all the data
+    if batch_size is None:
+        batch_size = theta.shape[0]
+
+    # Set shuffle buffer size equal to size of data set
+    buffer_size = theta.shape[0]
 
     # Shuffle and batch data sets
-    ds_p2c = ds_p2c.batch(batch_size)
-    ds_c2p = ds_c2p.batch(batch_size)
-    ds_p2p = ds_p2p.batch(batch_size)
-    ds_c2c = d2_c2c.batch(batch_size)
+    ds_p2c = ds_p2c.shuffle(buffer_size).batch(batch_size)
+    ds_c2p = ds_c2p.shuffle(buffer_size).batch(batch_size)
+    ds_p2p = ds_p2p.shuffle(buffer_size).batch(batch_size)
+    ds_c2c = d2_c2c.shuffle(buffer_size).batch(batch_size)
     
     return ds_p2c, ds_c2p, ds_p2p, ds_c2c
 
 # ********************************************************************************************************************* 
 def make_dataset_circle(n, batch_size=None):
     """Make datasets for mapping between x and cos(theta)"""
-    # Default batch_size is n
-    if batch_size is None:
-        batch_size = n+1
-
     # Make data dictionary
     data = make_data_circle(n)
     
@@ -233,15 +229,19 @@ def make_dataset_circle(n, batch_size=None):
     # Create DataSet object for cartesian to cartesian autoencoder
     d2_c2c = tf.data.Dataset.from_tensor_slices((cart, cart))
 
+    # Default batch_size is all the data
+    if batch_size is None:
+        batch_size = theta.shape[0]
+
     # Set shuffle buffer size
-    # buffer_size = n+1
+    buffer_size = theta.shape[0]
 
     # Shuffle and batch data sets
-    ds_p2c = ds_p2c.batch(batch_size)
-    ds_c2p = ds_c2p.batch(batch_size)
-    ds_p2p = ds_p2p.batch(batch_size)
-    ds_c2c = d2_c2c.batch(batch_size)
-    
+    ds_p2c = ds_p2c.shuffle(buffer_size).batch(batch_size)
+    ds_c2p = ds_c2p.shuffle(buffer_size).batch(batch_size)
+    ds_p2p = ds_p2p.shuffle(buffer_size).batch(batch_size)
+    ds_c2c = d2_c2c.shuffle(buffer_size).batch(batch_size)
+       
     return ds_p2c, ds_c2p, ds_p2p, ds_c2c
 
 # ********************************************************************************************************************* 
@@ -348,6 +348,7 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
 
     # Create callbacks
     interval = epochs // 20
+    patience = epochs // 10
     cb_log = EpochLoss(interval=interval)
     cb_time = TimeHistory()
     cb_ckp = keras.callbacks.ModelCheckpoint(
@@ -360,7 +361,7 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
     cb_early_stop = keras.callbacks.EarlyStopping(
             monitor='loss',
             min_delta=1.0E-8,
-            patience=1000,
+            patience=patience,
             verbose=1,
             restore_best_weights=True)    
     callbacks = [cb_log, cb_time, cb_ckp, cb_early_stop]
@@ -376,89 +377,23 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
     return hist
 
 # ********************************************************************************************************************* 
-def make_model_odd(func_name, input_name, output_name, hidden_sizes):
-    """
-    Neural net model of odd functions, e.g. y = sin(theta)
-    Example call: model_sin_16_16 = make_model_odd('sin', [16, 16])
-    """
-    # Input layer
-    x = keras.Input(shape=(1,), name=input_name)
-
-    # Number of hidden layers
-    num_layers = len(hidden_sizes)
-
-    # Feature augmentation; odd powers up to 7
-    x3 = keras.layers.Lambda(lambda x: tf.pow(x, 3), name='x3')(x)
-    x5 = keras.layers.Lambda(lambda x: tf.pow(x, 5), name='x5')(x)
-    x7 = keras.layers.Lambda(lambda x: tf.pow(x, 7), name='x7')(x)
-    
-    # Augmented feature layer
-    phi_0 = keras.layers.concatenate(inputs=[x, x3, x5, x7], name='phi_0')
-    
-    # Dense feature layers
-
-    # First hidden layer
-    phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
-    phi_n = phi_1
-
-    # Second hidden layer if applicable
-    if num_layers > 1:
-        phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
-        phi_n = phi_2
-
-    # Output layer
-    y = keras.layers.Dense(units=1, name=output_name)(phi_n)
-
-    # Wrap into a model
-    model_name = f'model_{func_name}_' + str(hidden_sizes)
-    model = keras.Model(inputs=x, outputs=y, name=model_name) 
-    return model
-
-# ********************************************************************************************************************* 
-def make_model_even(func_name, input_name, output_name, hidden_sizes):
-    """
-    Neural net model of even functions, e.g. y = cos(theta)
-    Example call: model_cos_16_16 = make_model_even('cos', [16, 16])
-    """
-    # Input layer
-    x = keras.Input(shape=(1,), name=input_name)
-
-    # Number of hidden layers
-    num_layers = len(hidden_sizes)
-
-    # Feature augmentation; even powers up to 8
-    x2 = keras.layers.Lambda(lambda x: tf.pow(x, 2), name='x2')(x)
-    x4 = keras.layers.Lambda(lambda x: tf.pow(x, 4), name='x4')(x)
-    x6 = keras.layers.Lambda(lambda x: tf.pow(x, 6), name='x6')(x)
-    x8 = keras.layers.Lambda(lambda x: tf.pow(x, 8), name='x8')(x)
-    
-    # Augmented feature layer
-    phi_0 = keras.layers.concatenate(inputs=[x2, x4, x6, x8], name='phi_0')
-
-    # Dense feature layers
-
-    # First hidden layer
-    phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
-    phi_n = phi_1
-
-    # Second hidden layer if applicable
-    if num_layers > 1:
-        phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
-        phi_n = phi_2
-
-    # Output layer
-    y = keras.layers.Dense(units=1, name=output_name)(phi_n)
-
-    # Wrap into a model
-    model_name = f'model_{func_name}_' + str(hidden_sizes)
-    model = keras.Model(inputs=x, outputs=y, name=model_name) 
-    return model
-
-# ********************************************************************************************************************* 
-def make_model_pow(func_name, input_name, output_name, hidden_sizes):
+def make_model_pow(func_name, input_name, output_name, powers, hidden_sizes, skip_layers):
     """
     Neural net model of functions using powers of x as features
-    Example call: model_cos_16_16 = make_model_even('cos', [16, 16])
+    INPUTS:
+        func_name: name of the function being fit, e.g. 'cos'
+        input_name: name of the input layer, e.g. 'theta'
+        output_name: name of the output layer, e.g. 'x'
+        powers: list of integer powers of the input in feature augmentation
+        hidden_sizes: sizes of up to 3 hidden layers
+        skip_layers: whether to include skip layers (copy of previous features)
+    Example call: 
+        model_cos_16_16 = make_model_even(
+            func_name='cos',
+            input_name='theta',
+            output_name='x',
+            powers=[2,4,6,8],
+            hidden_sizes=[16, 16])
     """
     # Input layer
     x = keras.Input(shape=(1,), name=input_name)
@@ -466,27 +401,30 @@ def make_model_pow(func_name, input_name, output_name, hidden_sizes):
     # Number of hidden layers
     num_layers = len(hidden_sizes)
 
-    # Feature augmentation; all powers up to 8
-    x2 = keras.layers.Lambda(lambda x: tf.pow(x, 2), name='x2')(x)
-    x3 = keras.layers.Lambda(lambda x: tf.pow(x, 3), name='x3')(x)
-    x4 = keras.layers.Lambda(lambda x: tf.pow(x, 4), name='x4')(x)
-    x5 = keras.layers.Lambda(lambda x: tf.pow(x, 5), name='x5')(x)
-    x6 = keras.layers.Lambda(lambda x: tf.pow(x, 6), name='x6')(x)
-    x7 = keras.layers.Lambda(lambda x: tf.pow(x, 7), name='x7')(x)
-    x8 = keras.layers.Lambda(lambda x: tf.pow(x, 8), name='x8')(x)
+    # Feature augmentation; the selected powers
+    xps = []
+    for p in powers:
+        xp = keras.layers.Lambda(lambda x: tf.pow(x, p) / tf.exp(tf.math.lgamma(p+1.0)), name=f'x{p}')(x)
+        xps.append(xp)
     
     # Augmented feature layer
-    phi_0 = keras.layers.concatenate(inputs=[x, x2, x3, x4, x5, x6, x7, x8], name='phi_0')
+    phi_0 = keras.layers.concatenate(inputs=xps, name='phi_0')
+    phi_n = phi_0
 
     # Dense feature layers
-
-    # First hidden layer
-    phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
-    phi_n = phi_1
+    
+    # First hidden layer if applicable
+    if num_layers > 0:
+        phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
+        if skip_layers:
+            phi_1 = keras.layers.concatenate(inputs=[phi_0, phi_1], name='phi_1_aug')
+        phi_n = phi_1
 
     # Second hidden layer if applicable
     if num_layers > 1:
         phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
+        if skip_layers:
+            phi_2 = keras.layers.concatenate(inputs=[phi_1, phi_2], name='phi_2_aug')
         phi_n = phi_2
 
     # Output layer
