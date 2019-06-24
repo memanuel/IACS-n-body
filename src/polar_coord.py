@@ -50,7 +50,7 @@ def make_data_cos(n):
 def make_data_circle(n):
     """Make data arrays for mapping between theta and (x,y) on unit circle"""
     # Array of angles theta
-    theta = np.linspace(-np.pi, np.pi0, n+1, dtype=np.float32)
+    theta = np.linspace(-np.pi, np.pi, n+1, dtype=np.float32)
     
     # The cos and sin of these angles
     x = np.cos(theta)
@@ -169,8 +169,8 @@ def make_dataset_cos(n, batch_size=None):
     data = make_data_cos(n)
     
     # Unpack arrays
-    x = data['x']
     theta = data['theta']
+    x = data['x']
 
     # Create DataSet object for polar to cartesian: x = cos(theta)
     ds_p2c = tf.data.Dataset.from_tensor_slices((theta, x))
@@ -206,28 +206,36 @@ def make_dataset_circle(n, batch_size=None):
     data = make_data_circle(n)
     
     # Unpack arrays
+    theta = data['theta']
     x = data['x']
     y = data['y']
-    theta = data['theta']
     
-    # Wrap the two cartesian inputs into a dict
-    cart = {'x': x,
-            'y': y}
-
     # Wrap the polar inputs into a dict
-    polar = {'theta': theta,}
+    polar_in = {'theta_in': theta,}
+    polar_out = {'theta_out': theta,}
+    polar_rec = {'theta_rec': theta,}
+
+    # Wrap the two cartesian inputs into a dict
+    cart_in = {'x_in': x,
+               'y_in': y}
+
+    cart_out = {'x_out': x,
+                'y_out': y}
+    
+    cart_rec = {'x_rec': x,
+                'y_rec': y}
 
     # Create DataSet object for polar to cartesian
-    ds_p2c = tf.data.Dataset.from_tensor_slices((polar, cart))
+    ds_p2c = tf.data.Dataset.from_tensor_slices((polar_in, cart_out))
     
     # Create DataSet object for cartesian to polar
-    ds_c2p = tf.data.Dataset.from_tensor_slices((cart, polar))
+    ds_c2p = tf.data.Dataset.from_tensor_slices((cart_in, polar_out))
     
     # Create DataSet object for polar to polar autoencoder
-    ds_p2p = tf.data.Dataset.from_tensor_slices((polar, polar))
+    ds_p2p = tf.data.Dataset.from_tensor_slices((polar_in, polar_rec))
 
     # Create DataSet object for cartesian to cartesian autoencoder
-    d2_c2c = tf.data.Dataset.from_tensor_slices((cart, cart))
+    d2_c2c = tf.data.Dataset.from_tensor_slices((cart_in, cart_rec))
 
     # Default batch_size is all the data
     if batch_size is None:
@@ -306,36 +314,30 @@ def make_model_cos_math():
 def make_model_circle_math():
     """Mathematical model transforming between theta and (x, y) on unit circle"""
     # Input layers
-    theta_in = keras.Input(shape=(1,), name='theta')
-    x_in = keras.Input(shape=(1,), name='x')
-    y_in = keras.Input(shape=(1,), name='y')
+    theta_in = keras.Input(shape=(1,), name='theta_in')
+    x_in = keras.Input(shape=(1,), name='x_in')
+    y_in = keras.Input(shape=(1,), name='y_in')
 
-    # Layers to compute sin and cos
-    cos = keras.layers.Activation(tf.math.cos, name='cos_theta')
-    sin = keras.layers.Activation(tf.math.sin, name='sin_theta')
-
-    # Layer to compute atan2
-    atan2 = keras.layers.Lambda(lambda x, y: tf.math.atan2(y, x), name='atan2')
-    
     # Compute sin(theta) and cos(theta)
-    x_out = cos(theta_in)
-    y_out = sin(theta_in)
+    x_out = keras.layers.Activation(tf.math.cos, name='x_out')(theta_in)
+    y_out = keras.layers.Activation(tf.math.sin, name='y_out')(theta_in)
     
     # Compute atan2(y, x)
-    theta_out = atan2([x_in, y_in])
+    atan_func = lambda q: tf.math.atan2(q[1], q[0])
+    theta_out = keras.layers.Lambda(atan_func, name='theta_out')([x_in, y_in])
 
     # Compute the recovered values of theta, x, y for auto-encoder
-    theta_rec = atan2([x_out, y_out])
-    x_rec = cos(theta_out)
-    y_rec = sin(theta_out)
+    theta_rec = keras.layers.Lambda(atan_func, name='theta_rec')([x_out, y_out])
+    x_rec = keras.layers.Activation(tf.math.cos, name='x_rec')(theta_out)
+    y_rec = keras.layers.Activation(tf.math.sin, name='y_rec')(theta_out)
     
     # Models for p2c and c2p
-    model_p2c = keras.Model(inputs=theta_in, outputs=[x_out, y_out])
-    model_c2p = keras.Model(inputs=[x_in, y_in], outputs=theta_out)
+    model_p2c = keras.Model(inputs=theta_in, outputs=[x_out, y_out], name='math_p2c')
+    model_c2p = keras.Model(inputs=[x_in, y_in], outputs=theta_out, name='math_c2p')
 
     # Models for autoencoders p2p and c2c
-    model_p2p = keras.Model(inputs=theta_in, outputs=theta_rec)
-    model_c2c = keras.Model(inputs=[x_in, x_out], outputs=[x_rec, y_rec])
+    model_p2p = keras.Model(inputs=theta_in, outputs=theta_rec, name='math_p2p')
+    model_c2c = keras.Model(inputs=[x_in, y_in], outputs=[x_rec, y_rec], name='math_c2c')
     
     return model_p2c, model_c2p, model_p2p, model_c2c
 
@@ -385,7 +387,7 @@ def make_model_pow(func_name, input_name, output_name, powers, hidden_sizes, ski
         input_name: name of the input layer, e.g. 'theta'
         output_name: name of the output layer, e.g. 'x'
         powers: list of integer powers of the input in feature augmentation
-        hidden_sizes: sizes of up to 3 hidden layers
+        hidden_sizes: sizes of up to 2 hidden layers
         skip_layers: whether to include skip layers (copy of previous features)
     Example call: 
         model_cos_16_16 = make_model_even(
@@ -451,3 +453,53 @@ def make_model_autoencoder(model_p2c, model_c2p):
     model_c2c = keras.Model(y_in, y_out)
 
     return model_p2p, model_c2c
+
+# ********************************************************************************************************************* 
+def make_model_circle_p2c(powers, hidden_sizes, skip_layers):
+    """
+    Neural net model from theta to (x, y)
+    INPUTS:
+        powers: list of integer powers of the input in feature augmentation
+        hidden_sizes: sizes of up to 2 hidden layers
+        skip_layers: whether to include skip layers (copy of previous features)
+    """
+    # Input layer
+    theta_in = keras.Input(shape=(1,), name='theta_in')
+
+    # Number of hidden layers
+    num_layers = len(hidden_sizes)
+
+    # Feature augmentation; the selected powers
+    theta_ps = []
+    for p in powers:
+        theta_p = keras.layers.Lambda(lambda z: tf.pow(z, p) / tf.exp(tf.math.lgamma(p+1.0)), name=f'theta_{p}')(theta_in)
+        theta_ps.append(theta_p)
+    
+    # Augmented feature layer
+    phi_0 = keras.layers.concatenate(inputs=theta_ps, name='phi_0')
+    phi_n = phi_0
+
+    # Dense feature layers
+    
+    # First hidden layer if applicable
+    if num_layers > 0:
+        phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
+        if skip_layers:
+            phi_1 = keras.layers.concatenate(inputs=[phi_0, phi_1], name='phi_1_aug')
+        phi_n = phi_1
+
+    # Second hidden layer if applicable
+    if num_layers > 1:
+        phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
+        if skip_layers:
+            phi_2 = keras.layers.concatenate(inputs=[phi_1, phi_2], name='phi_2_aug')
+        phi_n = phi_2
+
+    # Output layers
+    x_out = keras.layers.Dense(units=1, name='x_out')(phi_n)
+    y_out = keras.layers.Dense(units=1, name='y_out')(phi_n)
+
+    # Wrap into a model
+    model_name = f'model_circle_p2c_' + str(hidden_sizes)
+    model = keras.Model(inputs=theta_in, outputs=[x_out, y_out], name=model_name) 
+    return model
