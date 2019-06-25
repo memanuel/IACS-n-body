@@ -251,59 +251,6 @@ def make_dataset_circle(n, batch_size=None):
     return ds_p2c, ds_c2p, ds_p2p, ds_c2c
 
 # ********************************************************************************************************************* 
-def make_dataset_circle_v1(n, batch_size=None):
-    """Make datasets for mapping between x and cos(theta)"""
-    # Make data dictionary
-    data = make_data_circle(n)
-    
-    # Unpack arrays
-    theta = data['theta']
-    x = data['x']
-    y = data['y']
-    
-    # Wrap the polar inputs into a dict
-    polar_in = {'theta_in': theta,}
-    polar_out = {'theta_out': theta,}
-    polar_rec = {'theta_rec': theta,}
-
-    # Wrap the two cartesian inputs into a dict
-    cart_in = {'x_in': x,
-               'y_in': y}
-
-    cart_out = {'x_out': x,
-                'y_out': y}
-    
-    cart_rec = {'x_rec': x,
-                'y_rec': y}
-
-    # Create DataSet object for polar to cartesian
-    ds_p2c = tf.data.Dataset.from_tensor_slices((polar_in, cart_out))
-    
-    # Create DataSet object for cartesian to polar
-    ds_c2p = tf.data.Dataset.from_tensor_slices((cart_in, polar_out))
-    
-    # Create DataSet object for polar to polar autoencoder
-    ds_p2p = tf.data.Dataset.from_tensor_slices((polar_in, polar_rec))
-
-    # Create DataSet object for cartesian to cartesian autoencoder
-    d2_c2c = tf.data.Dataset.from_tensor_slices((cart_in, cart_rec))
-
-    # Default batch_size is all the data
-    if batch_size is None:
-        batch_size = theta.shape[0]
-
-    # Set shuffle buffer size
-    buffer_size = theta.shape[0]
-
-    # Shuffle and batch data sets
-    ds_p2c = ds_p2c.shuffle(buffer_size).batch(batch_size)
-    ds_c2p = ds_c2p.shuffle(buffer_size).batch(batch_size)
-    ds_p2p = ds_p2p.shuffle(buffer_size).batch(batch_size)
-    ds_c2c = d2_c2c.shuffle(buffer_size).batch(batch_size)
-       
-    return ds_p2c, ds_c2p, ds_p2p, ds_c2c
-
-# ********************************************************************************************************************* 
 def make_models_sin_math():
     """Mathematical model transforming between y and sin(theta)"""
     # Input layers
@@ -444,37 +391,6 @@ def make_models_circle_math():
     model_c2p = make_model_circle_math_c2p()
     model_c2c = make_model_circle_math_c2c()
     model_p2p = make_model_circle_math_p2p()
-    
-    return model_p2c, model_c2p, model_p2p, model_c2c
-
-# ********************************************************************************************************************* 
-def make_models_circle_math_v1():
-    """Mathematical model transforming between theta and (x, y) on unit circle"""
-    # Input layers
-    theta_in = keras.Input(shape=(1,), name='theta_in')
-    x_in = keras.Input(shape=(1,), name='x_in')
-    y_in = keras.Input(shape=(1,), name='y_in')
-
-    # Compute sin(theta) and cos(theta)
-    x_out = keras.layers.Activation(tf.math.cos, name='x_out')(theta_in)
-    y_out = keras.layers.Activation(tf.math.sin, name='y_out')(theta_in)
-    
-    # Compute atan2(y, x)
-    atan_func = lambda q: tf.math.atan2(q[1], q[0])
-    theta_out = keras.layers.Lambda(atan_func, name='theta_out')([x_in, y_in])
-
-    # Compute the recovered values of theta, x, y for auto-encoder
-    theta_rec = keras.layers.Lambda(atan_func, name='theta_rec')([x_out, y_out])
-    x_rec = keras.layers.Activation(tf.math.cos, name='x_rec')(theta_out)
-    y_rec = keras.layers.Activation(tf.math.sin, name='y_rec')(theta_out)
-    
-    # Models for p2c and c2p
-    model_p2c = keras.Model(inputs=theta_in, outputs=[x_out, y_out], name='math_p2c')
-    model_c2p = keras.Model(inputs=[x_in, y_in], outputs=theta_out, name='math_c2p')
-
-    # Models for autoencoders p2p and c2c
-    model_p2p = keras.Model(inputs=theta_in, outputs=theta_rec, name='math_p2p')
-    model_c2c = keras.Model(inputs=[x_in, y_in], outputs=[x_rec, y_rec], name='math_c2c')
     
     return model_p2c, model_c2p, model_p2p, model_c2c
 
