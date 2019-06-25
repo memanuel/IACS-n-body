@@ -199,4 +199,3 @@ def make_model_pow(func_name, input_name, output_name, powers, hidden_sizes, ski
     model_name = f'model_{func_name}_' + str(hidden_sizes)
     model = keras.Model(inputs=x, outputs=y, name=model_name) 
     return model
-
