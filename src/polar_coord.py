@@ -20,9 +20,9 @@ from utils import EpochLoss, TimeHistory
 def make_data_sin(n):
     """Make data arrays for mapping between theta and y = sin(theta)"""
     # Half-interval width
-    dx = np.pi / (2*n)
+    dt = np.pi / (2*n)
     # Array of angles theta
-    theta = np.linspace(-np.pi/2.0+dx, np.pi/2.0-dx, n, dtype=np.float32)
+    theta = np.linspace(-np.pi/2.0+dt, np.pi/2.0-dt, n, dtype=np.float32)
 
     # The sin of these angles
     y = np.sin(theta)
@@ -37,9 +37,9 @@ def make_data_sin(n):
 def make_data_cos(n):
     """Make data arrays for mapping between theta and x = cos(theta)"""
     # Half-interval width
-    dx = np.pi / (2*n)
+    dt = np.pi / (2*n)
     # Array of angles theta
-    theta = np.linspace(0.0+dx, np.pi-dx, n, dtype=np.float32)
+    theta = np.linspace(0.0+dt, np.pi-dt, n, dtype=np.float32)
     
     # The cos of these angles
     x = np.cos(theta)
@@ -47,6 +47,23 @@ def make_data_cos(n):
     # Wrap data dict
     data = {'theta': theta,
             'x': x}
+    
+    return data
+
+# ********************************************************************************************************************* 
+def make_data_tan(n):
+    """Make data arrays for mapping between theta and x = cos(theta)"""
+    # Half-interval width
+    dt = np.pi / (2*n)
+    # Array of angles theta
+    theta = np.linspace(-np.pi/2.0+dt, np.pi/2.0-dt, n, dtype=np.float32)
+    
+    # The tan of these angles
+    z = np.tan(theta)
+    
+    # Wrap data dict
+    data = {'theta': theta,
+            'z': z}
     
     return data
 
@@ -206,6 +223,43 @@ def make_dataset_cos(n, batch_size=None):
     return ds_p2c, ds_c2p, ds_p2p, ds_c2c
 
 # ********************************************************************************************************************* 
+def make_dataset_tan(n, batch_size=None):
+    """Make datasets for mapping between x and cos(theta)"""
+    # Make data dictionary
+    data = make_data_tan(n)
+    
+    # Unpack arrays
+    theta = data['theta']
+    z = data['z']
+
+    # Create DataSet object for polar to cartesian: z = tan(theta)
+    ds_p2c = tf.data.Dataset.from_tensor_slices((theta, z))
+    
+    # Create DataSet object for cartesian to polar: theta = arctan(z)
+    ds_c2p = tf.data.Dataset.from_tensor_slices((z, theta))
+    
+    # Create DataSet object for polar to polar autoencoder
+    ds_p2p = tf.data.Dataset.from_tensor_slices((theta, theta))
+
+    # Create DataSet object for cartesian to cartesian autoencoder
+    d2_c2c = tf.data.Dataset.from_tensor_slices((z, z))
+
+    # Default batch_size is all the data
+    if batch_size is None:
+        batch_size = theta.shape[0]
+
+    # Set shuffle buffer size equal to size of data set
+    buffer_size = theta.shape[0]
+
+    # Shuffle and batch data sets
+    ds_p2c = ds_p2c.shuffle(buffer_size).batch(batch_size)
+    ds_c2p = ds_c2p.shuffle(buffer_size).batch(batch_size)
+    ds_p2p = ds_p2p.shuffle(buffer_size).batch(batch_size)
+    ds_c2c = d2_c2c.shuffle(buffer_size).batch(batch_size)
+    
+    return ds_p2c, ds_c2p, ds_p2p, ds_c2c
+
+# ********************************************************************************************************************* 
 def make_dataset_circle(n, batch_size=None):
     """Make datasets for mapping between x and cos(theta)"""
     # Make data dictionary
@@ -311,6 +365,35 @@ def make_models_cos_math():
     # Models for autoencoders p2p and c2c
     model_p2p = keras.Model(inputs=theta, outputs=theta_rec)
     model_c2c = keras.Model(inputs=x, outputs=x_rec)
+    
+    return model_p2c, model_c2p, model_p2p, model_c2c
+
+# ********************************************************************************************************************* 
+def make_models_tan_math():
+    """Mathematical model transforming between z and tan(theta)"""
+    # Input layers
+    theta = keras.Input(shape=(1,), name='theta')
+    z = keras.Input(shape=(1,), name='z')
+    
+    # Layers to compute cos and arccos
+    tan = keras.layers.Activation(tf.math.tan, name='tan_theta')
+    arctan = keras.layers.Activation(tf.math.atan, name='arctan_z')
+    
+    # Compute sin(theta) and arcsin(y)
+    tan_theta = tan(theta)
+    arctan_z = arctan(z)
+    
+    # Compute the recovered values of y and theta for auto-encoder
+    theta_rec = arctan(tan_theta)
+    z_rec = tan(arctan_z)
+    
+    # Models for p2c and c2p
+    model_p2c = keras.Model(inputs=theta, outputs=tan_theta)
+    model_c2p = keras.Model(inputs=z, outputs=arctan_z)
+    
+    # Models for autoencoders p2p and c2c
+    model_p2p = keras.Model(inputs=theta, outputs=theta_rec)
+    model_c2c = keras.Model(inputs=z, outputs=z_rec)
     
     return model_p2c, model_c2p, model_p2p, model_c2c
 
@@ -436,103 +519,6 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
     model.load_weights(filepath)
 
     return hist
-
-# ********************************************************************************************************************* 
-def make_features_pow(x, powers, input_name, output_name):
-    """
-    Make features with powers of an input feature
-    INPUTS:
-        x: the original feature
-        powers: list of integer powers, e.g. [1,3,5,7]        
-        input_name: the name of the input feature, e.g. 'x' or 'theta'
-        output_name: the name of the output feature layer, e.g. 'phi_0'
-    """
-    # List with layers x**p
-    xps = []
-    # Iterate over the specified powers
-    for p in powers:
-        xp = keras.layers.Lambda(lambda x: tf.pow(x, p) / tf.exp(tf.math.lgamma(p+1.0)), name=f'{input_name}_{p}')(x)
-        xps.append(xp)
-    
-    # Augmented feature layer
-    return keras.layers.concatenate(inputs=xps, name=output_name)
-
-# ********************************************************************************************************************* 
-def make_model_pow(func_name, input_name, output_name, powers, hidden_sizes, skip_layers):
-    """
-    Neural net model of functions using powers of x as features
-    INPUTS:
-        func_name: name of the function being fit, e.g. 'cos'
-        input_name: name of the input layer, e.g. 'theta'
-        output_name: name of the output layer, e.g. 'x'
-        powers: list of integer powers of the input in feature augmentation
-        hidden_sizes: sizes of up to 2 hidden layers
-        skip_layers: whether to include skip layers (copy of previous features)
-    Example call: 
-        model_cos_16_16 = make_model_even(
-            func_name='cos',
-            input_name='theta',
-            output_name='x',
-            powers=[2,4,6,8],
-            hidden_sizes=[16, 16])
-    """
-    # Input layer
-    x = keras.Input(shape=(1,), name=input_name)
-
-    # Number of hidden layers
-    num_layers = len(hidden_sizes)
-
-    # Feature augmentation; the selected powers
-    xps = []
-    for p in powers:
-        xp = keras.layers.Lambda(lambda x: tf.pow(x, p) / tf.exp(tf.math.lgamma(p+1.0)), name=f'x{p}')(x)
-        xps.append(xp)
-    
-    # Augmented feature layer
-    # phi_0 = keras.layers.concatenate(inputs=xps, name='phi_0')
-    phi_0 = make_features_pow(x=x, powers=powers, input_name='x', output_name='phi_0')
-    phi_n = phi_0
-
-    # Dense feature layers
-    
-    # First hidden layer if applicable
-    if num_layers > 0:
-        phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
-        if skip_layers:
-            phi_1 = keras.layers.concatenate(inputs=[phi_0, phi_1], name='phi_1_aug')
-        phi_n = phi_1
-
-    # Second hidden layer if applicable
-    if num_layers > 1:
-        phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
-        if skip_layers:
-            phi_2 = keras.layers.concatenate(inputs=[phi_1, phi_2], name='phi_2_aug')
-        phi_n = phi_2
-
-    # Output layer
-    y = keras.layers.Dense(units=1, name=output_name)(phi_n)
-
-    # Wrap into a model
-    model_name = f'model_{func_name}_' + str(hidden_sizes)
-    model = keras.Model(inputs=x, outputs=y, name=model_name) 
-    return model
-
-# ********************************************************************************************************************* 
-def make_model_autoencoder(model_p2c, model_c2p):
-    """Generate two autoencoder models"""
-    # autoencoder from p to p
-    theta_in = keras.Input(shape=(1,), name='theta')
-    y = model_p2c(theta_in)
-    theta_out = model_c2p(y)
-    model_p2p = keras.Model(theta_in, theta_out)
-    
-    # autoencoder from c to c
-    y_in = keras.Input(shape=(1,), name='y')
-    theta = model_c2p(y_in)
-    y_out = model_p2c(theta)
-    model_c2c = keras.Model(y_in, y_out)
-
-    return model_p2p, model_c2c
 
 # ********************************************************************************************************************* 
 def make_model_circle_p2c(powers, hidden_sizes, skip_layers):
