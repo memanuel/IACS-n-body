@@ -19,9 +19,11 @@ from utils import EpochLoss, TimeHistory
 # ********************************************************************************************************************* 
 def make_data_sin(n):
     """Make data arrays for mapping between theta and y = sin(theta)"""
+    # Half-interval width
+    dx = np.pi / (2*n)
     # Array of angles theta
-    theta = np.linspace(-np.pi/2.0, np.pi/2.0, n+1, dtype=np.float32)
-    
+    theta = np.linspace(-np.pi/2.0+dx, np.pi/2.0-dx, n, dtype=np.float32)
+
     # The sin of these angles
     y = np.sin(theta)
     
@@ -34,8 +36,10 @@ def make_data_sin(n):
 # ********************************************************************************************************************* 
 def make_data_cos(n):
     """Make data arrays for mapping between theta and x = cos(theta)"""
+    # Half-interval width
+    dx = np.pi / (2*n)
     # Array of angles theta
-    theta = np.linspace(0.0, np.pi, n+1, dtype=np.float32)
+    theta = np.linspace(0.0+dx, np.pi-dx, n, dtype=np.float32)
     
     # The cos of these angles
     x = np.cos(theta)
@@ -49,8 +53,10 @@ def make_data_cos(n):
 # ********************************************************************************************************************* 
 def make_data_circle(n):
     """Make data arrays for mapping between theta and (x,y) on unit circle"""
+    # Half-interval width
+    dx = np.pi / n
     # Array of angles theta
-    theta = np.linspace(-np.pi, np.pi, n+1, dtype=np.float32)
+    theta = np.linspace(-np.pi+dx, np.pi-dx, n, dtype=np.float32)
     
     # The cos and sin of these angles
     x = np.cos(theta)
@@ -432,6 +438,26 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
     return hist
 
 # ********************************************************************************************************************* 
+def make_features_pow(x, powers, input_name, output_name):
+    """
+    Make features with powers of an input feature
+    INPUTS:
+        x: the original feature
+        powers: list of integer powers, e.g. [1,3,5,7]        
+        input_name: the name of the input feature, e.g. 'x' or 'theta'
+        output_name: the name of the output feature layer, e.g. 'phi_0'
+    """
+    # List with layers x**p
+    xps = []
+    # Iterate over the specified powers
+    for p in powers:
+        xp = keras.layers.Lambda(lambda x: tf.pow(x, p) / tf.exp(tf.math.lgamma(p+1.0)), name=f'{input_name}_{p}')(x)
+        xps.append(xp)
+    
+    # Augmented feature layer
+    return keras.layers.concatenate(inputs=xps, name=output_name)
+
+# ********************************************************************************************************************* 
 def make_model_pow(func_name, input_name, output_name, powers, hidden_sizes, skip_layers):
     """
     Neural net model of functions using powers of x as features
@@ -463,7 +489,8 @@ def make_model_pow(func_name, input_name, output_name, powers, hidden_sizes, ski
         xps.append(xp)
     
     # Augmented feature layer
-    phi_0 = keras.layers.concatenate(inputs=xps, name='phi_0')
+    # phi_0 = keras.layers.concatenate(inputs=xps, name='phi_0')
+    phi_0 = make_features_pow(x=x, powers=powers, input_name='x', output_name='phi_0')
     phi_n = phi_0
 
     # Dense feature layers
