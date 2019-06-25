@@ -55,7 +55,7 @@ def make_data_circle(n):
     # The cos and sin of these angles
     x = np.cos(theta)
     y = np.sin(theta)
-    
+
     # Wrap data dict
     data = {'theta': theta,
             'x': x,
@@ -64,7 +64,7 @@ def make_data_circle(n):
     return data
 
 # ********************************************************************************************************************* 
-def make_data_polar(n_r, n_theta, r_min=0.5, r_max=32.0):
+def make_data_polar_radial(n_r, n_theta, r_min=0.5, r_max=32.0):
     """
     Make data arrays for mapping between (r, theta) and (x,y)
     Draw samples on a grid in polar coordinate space (r, theta) and transform to (x, y)
@@ -96,7 +96,7 @@ def make_data_polar(n_r, n_theta, r_min=0.5, r_max=32.0):
     return data
 
 # ********************************************************************************************************************* 
-def make_data_cart(n_a, a):
+def make_data_polar_grid(n_a, a):
     """
     Make data arrays for mapping between (r, theta) and (x,y)
     Draw samples on a square grid and transform to angles
@@ -211,6 +211,57 @@ def make_dataset_circle(n, batch_size=None):
     y = data['y']
     
     # Wrap the polar inputs into a dict
+    polar = {'theta': theta,}
+    polar_in = {'theta_in': theta,}
+    polar_out = {'theta_out': theta,}
+
+    # Wrap the two cartesian inputs into a dict
+    cart = {'x': x,
+            'y': y}
+    cart_in = {'x_in': x,
+               'y_in': y}
+    cart_out = {'x_out': x,
+                'y_out': y}
+
+    # Create DataSet object for polar to cartesian
+    ds_p2c = tf.data.Dataset.from_tensor_slices((polar, cart))
+    
+    # Create DataSet object for cartesian to polar
+    ds_c2p = tf.data.Dataset.from_tensor_slices((cart, polar))
+    
+    # Create DataSet object for polar to polar autoencoder
+    ds_p2p = tf.data.Dataset.from_tensor_slices((polar_in, polar_out))
+
+    # Create DataSet object for cartesian to cartesian autoencoder
+    d2_c2c = tf.data.Dataset.from_tensor_slices((cart_in, cart_out))
+
+    # Default batch_size is all the data
+    if batch_size is None:
+        batch_size = theta.shape[0]
+
+    # Set shuffle buffer size
+    buffer_size = theta.shape[0]
+
+    # Shuffle and batch data sets
+    ds_p2c = ds_p2c.shuffle(buffer_size).batch(batch_size)
+    ds_c2p = ds_c2p.shuffle(buffer_size).batch(batch_size)
+    ds_p2p = ds_p2p.shuffle(buffer_size).batch(batch_size)
+    ds_c2c = d2_c2c.shuffle(buffer_size).batch(batch_size)
+       
+    return ds_p2c, ds_c2p, ds_p2p, ds_c2c
+
+# ********************************************************************************************************************* 
+def make_dataset_circle_v1(n, batch_size=None):
+    """Make datasets for mapping between x and cos(theta)"""
+    # Make data dictionary
+    data = make_data_circle(n)
+    
+    # Unpack arrays
+    theta = data['theta']
+    x = data['x']
+    y = data['y']
+    
+    # Wrap the polar inputs into a dict
     polar_in = {'theta_in': theta,}
     polar_out = {'theta_out': theta,}
     polar_rec = {'theta_rec': theta,}
@@ -253,7 +304,7 @@ def make_dataset_circle(n, batch_size=None):
     return ds_p2c, ds_c2p, ds_p2p, ds_c2c
 
 # ********************************************************************************************************************* 
-def make_model_sin_math():
+def make_models_sin_math():
     """Mathematical model transforming between y and sin(theta)"""
     # Input layers
     theta = keras.Input(shape=(1,), name='theta')
@@ -282,7 +333,7 @@ def make_model_sin_math():
     return model_p2c, model_c2p, model_p2p, model_c2c
 
 # ********************************************************************************************************************* 
-def make_model_cos_math():
+def make_models_cos_math():
     """Mathematical model transforming between x and cos(theta)"""
     # Input layers
     theta = keras.Input(shape=(1,), name='theta')
@@ -311,7 +362,93 @@ def make_model_cos_math():
     return model_p2c, model_c2p, model_p2p, model_c2c
 
 # ********************************************************************************************************************* 
-def make_model_circle_math():
+def make_model_circle_math_p2c():
+    """Mathematical model transforming between theta and (x, y) on unit circle"""
+    # Input layer
+    theta = keras.Input(shape=(1,), name='theta')
+
+    # Compute sin(theta) and cos(theta)
+    x = keras.layers.Activation(tf.math.cos, name='x')(theta)
+    y = keras.layers.Activation(tf.math.sin, name='y')(theta)
+    
+    # Model for polar to cartesian
+    model_p2c = keras.Model(inputs=theta, outputs=[x, y], name='math_p2c')
+
+    return model_p2c
+
+def make_model_circle_math_c2p():
+    """Mathematical model transforming between theta and (x, y) on unit circle"""
+    # Input layers
+    x = keras.Input(shape=(1,), name='x')
+    y = keras.Input(shape=(1,), name='y')
+
+    # Compute atan2(y, x)
+    atan_func = lambda q: tf.math.atan2(q[1], q[0])
+    theta = keras.layers.Lambda(atan_func, name='theta')([x, y])
+
+    # Model cartesian to polar
+    model_c2p = keras.Model(inputs=[x, y], outputs=theta, name='math_c2p')
+
+    return model_c2p
+
+def make_model_circle_math_c2c():
+    """Mathematical model transforming between theta and (x, y) on unit circle"""
+    # Input layers
+    x_in = keras.Input(shape=(1,), name='x_in')
+    y_in = keras.Input(shape=(1,), name='y_in')
+
+    # Models for p2c and c2p
+    model_p2c = make_model_circle_math_p2c()
+    model_c2p = make_model_circle_math_c2p()
+
+    # Theta from (x_in, y_in)
+    theta = model_c2p([x_in, y_in])
+    # (x_out, y_out) from theta
+    [x_out, y_out] = model_p2c(theta)
+
+    # Rename output layers using identity layers; otherwise can't pass dataset with named variables
+    x_out = keras.layers.Activation(tf.identity, name='x_out')(x_out)
+    y_out = keras.layers.Activation(tf.identity, name='y_out')(y_out)
+
+    # Model cartesian to cartesian
+    model_c2c = keras.Model(inputs=[x_in, y_in], outputs=[x_out, y_out], name='math_c2c')
+
+    return model_c2c
+
+def make_model_circle_math_p2p():
+    """Mathematical model transforming between theta and (x, y) on unit circle"""
+    # Input layer
+    theta_in = keras.Input(shape=(1,), name='theta_in')
+
+    # Models for p2c and c2p
+    model_p2c = make_model_circle_math_p2c()
+    model_c2p = make_model_circle_math_c2p()
+
+    # (x, y) from theta_in
+    [x, y] = model_p2c(theta_in)
+    # theta_out from (x, y)
+    theta_out = model_c2p([x, y])
+
+    # Rename output layer using identity layers; otherwise can't pass dataset with named variables
+    theta_out = keras.layers.Activation(tf.identity, name='theta_out')(theta_out)
+
+    # Models polar to polar
+    model_p2p = keras.Model(inputs=theta_in, outputs=theta_out, name='math_p2p')
+    
+    return model_p2p
+
+# ********************************************************************************************************************* 
+def make_models_circle_math():
+    """Mathematical model transforming between theta and (x, y) on unit circle"""
+    model_p2c = make_model_circle_math_p2c()
+    model_c2p = make_model_circle_math_c2p()
+    model_c2c = make_model_circle_math_c2c()
+    model_p2p = make_model_circle_math_p2p()
+    
+    return model_p2c, model_c2p, model_p2p, model_c2c
+
+# ********************************************************************************************************************* 
+def make_models_circle_math_v1():
     """Mathematical model transforming between theta and (x, y) on unit circle"""
     # Input layers
     theta_in = keras.Input(shape=(1,), name='theta_in')
