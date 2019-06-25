@@ -18,18 +18,18 @@ keras = tf.keras
 def make_model_r2bc_math():
     """Create an anlytical model for the restricted two body circular problem"""
     # Create input layers
-    t = keras.Input(shape=(1,), name='t')
+    t = keras.Input(shape=(None, 1,), name='t')
     q0 = keras.Input(shape=(2,), name='q0')
     v0 = keras.Input(shape=(2,), name='v0')
     # The combined input layers
     inputs = [t, q0, v0]
 
     # Compute the norm of a 2D vector
-    norm_func = lambda q : tf.norm(q, axis=1)
+    norm_func = lambda q : tf.norm(q, axis=1, keepdims=True)
 
     # The radius r; this is the same at time 0 and t
     r = keras.layers.Activation(norm_func, name='r')(q0)
-    
+
     # Cube of r    
     cube_func = lambda x : tf.pow(x, 3)
     r3 = keras.layers.Activation(cube_func, name='r3')(r)
@@ -37,65 +37,76 @@ def make_model_r2bc_math():
     # The angular velocity omega
     mu = tf.constant((2.0*np.pi)**2, name='mu')
     mu_over_r3 = tf.divide(mu, r3, name='mu_over_r3')
-    omega = keras.layers.Activation(tf.sqrt, name='omega')(mu_over_r3)
+    omega_vec = keras.layers.Activation(tf.sqrt, name='omega_vec')(mu_over_r3)
+    # TODO: compute omega directly from angular momentum q0 x v0
     
-    # Negative of omega and omega2; used below for computing the velocity and acceleration components
-    neg_omega = keras.layers.Activation(activation=tf.negative, name='neg_omega')(omega)
-    neg_omega2 = keras.layers.multiply(inputs=[neg_omega, omega], name='neg_omega2')
+    # Get the trajectory size
+    traj_size = t.shape[1]
     
-    # Slice out x and y from a 2D vector
-    slice_x = lambda q : tf.slice(q, [0, 0], [-1, 1]) 
-    slice_y = lambda q : tf.slice(q, [0, 1], [-1, 1]) 
-    
-    # Extract x and y from q0
-    q0x = keras.layers.Lambda(slice_x, name='q0x')(q0)
-    q0y = keras.layers.Lambda(slice_y, name='q0y')(q0)
-    
-    # The initial angle theta0
-    theta0 = tf.atan2(q0y, q0x, name='theta0')
-    
-    # The angle theta at time t
-    # theta = omega * t + theta0
-    omega_t = keras.layers.multiply(inputs=[omega, t], name='omega_t')
-    theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
-    
-    # Cosine and sine of theta
-    cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
-    sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
+    # Repeat omega to be a vector of shape matching t
+    # omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega_vec)
+#
+#    # Negative of omega and omega2; used below for computing the velocity and acceleration components
+#    neg_omega = keras.layers.Activation(activation=tf.negative, name='neg_omega')(omega)
+#    neg_omega2 = keras.layers.multiply(inputs=[neg_omega, omega], name='neg_omega2')
+#
+#    # Slice out x and y from a 2D vector    
+#    # slice_x = lambda q : tf.slice(q, [0, 0], [-1, 1]) 
+#    # slice_y = lambda q : tf.slice(q, [0, 1], [-1, 1]) 
+#
+#    # Extract x and y from q0
+#    # q0x = keras.layers.Lambda(slice_x, name='q0x')(q0)
+#    # q0y = keras.layers.Lambda(slice_y, name='q0y')(q0)
+#
+#    # The initial angle theta0
+#    # theta0 = tf.atan2(q0y, q0x, name='theta0')
+#    atan_func = lambda q : tf.atan2(q[1], q[0])
+#    theta0 = keras.layers.Lambda(atan_func)(q0)
+#
+#    # The angle theta at time t
+#    # theta = omega * t + theta0
+#    omega_t = keras.layers.multiply(inputs=[omega, t], name='omega_t')
+#    theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
+#
+#    # Cosine and sine of theta
+#    cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
+#    sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
+#
+#    # Compute qx and qy from r, theta
+#    qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
+#    qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
+#    q = keras.layers.concatenate(inputs=[qx, qy], name='q')
+#    
+#    # Compute vx and vy from r, theta
+#    vx = keras.layers.multiply(inputs=[neg_omega, qy], name='vx')
+#    vy = keras.layers.multiply(inputs=[omega, qx], name='vy')
+#    v = keras.layers.concatenate(inputs=[vx, vy], name='v')
+#
+#    # Compute ax and ay from r, theta
+#    ax = keras.layers.multiply(inputs=[neg_omega2, qx], name='ax')
+#    ay = keras.layers.multiply(inputs=[neg_omega2, qy], name='ay')
+#    a = keras.layers.concatenate(inputs=[ax, ay], name='a')
+#
+#    # The sine and cosine of theta0 are used for the recovered initial configuration
+#    cos_theta0 = keras.layers.Activation(activation=tf.cos, name='cos_theta0')(theta0)
+#    sin_theta0 = keras.layers.Activation(activation=tf.sin, name='sin_theta0')(theta0)
+#
+#    # The recovered initial position q0_rec
+#    qx0_rec = keras.layers.multiply(inputs=[r, cos_theta0], name='qx0_rec')
+#    qy0_rec = keras.layers.multiply(inputs=[r, sin_theta0], name='qy0_rec')
+#    q0_rec = keras.layers.concatenate(inputs=[qx0_rec, qy0_rec], name='q0_rec')
+#
+#    # The recovered initial velocity v0_rec
+#    vx0_rec = keras.layers.multiply(inputs=[neg_omega, qy0_rec], name='vx0_rec')
+#    vy0_rec = keras.layers.multiply(inputs=[omega, qx0_rec], name='vy0_rec')
+#    v0_rec = keras.layers.concatenate(inputs=[vx0_rec, vy0_rec], name='v0_rec')       
+#
+#    # The combined output layers
+#    outputs = [q, v, a, q0_rec, v0_rec]
+#    
+#    model = keras.Model(inputs=inputs, outputs=outputs, name='r2bc_math')
 
-    # Compute qx and qy from r, theta
-    qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
-    qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
-    q = keras.layers.concatenate(inputs=[qx, qy], name='q')
-    
-    # Compute vx and vy from r, theta
-    vx = keras.layers.multiply(inputs=[neg_omega, qy], name='vx')
-    vy = keras.layers.multiply(inputs=[omega, qx], name='vy')
-    v = keras.layers.concatenate(inputs=[vx, vy], name='v')
-
-    # Compute ax and ay from r, theta
-    ax = keras.layers.multiply(inputs=[neg_omega2, qx], name='ax')
-    ay = keras.layers.multiply(inputs=[neg_omega2, qy], name='ay')
-    a = keras.layers.concatenate(inputs=[ax, ay], name='a')
-
-    # The sine and cosine of theta0 are used for the recovered initial configuration
-    cos_theta0 = keras.layers.Activation(activation=tf.cos, name='cos_theta0')(theta0)
-    sin_theta0 = keras.layers.Activation(activation=tf.sin, name='sin_theta0')(theta0)
-
-    # The recovered initial position q0_rec
-    qx0_rec = keras.layers.multiply(inputs=[r, cos_theta0], name='qx0_rec')
-    qy0_rec = keras.layers.multiply(inputs=[r, sin_theta0], name='qy0_rec')
-    q0_rec = keras.layers.concatenate(inputs=[qx0_rec, qy0_rec], name='q0_rec')
-
-    # The recovered initial velocity v0_rec
-    vx0_rec = keras.layers.multiply(inputs=[neg_omega, qy0_rec], name='vx0_rec')
-    vy0_rec = keras.layers.multiply(inputs=[omega, qx0_rec], name='vy0_rec')
-    v0_rec = keras.layers.concatenate(inputs=[vx0_rec, vy0_rec], name='v0_rec')       
-
-    # The combined output layers
-    outputs = [q, v, a, q0_rec, v0_rec]
-    
-    model = keras.Model(inputs=inputs, outputs=outputs, name='r2bc_math')
+    model = keras.Model(inputs=inputs, outputs=omega_vec)
     return model
 
 # ********************************************************************************************************************* 

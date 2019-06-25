@@ -63,15 +63,15 @@ def make_traj_r2bc(r, theta0, n_years):
     ay = -omega**2 * qy
     a = np.stack([ax, ay], axis=1)
 
-    # Repeat vectors for the initial position q0
-    qx0 = np.ones(N) * qx[0]
-    qy0 = np.ones(N) * qy[0]
-    q0 = np.stack([qx0, qy0], axis=1)
+    # Initial position q0
+    qx0 = qx[0]
+    qy0 = qy[0]
+    q0 = np.stack([qx0, qy0], axis=0)
     
     # Repeat vectors for the initial velocity v0
-    vx0 = np.ones(N) * vx[0]
-    vy0 = np.ones(N) * vy[0]
-    v0 = np.stack([vx0, vy0], axis=1)
+    vx0 = vx[0]
+    vy0 = vy[0]
+    v0 = np.stack([vx0, vy0], axis=0)
     
     # Assemble the input dict
     inputs = {
@@ -105,17 +105,21 @@ def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float
     sample_freq = 365
     # Number of samples including both start and end in each trajectory
     traj_size = sample_freq*n_years + 1
-    # Total size of the output
-    n_rows = n_traj * traj_size
+    # Number of spatial dimensions
+    space_dims = 2
 
+    # Shape of initial conditions and output trajectories
+    time_shape = (n_traj, traj_size)
+    init_shape = (n_traj, space_dims)
+    traj_shape = (n_traj, traj_size, space_dims)
+    
     # Initialize six arrays for the data
-    vec_shape = (n_rows, 2)
-    t = np.zeros(n_rows, dtype=np.float32)
-    q0 = np.zeros(vec_shape, dtype=np.float32)
-    v0 = np.zeros(vec_shape, dtype=np.float32)
-    q = np.zeros(vec_shape, dtype=np.float32)
-    v = np.zeros(vec_shape, dtype=np.float32)
-    a = np.zeros(vec_shape, dtype=np.float32)
+    t = np.zeros(time_shape, dtype=np.float32)
+    q0 = np.zeros(init_shape, dtype=np.float32)
+    v0 = np.zeros(init_shape, dtype=np.float32)
+    q = np.zeros(traj_shape, dtype=np.float32)
+    v = np.zeros(traj_shape, dtype=np.float32)
+    a = np.zeros(traj_shape, dtype=np.float32)
     
     # Set random seed for reproducible results
     np.random.seed(seed=seed)
@@ -129,16 +133,13 @@ def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float
         # Generate one trajectory
         inputs, outputs = make_traj_r2bc(r=r, theta0=theta0, n_years=n_years)
         
-        # Range of rows for this trajectory
-        j0 = (i+0) * traj_size
-        j1 = (i+1) * traj_size
         # Copy results into main arrays
-        t[j0:j1] = inputs['t']
-        q0[j0:j1, :] = inputs['q0']
-        v0[j0:j1, :] = inputs['v0']
-        q[j0:j1, :] = outputs['q']
-        v[j0:j1, :] = outputs['v']
-        a[j0:j1, :] = outputs['a']
+        t[i, :] = inputs['t']
+        q0[i, :] = inputs['q0']
+        v0[i, :] = inputs['v0']
+        q[i, :, :] = outputs['q']
+        v[i, :, :] = outputs['v']
+        a[i, :, :] = outputs['a']
 
     # Assemble the input dict
     inputs = {
@@ -157,30 +158,6 @@ def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float
     
     # Return the dicts
     return (inputs, outputs)
-
-# ********************************************************************************************************************* 
-def data_even_batch(inputs, outputs, batch_size=256):
-    """Prune the ragged end of a data set so it has an even number of batches"""
-    # The number of rows
-    size = inputs['t'].shape[0]
-    size = size - size % batch_size
-
-    # The fields shaped as 2D arrays
-    input_fields = ('q0', 'v0')
-    output_fields = ('q', 'v', 'a', 'q0_rec', 'v0_rec')
-    
-    # Prune the time array
-    inputs['t'] = inputs['t'][0:size]
-    
-    # Prune the input 2D arrays
-    for field in input_fields:
-        inputs[field] = inputs[field][0:size, :]
-    
-    # Prune the output 2D arrays
-    for field in output_fields:
-        outputs[field] = outputs[field][0:size, :]
-    
-    return inputs, outputs
 
 # ********************************************************************************************************************* 
 def make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size):
@@ -202,11 +179,6 @@ def make_datasets_r2bc(n_traj, vt_split, n_years, r_min, r_max, seed, batch_size
                                               r_min=r_min, r_max=r_max, seed=seed_val)
     inputs_tst, outputs_tst = make_train_r2bc(n_traj=n_traj_tst, n_years=n_years, 
                                               r_min=r_min, r_max=r_max, seed=seed_tst)
-
-    # Clean up data sets to have an even number of batchs
-    # inputs_trn, outputs_trn = data_even_batch(inputs_trn, outputs_trn, batch_size)
-    # inputs_val, outputs_val = data_even_batch(inputs_val, outputs_val, batch_size)
-    # inputs_tst, outputs_tst = data_even_batch(inputs_tst, outputs_tst, batch_size)
 
     # Create DataSet objects for train, val and test sets
     ds_trn = tf.data.Dataset.from_tensor_slices((inputs_trn, outputs_trn))
