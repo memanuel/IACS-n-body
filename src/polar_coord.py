@@ -538,6 +538,65 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
     return hist
 
 # ********************************************************************************************************************* 
+def make_model_arctan(hidden_sizes, skip_layers):
+    """
+    Neural net model of arctan function
+    """
+    # Input layer
+    z = keras.Input(shape=(1,), name='z')
+    
+    # Compute transform z / (1+z^2)
+    z_over_1pz2 = keras.layers.Lambda(lambda z : z / (1.0 + z * z), name='z_over_1pz2')(z)
+    
+    # Compute features in Euler power series expansion of arctan
+    # https://en.wikipedia.org/wiki/Inverse_trigonometric_functions (search for Euler)
+    f1 = z_over_1pz2
+    a0 = f1
+    
+    f2 = keras.layers.Lambda(lambda f: tf.pow(f, 2), name='f2')(z_over_1pz2)
+    a1 = keras.layers.multiply(inputs=[f2, z], name='z3_over_1pz2_2')
+    
+    f3 = keras.layers.Lambda(lambda f: tf.pow(f, 3), name='f3')(z_over_1pz2)
+    z2 = keras.layers.Lambda(lambda z: tf.pow(z, 2), name='z2')(z)
+    a2 = keras.layers.multiply(inputs=[f3, z2], name='z5_over_1pz2_3')
+
+    f4 = keras.layers.Lambda(lambda f: tf.pow(f, 4), name='f4')(z_over_1pz2)
+    z3 = keras.layers.Lambda(lambda z: tf.pow(z, 3), name='z3')(z)
+    a3 = keras.layers.multiply(inputs=[f4, z3], name='z7_over_1pz2_3')
+
+    # Number of hidden layers
+    num_layers = len(hidden_sizes)
+
+    # Augmented feature layer - transforms of z^(2n+1) / (1+z^2)^(n+1)
+    phi_0 = keras.layers.concatenate([a0, a1, a2, a3], name='phi_0')
+    phi_n = phi_0
+
+    # Dense feature layers
+    
+    # First hidden layer if applicable
+    if num_layers > 0:
+        phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
+        if skip_layers:
+            phi_1 = keras.layers.concatenate(inputs=[phi_0, phi_1], name='phi_1_aug')
+        phi_n = phi_1
+
+    # Second hidden layer if applicable
+    if num_layers > 1:
+        phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
+        if skip_layers:
+            phi_2 = keras.layers.concatenate(inputs=[phi_1, phi_2], name='phi_2_aug')
+        phi_n = phi_2
+
+    # Output layer
+    # y = keras.layers.Dense(units=1, kernel_initializer='zeros', name='theta')(phi_n)
+    y = keras.layers.Dense(units=1, name='theta')(phi_n)
+
+    # Wrap into a model
+    model_name = f'model_arctan_' + str(hidden_sizes)
+    model = keras.Model(inputs=z, outputs=y, name=model_name) 
+    return model
+
+# ********************************************************************************************************************* 
 def make_model_circle_p2c(powers, hidden_sizes, skip_layers):
     """
     Neural net model from theta to (x, y)
