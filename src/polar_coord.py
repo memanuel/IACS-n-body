@@ -484,6 +484,23 @@ def make_models_circle_math():
     return model_p2c, model_c2p, model_p2p, model_c2c
 
 # ********************************************************************************************************************* 
+def make_model_autoencoder(model_p2c, model_c2p):
+    """Generate two autoencoder models"""
+    # autoencoder from p to p
+    theta_in = keras.Input(shape=(1,), name='theta')
+    y = model_p2c(theta_in)
+    theta_out = model_c2p(y)
+    model_p2p = keras.Model(theta_in, theta_out)
+    
+    # autoencoder from c to c
+    y_in = keras.Input(shape=(1,), name='y')
+    theta = model_c2p(y_in)
+    y_out = model_p2c(theta)
+    model_c2c = keras.Model(y_in, y_out)
+
+    return model_p2p, model_c2c
+
+# ********************************************************************************************************************* 
 def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq):
     # Compile the model
     model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
