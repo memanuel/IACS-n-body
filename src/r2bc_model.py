@@ -21,19 +21,116 @@ keras = tf.keras
 # ********************************************************************************************************************* 
 class AngularMomentum2D(keras.layers.Layer):
     """Compute the angular momentum from initial position and velocity in 2D"""
-    def __init__(self, **kwargs):
-        super(AngularMomentum2D, self).__init__(**kwargs)
-        
     def call(self, inputs):
         # Unpack inputs
-        # Expected shape of q0 and v0 is (batch_size,)
-        q0, v0 = inputs[0], inputs[1]
+        # Shape of q0 and v0 is (batch_size, 2,)
+        # q0, v0 = inputs[0], inputs[1]
+        q0, v0 = inputs
         
         # Compute the angular momentum
-        L0z = (q0[:,0]*v0[:,1]) - (q0[:,1]*v0[:,0])
+        L0 = (q0[:,0]*v0[:,1]) - (q0[:,1]*v0[:,0])
 
         # Reshape from (batch_size,) to (batch_size, 1)
-        return keras.layers.Reshape(target_shape=(1,))(L0z)
+        return keras.layers.Reshape(target_shape=(1,))(L0)
+    
+class InitialPolar(keras.layers.Layer):
+    def call(self, inputs):
+        """Compute r0, thetat0 and omega0 from initial conditions"""
+        # Unpack inputs
+        # q0 and v0 have shape (batch_size, 2,)
+        q0, v0 = inputs
+        
+        # Wrap division operator
+        div_func = lambda xx: tf.math.divide(xx[0], xx[1])
+        
+        # Compute the norm of a 2D vector
+        norm_func = lambda q : tf.norm(q, axis=1, keepdims=True)
+    
+        # Compute the argument theta of a point q = (x, y)
+        # theta reshaped to (batch_size, 1,)
+        arg_func = lambda q : tf.reshape(tensor=tf.atan2(y=q[:,1], x=q[:,0]), shape=(-1, 1,))
+
+        # The radius r0 at time t=0
+        # r0 will have shape (batch_size, 1,)
+        r0 = keras.layers.Activation(norm_func, name='r0')(q0)
+
+        # The initial angle theta0
+        # theta0 will have shape (batch_size, 1)
+        theta0 = keras.layers.Lambda(arg_func, name='theta0')(q0)
+
+        # Compute the angular momentum and square of r0
+        L0 = AngularMomentum2D(name='ang_mom')([q0, v0])
+        r0_2 = keras.layers.Activation(tf.square, name='r0_2')(r0)
+
+        # Compute the angular velocity omega from angular momentum and r0
+        # omega will have shape (batch_size, 1,)
+        omega0 = keras.layers.Lambda(div_func, name='omega0')([L0, r0_2])    
+        
+        # Return the three inital polar quantities
+        return r0, theta0, omega0
+    
+# ********************************************************************************************************************* 
+class MotionR2BC(keras.layers.Layer):
+    def call(self, inputs):
+        """
+        Compute orbits for the restricted two body circular problem from 
+        the initial polar coordinates (orbital elements)
+        INPUTS:
+            t: the times to report the orbit; shape (batch_size, traj_size, 1,)
+            r0: the initial distance; shape (batch_size, 1,)
+            theta0: the initial angle; shape (batch_size, 1,)
+            omega0: the angular velocity; shape (batch_size, 1,)
+        OUTPUTS:
+            q: the position at time t; shape (batch_size, traj_size, 2)
+            v: the velocity at time t; shape (batch_size, traj_size, 2)
+            a: the acceleration at time t; shape (batch_size, traj_size, 2)
+        """
+        # Unpack inputs
+        t, r0, theta0, omega0 = inputs
+        
+        # Get the trajectory size; default to 731 (2 years) so TF doesn't get upset at compile time
+        traj_size = t.shape[1]
+
+        # Shape of outputs is (batch_size, traj_size, 2); each component has 1 in last place
+        target_shape = (traj_size, 1)
+
+        # Reshape t to have shape (traj_size, 1)
+        t = keras.layers.Reshape(target_shape=target_shape, name='t_3d')(t)
+        
+        # Repeat r, theta0 and omega to be vectors of shape matching t
+        r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
+        theta0 = keras.layers.RepeatVector(n=traj_size, name='theta0')(theta0)
+        omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
+
+        # Negative of omega and omega2; used below for computing the velocity and acceleration components
+        neg_omega = keras.layers.Activation(activation=tf.negative, name='neg_omega')(omega)
+        neg_omega2 = keras.layers.multiply(inputs=[neg_omega, omega], name='neg_omega2')
+
+        # The angle theta at time t
+        # theta = omega * t + theta0
+        omega_t = keras.layers.multiply(inputs=[omega, t], name='omega_t')
+        theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
+
+        # Cosine and sine of theta
+        cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
+        sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
+
+        # Compute qx and qy from r, theta
+        qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
+        qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
+        q = keras.layers.concatenate(inputs=[qx, qy], axis=2, name='q')
+
+        # Compute vx and vy from r, theta
+        vx = keras.layers.multiply(inputs=[neg_omega, qy], name='vx')
+        vy = keras.layers.multiply(inputs=[omega, qx], name='vy')
+        v = keras.layers.concatenate(inputs=[vx, vy], name='v')
+
+        # Compute ax and ay from r, theta
+        ax = keras.layers.multiply(inputs=[neg_omega2, qx], name='ax')
+        ay = keras.layers.multiply(inputs=[neg_omega2, qy], name='ay')
+        a = keras.layers.concatenate(inputs=[ax, ay], name='a')
+        
+        return q, v, a
     
 # ********************************************************************************************************************* 
 # Functional API Models
@@ -53,11 +150,6 @@ def make_model_r2bc_math(traj_size=731):
     # Get the trajectory size; default to 731 (2 years) so TF doesn't get upset at compile time
     traj_size = t.shape[1] or traj_size
 
-    # One-liners to add and multiply two vectors
-    # These are convenient because they use broadcoasting
-    # Wrapping these lambda functions in a layers.Lambda layer gives them nice names and makes them easier to save
-    div_func = lambda xx: tf.math.divide(xx[0], xx[1])
-
     # Compute the norm of a 2D vector
     norm_func = lambda q : tf.norm(q, axis=1, keepdims=True)
     
@@ -67,65 +159,34 @@ def make_model_r2bc_math(traj_size=731):
     # Shape of outputs is (batch_size, traj_size, 2); each component has 1 in last place
     target_shape = (traj_size, 1)
 
-    # Reshape t to have shape (traj_size, 1)
-    t = keras.layers.Reshape(target_shape=target_shape, name='t_3d')(t)
+    # The polar coordinates of the initial conditions
+    # r0, theta0, and omega0 each scalars in each batch
+    r0, theta0, omega0 = InitialPolar(name='InitialPolar')([q0, v0])
     
-    # The radius r0 at time t=0
-    r0 = keras.layers.Activation(norm_func, name='r0')(q0)
+    # Name the outputs of the initial polar
+    r0 = keras.layers.Lambda(tf.identity, name='r0')(r0)
+    theta0 = keras.layers.Lambda(tf.identity, name='theta0')(theta0)
+    omega0 = keras.layers.Lambda(tf.identity, name='omega0')(omega0)
 
-    # Repeat r to be a vector of shape matching t
+    # Repeat r, theta0 and omega to be vectors of shape matching t
     r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
-
-    # mu = tf.constant((2.0*np.pi)**2, name='mu')
-
-    # Compute the angular momentum and square of r0
-    L0z = AngularMomentum2D(name='ang_mom')([q0, v0])
-    r0_2 = keras.layers.Activation(tf.square, name='r0_2')(r0)
-
-    # Compute the angular velocity omega from angular momentum and r0
-    omega0 = keras.layers.Lambda(div_func, name='omega0')([L0z, r0_2])    
-    # Repeat omega to be a vector of shape matching t
     omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
 
-    # Negative of omega and omega2; used below for computing the velocity and acceleration components
-    neg_omega = keras.layers.Activation(activation=tf.negative, name='neg_omega')(omega)
-    neg_omega2 = keras.layers.multiply(inputs=[neg_omega, omega], name='neg_omega2')
-
-    # The initial angle theta0
-    atan_func = lambda q : tf.reshape(tensor=tf.atan2(y=q[:,1], x=q[:,0]), shape=(-1,1,1))
-    # theta0_scalar = keras.layers.Lambda(atan_func, name='theta0_scalar')(q0)
-    theta0 = keras.layers.Lambda(atan_func, name='theta0')(q0)
-
-    # The angle theta at time t
-    # theta = omega * t + theta0
-    omega_t = keras.layers.multiply(inputs=[omega, t], name='omega_t')
-    theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
-    # theta = keras.layers.Lambda(add_func, name='theta')([omega_t, theta0])
-
-    # Cosine and sine of theta
-    cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
-    sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
-
-    # Compute qx and qy from r, theta
-    qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
-    qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
-    q = keras.layers.concatenate(inputs=[qx, qy], axis=2, name='q')
-   
-    # Compute vx and vy from r, theta
-    vx = keras.layers.multiply(inputs=[neg_omega, qy], name='vx')
-    vy = keras.layers.multiply(inputs=[omega, qx], name='vy')
-    v = keras.layers.concatenate(inputs=[vx, vy], name='v')
-
-    # Compute ax and ay from r, theta
-    ax = keras.layers.multiply(inputs=[neg_omega2, qx], name='ax')
-    ay = keras.layers.multiply(inputs=[neg_omega2, qy], name='ay')
-    a = keras.layers.concatenate(inputs=[ax, ay], name='a')
+    # Compute the circular motion
+    q, v, a = MotionR2BC(name='MotionR2BC')([t, r0, theta0, omega0])
     
+    # Name the outputs of the circular motion
+    q = keras.layers.Lambda(tf.identity, name='q')(q)
+    v = keras.layers.Lambda(tf.identity, name='v')(v)
+    a = keras.layers.Lambda(tf.identity, name='a')(a)
+   
     # Compute q0_rec and v0_rec
     q0_rec = keras.layers.Lambda(initial_row_func, name='q0_rec')(q)
     v0_rec = keras.layers.Lambda(initial_row_func, name='v0_rec')(v)
     
-    model = keras.Model(inputs=inputs, outputs=[q, v, a, q0_rec, v0_rec], name='model_math')
+    # Wrap this up into a model
+    outputs = [q, v, a, q0_rec, v0_rec]
+    model = keras.Model(inputs=inputs, outputs=outputs, name='model_math')
     return model
 
 # ********************************************************************************************************************* 
