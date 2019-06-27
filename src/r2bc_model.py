@@ -105,49 +105,59 @@ class MotionR2BC(keras.layers.Layer):
         """
         # Unpack inputs
         t, r0, theta0, omega0 = inputs
+
+        # Evaluation of the position is under the scope of two gradient tapes
+        # These are for velocity and acceleration
+        with tf.GradientTape(persistent=True) as gt2:
+            gt2.watch(t)       
         
-        # Get the trajectory size; default to 731 (2 years) so TF doesn't get upset at compile time
-        traj_size = t.shape[1]
-
-        # Shape of outputs is (batch_size, traj_size, 2); each component has 1 in last place
-        target_shape = (traj_size, 1)
-
-        # Reshape t to have shape (traj_size, 1)
-        t = keras.layers.Reshape(target_shape=target_shape, name='t_3d')(t)
+            with tf.GradientTape(persistent=True) as gt1:
+                gt1.watch(t)       
         
-        # Repeat r, theta0 and omega to be vectors of shape matching t
-        r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
-        theta0 = keras.layers.RepeatVector(n=traj_size, name='theta0')(theta0)
-        omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
+                # Get the trajectory size; default to 731 (2 years) so TF doesn't get upset at compile time
+                traj_size = t.shape[1]
 
-        # Negative of omega and omega2; used below for computing the velocity and acceleration components
-        neg_omega = keras.layers.Activation(activation=tf.negative, name='neg_omega')(omega)
-        neg_omega2 = keras.layers.multiply(inputs=[neg_omega, omega], name='neg_omega2')
+                # Shape of outputs is (batch_size, traj_size, 2); each component has 1 in last place
+                target_shape = (traj_size, 1)
 
-        # The angle theta at time t
-        # theta = omega * t + theta0
-        omega_t = keras.layers.multiply(inputs=[omega, t], name='omega_t')
-        theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
+                # Reshape t to have shape (traj_size, 1)
+                t_3d = keras.layers.Reshape(target_shape=target_shape, name='t_3d')(t)
 
-        # Cosine and sine of theta
-        cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
-        sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
+                # Repeat r, theta0 and omega to be vectors of shape matching t
+                r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
+                theta0 = keras.layers.RepeatVector(n=traj_size, name='theta0')(theta0)
+                omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
 
-        # Compute qx and qy from r, theta
-        qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
-        qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
-        q = keras.layers.concatenate(inputs=[qx, qy], axis=2, name='q')
+                # Negative of omega and omega2; used below for computing the velocity and acceleration components
+                neg_omega = keras.layers.Activation(activation=tf.negative, name='neg_omega')(omega)
+                neg_omega2 = keras.layers.multiply(inputs=[neg_omega, omega], name='neg_omega2')
 
-        # Compute vx and vy from r, theta
-        vx = keras.layers.multiply(inputs=[neg_omega, qy], name='vx')
-        vy = keras.layers.multiply(inputs=[omega, qx], name='vy')
-        v = keras.layers.concatenate(inputs=[vx, vy], name='v')
+                # The angle theta at time t
+                # theta = omega * t + theta0
+                omega_t = keras.layers.multiply(inputs=[omega, t_3d], name='omega_t')
+                theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
 
-        # Compute ax and ay from r, theta
-        ax = keras.layers.multiply(inputs=[neg_omega2, qx], name='ax')
-        ay = keras.layers.multiply(inputs=[neg_omega2, qy], name='ay')
+                # Cosine and sine of theta
+                cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
+                sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
+
+                # Compute qx and qy from r, theta
+                qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
+                qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
+                q = keras.layers.concatenate(inputs=[qx, qy], axis=2, name='q')
+
+            # Compute the velocity v = dq/dt with gt1
+            vx = gt1.gradient(qx, t_3d)
+            vy = gt1.gradient(qy, t_3d)
+            v = keras.layers.concatenate(inputs=[vx, vy], name='v')
+            del gt1
+            
+        # Compute the acceleration a = d2q/dt2 = dv/dt with gt2
+        ax = gt2.gradient(vx, t_3d)
+        ay = gt2.gradient(vy, t_3d)
         a = keras.layers.concatenate(inputs=[ax, ay], name='a')
-        
+        del gt2
+            
         return q, v, a
     
 # ********************************************************************************************************************* 
