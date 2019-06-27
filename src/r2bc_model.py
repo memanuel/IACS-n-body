@@ -30,11 +30,11 @@ class KineticEnergy(keras.layers.Layer):
         v = inputs
         
         # Compute the kinetic energy
-        T = 0.5 * tf.norm(v, axis=2)
+        T = 0.5 * tf.norm(v, axis=-1, keepdims=True)
 
         # Reshape from (batch_size,) to (batch_size, 1)
         return T
-    
+
 # ********************************************************************************************************************* 
 class AngularMomentum2D(keras.layers.Layer):
     """Compute the angular momentum from initial position and velocity in 2D"""
@@ -53,7 +53,7 @@ class AngularMomentum2D(keras.layers.Layer):
 # ********************************************************************************************************************* 
 class ConfigToPolar2D(keras.layers.Layer):
     def call(self, inputs):
-        """Compute r0, thetat0 and omega0 from initial conditions"""
+        """Compute r0, thetat0 and omega0 from initial configuration (q0, v0)"""
         # Unpack inputs
         # q0 and v0 have shape (batch_size, 2,)
         q0, v0 = inputs
@@ -127,10 +127,6 @@ class MotionR2BC(keras.layers.Layer):
                 r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
                 theta0 = keras.layers.RepeatVector(n=traj_size, name='theta0')(theta0)
                 omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
-
-                # Negative of omega and omega2; used below for computing the velocity and acceleration components
-                neg_omega = keras.layers.Activation(activation=tf.negative, name='neg_omega')(omega)
-                neg_omega2 = keras.layers.multiply(inputs=[neg_omega, omega], name='neg_omega2')
 
                 # The angle theta at time t
                 # theta = omega * t + theta0

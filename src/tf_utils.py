@@ -84,7 +84,17 @@ class Identity(keras.layers.Activation):
     """Identity layer for labeling outputs in models"""
     def __init__(self, **kwargs):
         super(Identity, self).__init__(activation = tf.identity, **kwargs)
+
+# ********************************************************************************************************************* 
+class Divide(keras.layers.Layer):
+    """Division"""
+    def call(self, inputs):
+        # Unpack inputs
+        x, y = inputs
         
+        # Return quotient x / y
+        return tf.divide(x, y)
+
 # ********************************************************************************************************************* 
 def make_features_pow(x, powers, input_name, output_name):
     """
@@ -95,7 +105,7 @@ def make_features_pow(x, powers, input_name, output_name):
         input_name: the name of the input feature, e.g. 'x' or 'theta'
         output_name: the name of the output feature layer, e.g. 'phi_0'
     """
-    # List with layers x**p
+    # List with layers x**p / p!
     xps = []
     # Iterate over the specified powers
     for p in powers:

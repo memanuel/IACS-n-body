@@ -16,12 +16,12 @@ import matplotlib.pyplot as plt
 keras = tf.keras
 
 # ********************************************************************************************************************* 
-def make_traj_r2bc(r, theta0, n_years):
+def make_traj_r2bc(r0, theta0, n_years):
     """
     Make an array of training data points for the restricted 2 body circular problem.
     Creates one trajectory with the same initial configuration.
     INPUTS:
-    r: The radius of the orbit in AU
+    r0: The radius of the orbit in AU
     theta0: the angle of the planet in the ecliptic at time 0 years
     n_years: the number of years of data to simulate
     RETURNS:
@@ -44,13 +44,13 @@ def make_traj_r2bc(r, theta0, n_years):
 
     # Set the angular frequency omega based on the radius using the relationship
     # mu = omega^2 r^3 --> omega = sqrt(mu / r^3)
-    omega = np.sqrt(mu / r**3)
+    omega = np.sqrt(mu / r0**3)
     # Theta is offset by theta0
     theta = (omega * t) + theta0
 
     # Compute qx and qy from r and theta; wrap into position q
-    qx = r*np.cos(theta, dtype=np.float32)
-    qy = r*np.sin(theta, dtype=np.float32)
+    qx = r0 * np.cos(theta, dtype=np.float32)
+    qy = r0 * np.sin(theta, dtype=np.float32)
     q = np.stack([qx, qy], axis=1)
     
     # Compute vx and vy; wrap into velocity v
@@ -68,25 +68,42 @@ def make_traj_r2bc(r, theta0, n_years):
     qy0 = qy[0]
     q0 = np.stack([qx0, qy0], axis=0)
     
-    # Repeat vectors for the initial velocity v0
+    # Initial velocity v0
     vx0 = vx[0]
     vy0 = vy[0]
     v0 = np.stack([vx0, vy0], axis=0)
+    
+    # Initial kinetic and potential energy; total energy
+    T0 = 0.5 * np.sum(v0*v0)
+    U0 = -mu / r0
+    H0 = T0 + U0
+
+    # Initial angular momentum
+    L0 = qx * vy - qy*vx
+
+    # Repeat the energy traj_size times
+    ones_vec = np.ones(shape=(N,))
+    H = H0 * ones_vec
+    L = L0 * ones_vec
     
     # Assemble the input dict
     inputs = {
         't': t,
         'q0': q0,
-        'v0': v0}
+        'v0': v0,
+        'mu': mu}
 
     # Assemble the output dict
     outputs = {
         'q': q,
         'v': v,
         'a': a,
-        # also include the initial conditions, which should be recovered
+        # the initial conditions, which should be recovered
         'q0_rec': q0,
-        'v0_rec': v0}
+        'v0_rec': v0,
+        # the energy and angular momentum, which should be conserved
+        'H': H,
+        'L': L}
 
     # Return the dicts
     return (inputs, outputs)
@@ -108,54 +125,63 @@ def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float
     # Number of spatial dimensions
     space_dims = 2
 
-    # Shape of initial conditions and output trajectories
-    time_shape = (n_traj, traj_size)
+    # Shape of arrays for various inputs and outputs
+    scalar_shape = (n_traj, 1)
     init_shape = (n_traj, space_dims)
+    time_shape = (n_traj, traj_size)
     traj_shape = (n_traj, traj_size, space_dims)
     
-    # Initialize six arrays for the data
+    # Initialize arrays for the data
     t = np.zeros(time_shape, dtype=np.float32)
     q0 = np.zeros(init_shape, dtype=np.float32)
     v0 = np.zeros(init_shape, dtype=np.float32)
+    mu = np.zeros(scalar_shape, dtype=np.float32)
     q = np.zeros(traj_shape, dtype=np.float32)
     v = np.zeros(traj_shape, dtype=np.float32)
     a = np.zeros(traj_shape, dtype=np.float32)
+    H = np.zeros(time_shape, dtype=np.float32)
+    L = np.zeros(time_shape, dtype=np.float32)
     
     # Set random seed for reproducible results
     np.random.seed(seed=seed)
 
     # Sample the trajectories
     for i in range(n_traj):
-        # Sample r
-        r = np.random.uniform(low=r_min, high=r_max)
+        # Sample r0
+        r0 = np.random.uniform(low=r_min, high=r_max)
         # Sample theta0
         theta0 = np.random.uniform(low=-np.pi, high=np.pi)
         # Generate one trajectory
-        inputs, outputs = make_traj_r2bc(r=r, theta0=theta0, n_years=n_years)
+        inputs, outputs = make_traj_r2bc(r0=r0, theta0=theta0, n_years=n_years)
         
         # Copy results into main arrays
         t[i, :] = inputs['t']
         q0[i, :] = inputs['q0']
         v0[i, :] = inputs['v0']
+        mu[i, :] = inputs['mu']
         q[i, :, :] = outputs['q']
         v[i, :, :] = outputs['v']
         a[i, :, :] = outputs['a']
+        H[i, :] = outputs['H']
+        L[i, :] = outputs['L']
 
     # Assemble the input dict
     inputs = {
         't': t,
         'q0': q0,
-        'v0': v0}
+        'v0': v0,
+        'mu': mu}
 
     # Assemble the output dict
     outputs = {
         'q': q,
         'v': v,
         'a': a,
-        # also include the initial conditions, which should be recovered
         'q0_rec': q0,
-        'v0_rec': v0}
-    
+        'v0_rec': v0,
+        'H': H,
+        'L': L}
+
     # Return the dicts
     return (inputs, outputs)
 
