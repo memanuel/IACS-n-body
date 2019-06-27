@@ -49,20 +49,32 @@ class PotentialEnergy_R2B(keras.layers.Layer):
     """Compute the potential energy from position q and gravitational constant mu"""
     def call(self, inputs):
         # Unpack inputs
+        q, mu = inputs
+
         # Shape of q is (batch_size, traj_size, 2,)
         # Shape of mu is (batch_size, 1)
-        q, mu = inputs
-        
+        batch_size, traj_size = q.shape[0:2]
+        tf.debugging.assert_shapes(shapes={
+            q: (batch_size, traj_size, 2),
+            mu: (batch_size, 1)
+        }, message='PotentialEnergy_R2B / inputs')
+
         # Compute the norm of a 2D vector
         norm_func = lambda q : tf.norm(q, axis=-1, keepdims=False)
 
-        # The distance r
+        # The distance r; shape (batch_size, traj_size)
         r = keras.layers.Activation(norm_func, name='r')(q)
         
         # The gravitational potential is -G m0 m1 / r = - mu / r per unit mass m1 in restricted problem
         U = tf.negative(tf.divide(mu, r))
+
+        # Check shapes
+        tf.debugging.assert_shapes(shapes={
+            r: (batch_size, traj_size),
+            U: (batch_size, traj_size)
+        }, message='PotentialEnergy_R2B / outputs')
+
         return U
-    
 # ********************************************************************************************************************* 
 class AngularMomentum0_R2B(keras.layers.Layer):
     """Compute the initial angular momentum from initial position and velocity in 2D"""
@@ -152,12 +164,12 @@ class ConfigToPolar2D(keras.layers.Layer):
         return r0, theta0, omega0
     
 # ********************************************************************************************************************* 
-class Motion_R2B(keras.layers.Layer):
-    """Motion for restricted two body problem generated from a position calculation layer."""
+class Motion_R2B(keras.Model):
+    """Motion for restricted two body problem generated from a position calculation model."""
 
-    def __init__(self, position_layer, **kwargs):
+    def __init__(self, position_model, **kwargs):
         super(Motion_R2B, self).__init__(**kwargs)
-        self.position_layer = position_layer
+        self.position_model = position_model
 
     def call(self, inputs):
         """
@@ -195,7 +207,7 @@ class Motion_R2B(keras.layers.Layer):
                 # Get the position using the input position layer
                 # qx, qy = self.position_layer([t, r0, theta0, omega0])
                 position_inputs = [t] + inputs[1:]
-                qx, qy = self.position_layer(position_inputs)
+                qx, qy = self.position_model(position_inputs)
                 q = keras.layers.concatenate(inputs=[qx, qy], axis=2, name='q')
 
             # Compute the velocity v = dq/dt with gt1
@@ -209,12 +221,24 @@ class Motion_R2B(keras.layers.Layer):
         ay = gt2.gradient(vy, t)
         a = keras.layers.concatenate(inputs=[ax, ay], name='a')
         del gt2
-            
+        
+        # Check sizes
+        batch_size = t.shape[0]
+        tf.debugging.assert_shapes(shapes={
+            q: (batch_size, traj_size, 2),
+            v: (batch_size, traj_size, 2),
+            a: (batch_size, traj_size, 2),
+        }, message='Motion_R2B.call / outputs')
+
         return q, v, a
     
-
 # ********************************************************************************************************************* 
 def make_position_model_r2bc_math(traj_size = 731):
+    """
+    Compute orbit positions for the restricted two body circular problem from 
+    the initial polar coordinates (orbital elements) with a deterministic mathematical model.
+    Factory function that returns a functional model.
+    """
     # Create input layers
     t = keras.Input(shape=(traj_size,1), name='t')
     r0 = keras.Input(shape=(1,), name='r0')
@@ -234,8 +258,7 @@ def make_position_model_r2bc_math(traj_size = 731):
         r: (batch_size, traj_size, 1),
         theta0: (batch_size, traj_size, 1),
         omega: (batch_size, traj_size, 1)
-    }, message='AngularMomentum_R2B / inputs')
-        
+    }, message='make_position_model_r2bc_math / inputs')
     
     # The angle theta at time t
     # theta = omega * t + theta0
@@ -249,6 +272,17 @@ def make_position_model_r2bc_math(traj_size = 731):
     # Compute qx and qy from r, theta
     qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
     qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
+    
+    # Check shapes
+    batch_size = t.shape[0]
+    tf.debugging.assert_shapes(shapes={
+        omega_t: (batch_size, traj_size, 1),
+        theta: (batch_size, traj_size, 1),
+        cos_theta: (batch_size, traj_size, 1),
+        sin_theta: (batch_size, traj_size, 1),
+        qx: (batch_size, traj_size, 1),
+        qy: (batch_size, traj_size, 1),
+    }, message='make_position_model_r2bc_math / outputs')
     
     # Wrap this into a model
     outputs = [qx, qy]

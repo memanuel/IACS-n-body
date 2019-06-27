@@ -25,8 +25,8 @@ from r2b import Motion_R2B, make_position_model_r2bc_math
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_model_r2b(position_layer: keras.layers.Layer, traj_size: int):
-    """Create a model for the restricted two body problem"""
+def make_model_r2b(position_model: keras.Model, traj_size: int):
+    """Create a physics model for the restricted two body problem from a position model"""
     # Create input layers
     t = keras.Input(shape=(traj_size,), name='t')
     q0 = keras.Input(shape=(2,), name='q0')
@@ -35,6 +35,15 @@ def make_model_r2b(position_layer: keras.layers.Layer, traj_size: int):
     # The combined input layers
     inputs = [t, q0, v0, mu]
 
+    # Check sizes
+    batch_size = t.shape[0]
+    tf.debugging.assert_shapes(shapes={
+        t: (batch_size, traj_size),
+        q0: (batch_size, 2),
+        v0: (batch_size, 2),
+        mu: (batch_size, 1),
+    }, message='make_model_r2b / inputs')
+        
     # Return row 0 of a position or velocity for q0_rec and v0_rec
     initial_row_func = lambda q : q[:, 0, :]
 
@@ -48,8 +57,15 @@ def make_model_r2b(position_layer: keras.layers.Layer, traj_size: int):
     theta0 = Identity(name='theta0')(theta0)
     omega0 = Identity(name='omega0')(omega0)
 
+    # Check sizes
+    tf.debugging.assert_shapes(shapes={
+        r0: (batch_size, 1),
+        theta0: (batch_size, 1),
+        omega0: (batch_size, 1),
+    }, message='make_model_r2b / polar elements r0, theta0, omega0')
+        
     # Compute the motion from the specified position layer
-    q, v, a = Motion_R2B(position_layer=position_layer, name='motion')([t, r0, theta0, omega0])
+    q, v, a = Motion_R2B(position_model=position_model, name='motion')([t, r0, theta0, omega0])
     
     # Name the outputs of the circular motion
     # These each have shape (batch_size, traj_size, 2)
@@ -57,21 +73,46 @@ def make_model_r2b(position_layer: keras.layers.Layer, traj_size: int):
     v = Identity(name='v')(v)
     a = Identity(name='a')(a)
 
+    # Check sizes
+    tf.debugging.assert_shapes(shapes={
+        q: (batch_size, traj_size, 2),
+        v: (batch_size, traj_size, 2),
+        a: (batch_size, traj_size, 2),
+    }, message='make_model_r2b / outputs q, v, a')
+        
     # Compute q0_rec and v0_rec
     # These each have shape (batch_size, 2)
     q0_rec = keras.layers.Lambda(initial_row_func, name='q0_rec')(q)
     v0_rec = keras.layers.Lambda(initial_row_func, name='v0_rec')(v)
 
+    # Check sizes
+    tf.debugging.assert_shapes(shapes={
+        q0_rec: (batch_size, 2),
+        v0_rec: (batch_size, 2),
+    }, message='make_model_r2b / outputs q0_rec, v0_rec')
+
     # Compute kinetic energy T and potential energy U
     T = KineticEnergy_R2B(name='T')(v)
     U = PotentialEnergy_R2B(name='U')([q, mu])
+
+    # ValueError: PotentialEnergy_R2B / inputs.  Specified explicitly.  
+    # Tensor shape=(64, 2) dtype=float32 dimension 1 must have size 1.  Received size 2, shape (64, 2)
+    
     # Compute the total energy H
     H = keras.layers.add(inputs=[T,U], name='H')
 
     # Compute angular momentum L
-    # This has shape (batch_size, 1)
+    # This has shape (batch_size, traj_size)
     L = AngularMomentum_R2B(name='L')([q, v])
     
+    # Check sizes
+    tf.debugging.assert_shapes(shapes={
+        T: (batch_size, traj_size),
+        U: (batch_size, traj_size),
+        H: (batch_size, traj_size),
+        L: (batch_size, traj_size),
+    }, message='make_model_r2b / outputs H, L')
+
     # Wrap this up into a model
     outputs = [q, v, a, q0_rec, v0_rec, H, L]
     model = keras.Model(inputs=inputs, outputs=outputs, name='model_math')
