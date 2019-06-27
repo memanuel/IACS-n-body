@@ -81,7 +81,7 @@ def make_model_r2b(position_layer: keras.layers.Layer, traj_size: int):
 def make_model_r2bc_math(traj_size: int = 731):
     """Create an anlytical model for the restricted two body circular problem"""
     # Build the position layer
-    position_layer = Position_R2BC_Math()
+    position_layer = Position_R2BC_Math(name='position_r2bc_math')
     
     # Build the model with this position layer and the input trajectory size
     return make_model_r2b(position_layer=position_layer, traj_size=traj_size)

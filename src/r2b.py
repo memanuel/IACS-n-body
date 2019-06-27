@@ -131,10 +131,10 @@ class Motion_R2B(keras.layers.Layer):
         Computes positions using the passed position_layer, 
         then uses automatic differentiation for velocity v and acceleration a.
         INPUTS:
-            t: the times to report the orbit; shape (batch_size, 1,)
-            r0: the initial distance; shape (batch_size, 1,)
-            theta0: the initial angle; shape (batch_size, 1,)
-            omega0: the angular velocity; shape (batch_size, 1,)
+            t: the times to report the orbit; shape (batch_size, traj_size)
+            r0: the initial distance; shape (batch_size, 1)
+            theta0: the initial angle; shape (batch_size, 1)
+            omega0: the angular velocity; shape (batch_size, 1)
         OUTPUTS:
             q: the position at time t; shape (batch_size, traj_size, 2)
             v: the velocity at time t; shape (batch_size, traj_size, 2)
@@ -180,11 +180,15 @@ class Motion_R2B(keras.layers.Layer):
     
 # ********************************************************************************************************************* 
 class Position_R2BC_Math(keras.layers.Layer):
+    """
+    Compute orbit positions for the restricted two body circular problem from 
+    the initial polar coordinates (orbital elements) with a deterministic mathematical model.
+    """
+
     def call(self, inputs):
         """
-        Compute orbit positions for the restricted two body circular problem from 
-        the initial polar coordinates (orbital elements) with a deterministic mathematical model.
         INPUTS:
+            inputs: a list of the tensors requred.  inputs = [t, r0, theta0, omega0], where
             t: the times to report the orbit; shape (batch_size, traj_size, 1,)
             r0: the initial distance; shape (batch_size, 1,)
             theta0: the initial angle; shape (batch_size, 1,)
@@ -218,4 +222,4 @@ class Position_R2BC_Math(keras.layers.Layer):
         qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
            
         return qx, qy
-    
+
