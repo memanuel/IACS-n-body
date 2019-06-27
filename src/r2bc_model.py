@@ -18,7 +18,7 @@ keras = tf.keras
 from tf_utils import Identity
 from r2b import KineticEnergy_R2B, PotentialEnergy_R2B, AngularMomentum_R2B
 from r2b import ConfigToPolar2D
-from r2b import Motion_R2B, Position_R2BC_Math
+from r2b import Motion_R2B, make_position_model_r2bc_math
 
 # ********************************************************************************************************************* 
 # Functional API Models
@@ -80,11 +80,11 @@ def make_model_r2b(position_layer: keras.layers.Layer, traj_size: int):
 # ********************************************************************************************************************* 
 def make_model_r2bc_math(traj_size: int = 731):
     """Create an anlytical model for the restricted two body circular problem"""
-    # Build the position layer
-    position_layer = Position_R2BC_Math(name='position_r2bc_math')
+    # Build the position model
+    position_model = make_position_model_r2bc_math(traj_size=traj_size)
     
     # Build the model with this position layer and the input trajectory size
-    return make_model_r2b(position_layer=position_layer, traj_size=traj_size)
+    return make_model_r2b(position_model=position_model, traj_size=traj_size)
 
 # ********************************************************************************************************************* 
 def make_model_r2bc():

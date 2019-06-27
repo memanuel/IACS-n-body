@@ -21,44 +21,27 @@ keras = tf.keras
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-class AngularMomentum0_R2B(keras.layers.Layer):
-    """Compute the initial angular momentum from initial position and velocity in 2D"""
-    def call(self, inputs):
-        # Unpack inputs
-        # Shape of q0 and v0 is (batch_size, 2,)
-        q0, v0 = inputs
-        
-        # Compute the angular momentum
-        L0 = (q0[:,0]*v0[:,1]) - (q0[:,1]*v0[:,0])
-
-        # Reshape from (batch_size,) to (batch_size, 1)
-        return keras.layers.Reshape(target_shape=(1,))(L0)
-    
-# ********************************************************************************************************************* 
-class AngularMomentum_R2B(keras.layers.Layer):
-    """Compute the angular momentum from position and velocity in 2D"""
-    def call(self, inputs):
-        # Unpack inputs
-        # Shape of q and v is (batch_size, traj_size, 2,)
-        q, v = inputs
-        
-        # Compute the angular momentum
-        L = (q[:,:,0]*v[:,:,1]) - (q[:,:,1]*v[:,:,0])
-        return L
-    
-# ********************************************************************************************************************* 
 class KineticEnergy_R2B(keras.layers.Layer):
     """Compute the kinetic energy from velocity"""
     def call(self, inputs):
         # Alias inputs to v
         # Shape of v is (batch_size, traj_size, 2,)
         v = inputs
-        
+
         # Element-wise velocity squared
         v2 = tf.square(v)
         
         # The KE is 1/2 m v^2 = 1/2 v^2 per unit mass in restricted problem
         T = 0.5 * tf.reduce_sum(v2, axis=-1, keepdims=False)
+
+        # Check shapes
+        batch_size, traj_size = v.shape[0:2]
+        tf.debugging.assert_shapes(shapes={
+            v: (batch_size, traj_size, 2),
+            v2: (batch_size, traj_size, 2),
+            T: (batch_size, traj_size)
+        }, message='KineticEnergy_R2B')
+        
         return T
     
 # ********************************************************************************************************************* 
@@ -79,6 +62,57 @@ class PotentialEnergy_R2B(keras.layers.Layer):
         # The gravitational potential is -G m0 m1 / r = - mu / r per unit mass m1 in restricted problem
         U = tf.negative(tf.divide(mu, r))
         return U
+    
+# ********************************************************************************************************************* 
+class AngularMomentum0_R2B(keras.layers.Layer):
+    """Compute the initial angular momentum from initial position and velocity in 2D"""
+    def call(self, inputs):
+        # Unpack inputs
+        q0, v0 = inputs
+
+        # Shape of q0 and v0 is (batch_size, 2,)
+        batch_size = q0.shape[0]
+        tf.debugging.assert_shapes(shapes={
+            q0: (batch_size, 2),
+            v0: (batch_size, 2)
+        }, message='AngularMomentum0_R2B / inputs')
+
+        # Compute the angular momentum
+        L0 = (q0[:,0]*v0[:,1]) - (q0[:,1]*v0[:,0])
+
+        # Reshape from (batch_size,) to (batch_size, 1)
+        L0 = keras.layers.Reshape(target_shape=(1,))(L0)
+        
+        # Check shape
+        tf.debugging.assert_shapes(shapes={
+            L0: (batch_size, 1)
+        }, message='AngularMomentum0_R2B / outputs')
+        
+        return L0
+    
+# ********************************************************************************************************************* 
+class AngularMomentum_R2B(keras.layers.Layer):
+    """Compute the angular momentum from position and velocity in 2D"""
+    def call(self, inputs):
+        # Unpack inputs
+        q, v = inputs
+        
+        # Shape of q and v is (batch_size, traj_size, 2,)
+        batch_size, traj_size = q.shape[0:2]
+        tf.debugging.assert_shapes(shapes={
+            q: (batch_size, traj_size, 2),
+            v: (batch_size, traj_size, 2)
+        }, message='AngularMomentum_R2B / inputs')
+
+        # Compute the angular momentum
+        L = (q[:,:,0]*v[:,:,1]) - (q[:,:,1]*v[:,:,0])
+        
+        # Check shape
+        tf.debugging.assert_shapes(shapes={
+            L: (batch_size, traj_size)
+        }, message='AngularMomentum_R2B / outputs')
+        
+        return L
     
 # ********************************************************************************************************************* 
 class ConfigToPolar2D(keras.layers.Layer):
@@ -178,8 +212,52 @@ class Motion_R2B(keras.layers.Layer):
             
         return q, v, a
     
+
 # ********************************************************************************************************************* 
-class Position_R2BC_Math(keras.layers.Layer):
+def make_position_model_r2bc_math(traj_size = 731):
+    # Create input layers
+    t = keras.Input(shape=(traj_size,1), name='t')
+    r0 = keras.Input(shape=(1,), name='r0')
+    theta0 = keras.Input(shape=(1,), name='theta0')
+    omega0 = keras.Input(shape=(1,), name='omega0')
+    # The combined input layers
+    inputs = [t, r0, theta0, omega0]
+    
+    # Repeat r, theta0 and omega to be vectors of shape matching t
+    r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
+    theta0 = keras.layers.RepeatVector(n=traj_size, name='theta0_vec')(theta0)
+    omega = keras.layers.RepeatVector(n=traj_size, name='omega_vec')(omega0)
+
+    # Check shapes
+    batch_size = t.shape[0]
+    tf.debugging.assert_shapes(shapes={
+        r: (batch_size, traj_size, 1),
+        theta0: (batch_size, traj_size, 1),
+        omega: (batch_size, traj_size, 1)
+    }, message='AngularMomentum_R2B / inputs')
+        
+    
+    # The angle theta at time t
+    # theta = omega * t + theta0
+    omega_t = keras.layers.multiply(inputs=[omega, t], name='omega_t')
+    theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
+
+    # Cosine and sine of theta
+    cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
+    sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
+
+    # Compute qx and qy from r, theta
+    qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
+    qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
+    
+    # Wrap this into a model
+    outputs = [qx, qy]
+    model = keras.Model(inputs=inputs, outputs=outputs, name='model_r2bc_math')
+    return model
+
+# ********************************************************************************************************************* 
+# OLD
+class Position_Layer_R2BC_Math(keras.layers.Layer):
     """
     Compute orbit positions for the restricted two body circular problem from 
     the initial polar coordinates (orbital elements) with a deterministic mathematical model.
@@ -223,3 +301,48 @@ class Position_R2BC_Math(keras.layers.Layer):
            
         return qx, qy
 
+# ********************************************************************************************************************* 
+# OLD
+class Position_Model_R2BC_Math(keras.Model):
+    """
+    Compute orbit positions for the restricted two body circular problem from 
+    the initial polar coordinates (orbital elements) with a deterministic mathematical model.
+    """
+
+    def call(self, inputs):
+        """
+        INPUTS:
+            inputs: a list of the tensors requred.  inputs = [t, r0, theta0, omega0], where
+            t: the times to report the orbit; shape (batch_size, traj_size, 1,)
+            r0: the initial distance; shape (batch_size, 1,)
+            theta0: the initial angle; shape (batch_size, 1,)
+            omega0: the angular velocity; shape (batch_size, 1,)
+        OUTPUTS:
+            qx: the x position at time t; shape (batch_size, traj_size, 1)
+            qy: the y position at time t; shape (batch_size, traj_size, 1)
+        """
+        # Unpack inputs
+        t, r0, theta0, omega0 = inputs
+
+        # Get the trajectory size
+        traj_size = t.shape[1]
+        
+        # Repeat r, theta0 and omega to be vectors of shape matching t
+        r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
+        theta0 = keras.layers.RepeatVector(n=traj_size, name='theta0')(theta0)
+        omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
+
+        # The angle theta at time t
+        # theta = omega * t + theta0
+        omega_t = keras.layers.multiply(inputs=[omega, t], name='omega_t')
+        theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
+
+        # Cosine and sine of theta
+        cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
+        sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
+
+        # Compute qx and qy from r, theta
+        qx = keras.layers.multiply(inputs=[r, cos_theta], name='qx')
+        qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
+           
+        return qx, qy
