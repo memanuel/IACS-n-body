@@ -9,15 +9,32 @@ Thu Jun 20 10:16:45 2019
 
 # Library imports
 import tensorflow as tf
-import numpy as np
+# import numpy as np
 
 # Aliases
 keras = tf.keras
+
+# Local imports
+from tf_utils import Identity
 
 # ********************************************************************************************************************* 
 # Custom Layers
 # ********************************************************************************************************************* 
 
+# ********************************************************************************************************************* 
+class KineticEnergy(keras.layers.Layer):
+    """Compute the kinetic energy from velocity"""
+    def call(self, inputs):
+        # Alias inputs to v
+        # Shape of v is (batch_size, traj_size, 2,)
+        v = inputs
+        
+        # Compute the kinetic energy
+        T = 0.5 * tf.norm(v, axis=2)
+
+        # Reshape from (batch_size,) to (batch_size, 1)
+        return T
+    
 # ********************************************************************************************************************* 
 class AngularMomentum2D(keras.layers.Layer):
     """Compute the angular momentum from initial position and velocity in 2D"""
@@ -32,8 +49,9 @@ class AngularMomentum2D(keras.layers.Layer):
 
         # Reshape from (batch_size,) to (batch_size, 1)
         return keras.layers.Reshape(target_shape=(1,))(L0)
-    
-class InitialPolar(keras.layers.Layer):
+
+# ********************************************************************************************************************* 
+class ConfigToPolar2D(keras.layers.Layer):
     def call(self, inputs):
         """Compute r0, thetat0 and omega0 from initial conditions"""
         # Unpack inputs
@@ -140,50 +158,36 @@ class MotionR2BC(keras.layers.Layer):
 def make_model_r2bc_math(traj_size=731):
     """Create an anlytical model for the restricted two body circular problem"""
     # Create input layers
-    # t = keras.Input(shape=(None,), name='t')
     t = keras.Input(shape=(traj_size,), name='t')
     q0 = keras.Input(shape=(2,), name='q0')
     v0 = keras.Input(shape=(2,), name='v0')
     # The combined input layers
     inputs = [t, q0, v0]
 
-    # Get the trajectory size; default to 731 (2 years) so TF doesn't get upset at compile time
-    traj_size = t.shape[1] or traj_size
-
-    # Compute the norm of a 2D vector
-    norm_func = lambda q : tf.norm(q, axis=1, keepdims=True)
-    
     # Return row 0 of a position or velocity for q0_rec and v0_rec
     initial_row_func = lambda q : q[:, 0, :]
 
-    # Shape of outputs is (batch_size, traj_size, 2); each component has 1 in last place
-    target_shape = (traj_size, 1)
-
     # The polar coordinates of the initial conditions
     # r0, theta0, and omega0 each scalars in each batch
-    r0, theta0, omega0 = InitialPolar(name='InitialPolar')([q0, v0])
+    r0, theta0, omega0 = ConfigToPolar2D(name='initial_polar')([q0, v0])
     
     # Name the outputs of the initial polar
-    r0 = keras.layers.Lambda(tf.identity, name='r0')(r0)
-    theta0 = keras.layers.Lambda(tf.identity, name='theta0')(theta0)
-    omega0 = keras.layers.Lambda(tf.identity, name='omega0')(omega0)
-
-    # Repeat r, theta0 and omega to be vectors of shape matching t
-    r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
-    omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
+    r0 = Identity(name='r0')(r0)
+    theta0 = Identity(name='theta0')(theta0)
+    omega0 = Identity(name='omega0')(omega0)
 
     # Compute the circular motion
-    q, v, a = MotionR2BC(name='MotionR2BC')([t, r0, theta0, omega0])
+    q, v, a = MotionR2BC(name='motion')([t, r0, theta0, omega0])
     
     # Name the outputs of the circular motion
-    q = keras.layers.Lambda(tf.identity, name='q')(q)
-    v = keras.layers.Lambda(tf.identity, name='v')(v)
-    a = keras.layers.Lambda(tf.identity, name='a')(a)
-   
+    q = Identity(name='q')(q)
+    v = Identity(name='v')(v)
+    a = Identity(name='a')(a)
+
     # Compute q0_rec and v0_rec
     q0_rec = keras.layers.Lambda(initial_row_func, name='q0_rec')(q)
     v0_rec = keras.layers.Lambda(initial_row_func, name='v0_rec')(v)
-    
+
     # Wrap this up into a model
     outputs = [q, v, a, q0_rec, v0_rec]
     model = keras.Model(inputs=inputs, outputs=outputs, name='model_math')
