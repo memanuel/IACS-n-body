@@ -85,7 +85,7 @@ def make_position_model_r2bc_math(traj_size = 731):
     return model
 
 # ********************************************************************************************************************* 
-def make_physics_model_r2bc(position_model: keras.Model, traj_size: int):
+def make_physics_model_r2bc_math(position_model: keras.Model, traj_size: int):
     """Create a physics model for the restricted two body problem from a position model"""
     # Create input layers
     t = keras.Input(shape=(traj_size,), name='t')
@@ -102,7 +102,7 @@ def make_physics_model_r2bc(position_model: keras.Model, traj_size: int):
         q0: (batch_size, 2),
         v0: (batch_size, 2),
         mu: (batch_size, 1),
-    }, message='make_model_r2b / inputs')
+    }, message='make_physics_model_r2bc_math / inputs')
         
     # Return row 0 of a position or velocity for q0_rec and v0_rec
     initial_row_func = lambda q : q[:, 0, :]
@@ -122,7 +122,7 @@ def make_physics_model_r2bc(position_model: keras.Model, traj_size: int):
         r0: (batch_size, 1),
         theta0: (batch_size, 1),
         omega0: (batch_size, 1),
-    }, message='make_model_r2b / polar elements r0, theta0, omega0')
+    }, message='make_physics_model_r2bc_math / polar elements r0, theta0, omega0')
         
     # Compute the motion from the specified position layer
     q, v, a = Motion_R2B(position_model=position_model, name='motion')([t, r0, theta0, omega0])
@@ -138,7 +138,7 @@ def make_physics_model_r2bc(position_model: keras.Model, traj_size: int):
         q: (batch_size, traj_size, 2),
         v: (batch_size, traj_size, 2),
         a: (batch_size, traj_size, 2),
-    }, message='make_model_r2b / outputs q, v, a')
+    }, message='make_physics_model_r2bc_math / outputs q, v, a')
         
     # Compute q0_rec and v0_rec
     # These each have shape (batch_size, 2)
@@ -149,7 +149,7 @@ def make_physics_model_r2bc(position_model: keras.Model, traj_size: int):
     tf.debugging.assert_shapes(shapes={
         q0_rec: (batch_size, 2),
         v0_rec: (batch_size, 2),
-    }, message='make_model_r2b / outputs q0_rec, v0_rec')
+    }, message='make_physics_model_r2bc_math / outputs q0_rec, v0_rec')
 
     # Compute kinetic energy T and potential energy U
     T = KineticEnergy_R2B(name='T')(v)
@@ -168,7 +168,7 @@ def make_physics_model_r2bc(position_model: keras.Model, traj_size: int):
         U: (batch_size, traj_size),
         H: (batch_size, traj_size),
         L: (batch_size, traj_size),
-    }, message='make_model_r2b / outputs H, L')
+    }, message='make_physics_model_r2bc_math / outputs H, L')
 
     # Wrap this up into a model
     outputs = [q, v, a, q0_rec, v0_rec, H, L]
@@ -182,5 +182,5 @@ def make_model_r2bc_math(traj_size: int = 731):
     position_model = make_position_model_r2bc_math(traj_size=traj_size)
     
     # Build the model with this position layer and the input trajectory size
-    return make_physics_model_r2bc(position_model=position_model, traj_size=traj_size)
+    return make_physics_model_r2bc_math(position_model=position_model, traj_size=traj_size)
 
