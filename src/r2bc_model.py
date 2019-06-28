@@ -128,6 +128,8 @@ def make_model_r2bc_math(traj_size: int = 731):
     return make_model_r2b(position_model=position_model, traj_size=traj_size)
 
 # ********************************************************************************************************************* 
+
+# ********************************************************************************************************************* 
 def make_model_r2bc():
     """Create a model for the restricted two body circular problem"""
     # Create input layers

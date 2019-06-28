@@ -196,6 +196,13 @@ class Motion_R2B(keras.Model):
         # Reshape t to have shape (batch_size, traj_size, 1)
         t = keras.layers.Reshape(target_shape=target_shape, name='t')(t)
 
+        # Check shapes after resizing operation; can accept t of shape EITHER 
+        # (batch_size, traj_size) or (batch_size, traj_size, 1)
+        batch_size = t.shape[0]
+        tf.debugging.assert_shapes(shapes={
+            t: (batch_size, traj_size, 1),
+        }, message='Motion_R2B.call / inputs')
+    
         # Evaluation of the position is under the scope of two gradient tapes
         # These are for velocity and acceleration
         with tf.GradientTape(persistent=True) as gt2:
@@ -222,7 +229,7 @@ class Motion_R2B(keras.Model):
         a = keras.layers.concatenate(inputs=[ax, ay], name='a')
         del gt2
         
-        # Check sizes
+        # Check shapes
         batch_size = t.shape[0]
         tf.debugging.assert_shapes(shapes={
             q: (batch_size, traj_size, 2),
@@ -240,14 +247,17 @@ def make_position_model_r2bc_math(traj_size = 731):
     Factory function that returns a functional model.
     """
     # Create input layers
-    t = keras.Input(shape=(traj_size,1), name='t')
+    t = keras.Input(shape=(traj_size), name='t')
     r0 = keras.Input(shape=(1,), name='r0')
     theta0 = keras.Input(shape=(1,), name='theta0')
     omega0 = keras.Input(shape=(1,), name='omega0')
     # The combined input layers
     inputs = [t, r0, theta0, omega0]
     
-    # Repeat r, theta0 and omega to be vectors of shape matching t
+    # Reshape t to (batch_size, traj_size, 1)
+    t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(t)
+    
+    # Repeat r, theta0 and omega to be vectors of shape (batch_size, traj_size)
     r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
     theta0 = keras.layers.RepeatVector(n=traj_size, name='theta0_vec')(theta0)
     omega = keras.layers.RepeatVector(n=traj_size, name='omega_vec')(omega0)
@@ -255,6 +265,7 @@ def make_position_model_r2bc_math(traj_size = 731):
     # Check shapes
     batch_size = t.shape[0]
     tf.debugging.assert_shapes(shapes={
+        t_vec: (batch_size, traj_size, 1),
         r: (batch_size, traj_size, 1),
         theta0: (batch_size, traj_size, 1),
         omega: (batch_size, traj_size, 1)
@@ -262,7 +273,7 @@ def make_position_model_r2bc_math(traj_size = 731):
     
     # The angle theta at time t
     # theta = omega * t + theta0
-    omega_t = keras.layers.multiply(inputs=[omega, t], name='omega_t')
+    omega_t = keras.layers.multiply(inputs=[omega, t_vec], name='omega_t')
     theta = keras.layers.add(inputs=[omega_t, theta0], name='theta')
 
     # Cosine and sine of theta
@@ -274,7 +285,6 @@ def make_position_model_r2bc_math(traj_size = 731):
     qy = keras.layers.multiply(inputs=[r, sin_theta], name='qy')
     
     # Check shapes
-    batch_size = t.shape[0]
     tf.debugging.assert_shapes(shapes={
         omega_t: (batch_size, traj_size, 1),
         theta: (batch_size, traj_size, 1),
