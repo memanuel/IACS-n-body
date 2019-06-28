@@ -14,7 +14,7 @@ import numpy as np
 keras = tf.keras
 
 # Local imports
-from utils import EpochLoss, TimeHistory
+from tf_utils import EpochLoss, TimeHistory
 
 # ********************************************************************************************************************* 
 def make_data_sin(n):

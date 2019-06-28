@@ -65,27 +65,80 @@ def make_position_model_r2bc_nn(hidden_sizes, skip_layers=True, traj_size = 731)
         omega0: (batch_size, 1),
     }, message='make_position_model_r2bc_nn / polar elements r0, theta0, omega0')
    
+    # Combine the trajectory-wide scalars into one feature
+    # Size of each row is 2+2+1+1+1=7; shape is (batch_size, 7)
+    phi_traj = keras.layers.concatenate(inputs=[q0, v0, r0, theta0, omega0], name='phi_traj')
+    
+    # Repeat phi_traj traj_size times so it has a shape of (batch_size, traj_size, 7)
+    phi_traj_vec = keras.layers.RepeatVector(n=traj_size, name='phi_traj_vec')(phi_traj)
+
     # Reshape t to (batch_size, traj_size, 1)
     t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(t)
     
-    # Repeat r, theta0 and omega to be vectors of shape matching t
-    r = keras.layers.RepeatVector(n=traj_size, name='r')(r0)
-    theta0_vec = keras.layers.RepeatVector(n=traj_size, name='theta0_vec')(theta0)
-    omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
+    # Concatenate phi_traj with the time t to make the initial feature vector phi_0
+    phi_0 = keras.layers.concatenate(inputs=[t_vec, phi_traj_vec], name='phi_0')
+    
+    # Hidden layers as specified in hidden_sizes
+    # Number of hidden layers
+    num_layers = len(hidden_sizes)
 
+    # phi_n will update to the last available feature layer for the output portion
+    phi_n = phi_0
+
+    # First hidden layer if applicable
+    if num_layers > 0:
+        phi_1 = keras.layers.Dense(units=hidden_sizes[0], activation='tanh', name='phi_1')(phi_0)
+        if skip_layers:
+            phi_1 = keras.layers.concatenate(inputs=[phi_0, phi_1], name='phi_1_aug')
+        phi_n = phi_1
+
+    # Second hidden layer if applicable
+    if num_layers > 1:
+        phi_2 = keras.layers.Dense(units=hidden_sizes[1], activation='tanh', name='phi_2')(phi_1)
+        if skip_layers:
+            phi_2 = keras.layers.concatenate(inputs=[phi_1, phi_2], name='phi_2_aug')
+        phi_n = phi_2
+    
     # Check shapes
     tf.debugging.assert_shapes(shapes={
+        phi_traj: (batch_size, 7),
+        phi_traj_vec: (batch_size, traj_size, 7),        
         t_vec: (batch_size, traj_size, 1),
-        r: (batch_size, traj_size, 1),
-        theta0_vec: (batch_size, traj_size, 1),
-        omega: (batch_size, traj_size, 1)
-    }, message='make_position_model_r2bc_nn / r_vec, theta0_vec, omega_vec')
-    
-    # The angle theta at time t
-    # theta = omega * t + theta0
-    omega_t = keras.layers.multiply(inputs=[omega, t_vec], name='omega_t')
-    theta = keras.layers.add(inputs=[omega_t, theta0_vec], name='theta')
+        phi_0: (batch_size, traj_size, 8),
+        # phi_1: (batch_size, traj_size, 'hs1'),
+        # phi_2: (batch_size, traj_size, 'hs2'),
+    }, message='make_position_model_r2bc_nn / phi')
 
+    # Compute the radius r from the features; initialize weights to 0, bias to 1
+    r = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='ones', name='r')(phi_n)
+    
+    # Compute the mean angular frequency omega from the features
+    omega = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='omega') (phi_n)
+    
+    # Add a feature for omega * t + theta0; a rough estimate of the angular offset
+    omega_t = keras.layers.multiply(inputs=[omega, t_vec], name='omega_t')
+
+    # Compute the offset to angle theta to its mean trend from the features
+    theta_adj = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='theta_adj')(phi_n)
+    
+    # Compute the angle theta as the sum of its original offset theta0, its trend rate omega_bar_t
+    # and the adjustment above
+    theta0_vec = keras.layers.RepeatVector(n=traj_size, name='theta0_vec')(theta0)
+    theta = keras.layers.add(inputs=[omega_t, theta0_vec, theta_adj], name='theta')
+    
+    # Check shapes
+    tf.debugging.assert_shapes(shapes={
+        r: (batch_size, traj_size, 1),
+        omega: (batch_size, traj_size, 1),
+        omega_t: (batch_size, traj_size, 1),
+        theta_adj: (batch_size, traj_size, 1),
+        theta0_vec: (batch_size, traj_size, 1),
+        theta: (batch_size, traj_size, 1)
+    }, message='make_position_model_r2bc_nn / r, omega, theta')
+    
     # Cosine and sine of theta
     cos_theta = keras.layers.Activation(activation=tf.cos, name='cos_theta')(theta)
     sin_theta = keras.layers.Activation(activation=tf.sin, name='sin_theta')(theta)
@@ -97,8 +150,6 @@ def make_position_model_r2bc_nn(hidden_sizes, skip_layers=True, traj_size = 731)
     # Check shapes
     batch_size = t.shape[0]
     tf.debugging.assert_shapes(shapes={
-        omega_t: (batch_size, traj_size, 1),
-        theta: (batch_size, traj_size, 1),
         cos_theta: (batch_size, traj_size, 1),
         sin_theta: (batch_size, traj_size, 1),
         qx: (batch_size, traj_size, 1),
