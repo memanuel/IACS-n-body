@@ -59,17 +59,18 @@ class TimeHistory(keras.callbacks.Callback):
 # *************************************************************************************************
 class EpochLoss(tf.keras.callbacks.Callback):
     """Log the loss every N epochs"""
-    def __init__(self, interval=10):
+    def __init__(self, interval=10, newline=False):
         super(EpochLoss, self).__init__()
         self.interval = interval
         self.train_time_start = time.time()
+        self.log_prefix = '\n' if newline else ''
 
     def log_to_screen(self, epoch, logs):
         loss = logs['loss']
         elapsed = time.time() - self.train_time_start
         elapsed_str = str(datetime.timedelta(seconds=np.round(elapsed)))
-        print(f'Epoch {epoch:04}; loss {loss:5.2e}; elapsed {elapsed_str}') 
-        
+        print(f'{self.log_prefix}Epoch {epoch:04}; loss {loss:5.2e}; elapsed {elapsed_str}') 
+
     def on_epoch_end(self, epoch, logs=None):
         epoch = epoch+1
         if (epoch % self.interval == 0) or (epoch == 1):
@@ -84,6 +85,9 @@ class Identity(keras.layers.Activation):
     """Identity layer for labeling outputs in models"""
     def __init__(self, **kwargs):
         super(Identity, self).__init__(activation = tf.identity, **kwargs)
+        
+    def get_config(self):
+        return dict()
 
 # ********************************************************************************************************************* 
 class Divide(keras.layers.Layer):
@@ -94,6 +98,9 @@ class Divide(keras.layers.Layer):
         
         # Return quotient x / y
         return tf.divide(x, y)
+    
+    def get_config(self):
+        return dict()
 
 # ********************************************************************************************************************* 
 def make_features_pow(x, powers, input_name, output_name):

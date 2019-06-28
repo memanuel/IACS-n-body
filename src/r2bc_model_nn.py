@@ -10,13 +10,13 @@ Thu Jun 27 21:43:17 2019
 
 # Library imports
 import tensorflow as tf
-# import numpy as np
+import numpy as np
 
 # Aliases
 keras = tf.keras
 
 # Local imports
-from tf_utils import Identity
+from tf_utils import Identity, EpochLoss, TimeHistory
 from r2b import KineticEnergy_R2B, PotentialEnergy_R2B, AngularMomentum_R2B
 from r2b import ConfigToPolar2D
 from r2b import Motion_R2B
@@ -158,11 +158,13 @@ def make_position_model_r2bc_nn(hidden_sizes, skip_layers=True, traj_size = 731)
     
     # Wrap this into a model
     outputs = [qx, qy]
-    model = keras.Model(inputs=inputs, outputs=outputs, name='model_r2bc_nn')
+    model = keras.Model(inputs=inputs, outputs=outputs, name='model_r2bc_position_nn')
     return model
 
 # ********************************************************************************************************************* 
-def make_physics_model_r2bc_nn(position_model: keras.Model, traj_size: int):
+def make_physics_model_r2bc_nn(position_model: keras.Model, 
+                               traj_size: int, 
+                               model_name: str):
     """Create a physics model for the restricted two body problem from a position model"""
     # Create input layers
     t = keras.Input(shape=(traj_size,), name='t')
@@ -232,7 +234,7 @@ def make_physics_model_r2bc_nn(position_model: keras.Model, traj_size: int):
 
     # Wrap this up into a model
     outputs = [q, v, a, q0_rec, v0_rec, H, L]
-    model = keras.Model(inputs=inputs, outputs=outputs, name='model_math')
+    model = keras.Model(inputs=inputs, outputs=outputs, name=model_name)
     return model
 
 # ********************************************************************************************************************* 
@@ -242,4 +244,57 @@ def make_model_r2bc_nn(hidden_sizes, skip_layers=True, traj_size: int = 731):
     position_model = make_position_model_r2bc_nn(hidden_sizes=hidden_sizes, skip_layers=skip_layers)
     
     # Build the model with this position model and the input trajectory size
-    return make_physics_model_r2bc_nn(position_model=position_model, traj_size=traj_size)
+    model_name = 'model_r2bc_nn_' + '_'.join([str(sz) for sz in hidden_sizes])
+    return make_physics_model_r2bc_nn(position_model=position_model, traj_size=traj_size, model_name=model_name)
+
+# ********************************************************************************************************************* 
+def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev_history=None):
+    # Compile the model
+    model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
+    model_name = model.name
+    filepath=f'../models/r2bc/{model_name}.h5'
+
+    # Parameters for callbacks
+    interval = 1
+    patience = max(epochs // 10, 1)
+    
+    # Create callbacks
+    cb_log = EpochLoss(interval=interval, newline=True)
+    
+    cb_time = TimeHistory()
+
+    cb_ckp = keras.callbacks.ModelCheckpoint(
+            filepath=filepath, 
+            save_freq=save_freq,
+            save_best_only=True,
+            save_weights_only=True,
+            monitor='loss',
+            verbose=0)    
+
+    cb_early_stop = keras.callbacks.EarlyStopping(
+            monitor='loss',
+            min_delta=0.0,
+            patience=patience,
+            verbose=2,
+            restore_best_weights=True)    
+
+    # All selected callbacks
+    # callbacks = [cb_log, cb_time, cb_ckp, cb_early_stop]
+    callbacks = [cb_log, cb_time, cb_ckp]
+    
+    # Fit the model
+    hist = model.fit(ds, epochs=epochs, callbacks=callbacks, verbose=1)
+
+    # Add the times to the history
+    history = hist.history
+    history['time'] = cb_time.times
+    
+    # Merge the previous history if provided
+    if prev_history is not None:
+        for key in prev_history.keys():
+            history[key] = np.concatenate([prev_history[key], history[key]])
+    
+    # Restore the model to the best weights
+    model.load_weights(filepath)
+
+    return history
