@@ -11,6 +11,7 @@ Thu Jun 27 21:43:17 2019
 # Library imports
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Aliases
 keras = tf.keras
@@ -298,3 +299,56 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev
     model.load_weights(filepath)
 
     return history
+
+# ********************************************************************************************************************* 
+def plot_orbit_nn_q(model_nn, ds, k=0):
+    """Plot the orbit position in a training sample"""
+
+    # Take 1 batch
+    batch_in, batch_out = list(ds.take(1))[0]
+
+    # Combined dict
+    data = {**batch_in, **batch_out}
+
+    # Unpack data; these are batches
+    t = data['t']
+    q0 = data['q0']
+    v0 = data['v0']
+    mu = data['mu']
+    q = data['q']
+
+    # Run NN
+    q_nn, v_nn  = model_nn([t, q0, v0, mu])[0:2]
+
+    # Unpack ground truth
+    t = t[k, :].numpy()
+    qx = q[k, :, 0].numpy()
+    qy = q[k, :, 1].numpy()
+
+    # Unpack NN outputs
+    qx_nn = q_nn[k, :, 0].numpy()
+    qy_nn = q_nn[k, :, 1].numpy()
+
+    # Compute the distance r
+    # r = np.linalg.norm(q[k], axis=1)
+    # r_nn = np.linalg.norm(q_nn[k], axis=1)
+
+    # Plot the x and y coordinate
+    fig, ax = plt.subplots(figsize=[16, 9])
+    ax.set_title('Orbit Position: NN vs. Actual')
+    ax.set_xlabel('t - years')
+    ax.set_ylabel('q - AU')
+    ax.set_xticks(np.arange(0.0, np.max(t)+0.25, 0.25))
+    # Ground truth
+    ax.plot(t, qx, color='blue', label='qx', linewidth=4.0)
+    ax.plot(t, qy, color='green', label='qy', linewidth=4.0)
+    # ax.plot(t, r,  color='purple', label='r')
+    # NN predictions
+    ax.plot(t, qx_nn, color='red', label='qx_nn', linewidth=2.0)
+    ax.plot(t, qy_nn, color='orange', label='qy_nn', linewidth=2.0)
+    # ax.plot(t, r,  color='purple', linewidth=1.5)
+    ax.grid()
+    ax.legend()
+
+    return fig, ax
+
