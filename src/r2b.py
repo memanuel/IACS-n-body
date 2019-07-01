@@ -9,10 +9,17 @@ Thu Jun 27 10:27:20 2019
 
 # Library imports
 import tensorflow as tf
+from tensorflow import keras
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.keras import backend as K
 # import numpy as np
 
 # Aliases
-keras = tf.keras
+# keras = tf.keras
+# ops = tf.python.framework.ops
+# math_ops = tf.python.ops.math_ops
+# K = tf.python.Keras
 
 # ********************************************************************************************************************* 
 # Custom Layers
@@ -178,137 +185,37 @@ class ConfigToPolar2D(keras.layers.Layer):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-class VectorError(keras.metrics.Metric):
-    """Specialized loss for error in a vector like velocity or acceleration.  Computed as relative error, no cap."""
-    
-    def __init__(self, regularizer=0.0, name='vector_error', **kwargs):
+class VectorError(keras.losses.Loss):
+    """Specialized loss for error in a vector like velocity or acceleration."""
+    def __init__(self, regularizer=0.0, **kwargs):
         super(VectorError, self).__init__(**kwargs)
-        self.sum_sq_error = self.add_weight(name='sum_sq_error', initializer='zeros')
-        self.count = self.add_weight(name='count', initializer='zeros')
-        self.regularizer = self.add_weight(name='regularizer', initializer='zeros')
-        self.regularizer.assign(regularizer)
-        
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        # Test whether y_true was passed with shape (batch_size,2) while y_pred had shape (batch_size, traj_size,2)
-        if len(y_pred.shape) == len(y_true.shape) + 1:
-            traj_size = y_pred.shape[1]
-            y_true = keras.layers.RepeatVector(n=traj_size)(y_true)
+        self.regularizer = tf.constant(regularizer)
 
-        # Compute the numerator and denominator in the squared error
-        err2_num = tf.reduce_sum(tf.square(y_true - y_pred), axis=-1, keepdims=False)
-        err2_den = tf.reduce_sum(tf.square(y_true), axis=-1, keepdims=False)
-        
-        # Add the regularizer to the denominator
-        err2_den = tf.add(err2_den, self.regularizer)
-        
-        # The relative error is the elementwise quotient
-        relative_error2 = tf.divide(err2_num, err2_den)
-        
-        # Multiply by sample_weight if it was provided
-        if sample_weight is not None:
-            sample_weight = tf.cast(sample_weight, tf.float32)
-            relative_error2 = tf.multiply(relative_error2, sample_weight)
-            batch_weight = tf.reduce_sum(sample_weight)
-        # The weight of this batch is the number of elements in y_pred unless a sample weight was provided
-        else:
-            batch_weight = tf.cast(tf.size(y_pred), tf.float32)
-        
-        # Update the two state variables
-        space_dim = tf.cast(y_pred.shape[-1], tf.float32)
-        self.sum_sq_error.assign_add(tf.reduce_sum(relative_error2))
-        self.count.assign_add(batch_weight / space_dim)
-        
-    def result(self):
-        return self.sum_sq_error / self.count
-    
-    def reset_states(self):
-        self.sum_sq_error.assign(0.0)
-        self.count.assign(0.0)
+    def call(self, y_true, y_pred):
+        err2_num = math_ops.reduce_sum(math_ops.square(y_true - y_pred), axis=-1)
+        err2_den = math_ops.reduce_sum(math_ops.square(y_true), axis=-1) + self.regularizer
+        return K.mean(err2_num / err2_den)
 
 # ********************************************************************************************************************* 
-class EnergyError(keras.metrics.Metric):
-    """Specialized loss for error in energy.  Computed as relative error, with log1p damping."""
-    
-    def __init__(self, name='energy_error', **kwargs):
-        super(EnergyError, self).__init__(**kwargs)
-        self.sum_sq_error = self.add_weight(name='sum_sq_error', initializer='zeros')
-        self.count = self.add_weight(name='count', initializer='zeros')
-        
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        # Test whether y_true was passed with shape (batch_size,) while y_pred had shape (batch_size, traj_size)
-        if len(y_pred.shape) == len(y_true.shape) + 1:
-            traj_size = y_pred.shape[1]
-            y_true = keras.layers.RepeatVector(n=traj_size)(y_true)
-
-        # Compute the relative error
-        relative_error = (y_pred - y_true) / y_true
-        
-        # Square the relative error
-        relative_error2 = tf.square(relative_error)
-        
-        # Damp the relative error with y = log(1+x) to mitigate blow-ups near r=0
-        relative_error_damped = tf.math.log1p(relative_error2)
-        
-        # Multiply by sample_weight if it was provided
-        if sample_weight is not None:
-            sample_weight = tf.cast(sample_weight, tf.float32)
-            relative_error_damped = tf.multiply(relative_error_damped, sample_weight)
-            batch_weight = tf.reduce_sum(sample_weight)
-        # The weight of this batch is the number of elements in y_pred unless a sample weight was provided
-        else:
-            batch_weight = tf.cast(tf.size(y_pred), tf.float32)
-        
-        # Update the two state variables
-        self.sum_sq_error.assign_add(tf.reduce_sum(relative_error_damped))
-        self.count.assign_add(batch_weight)
-        
-    def result(self):
-        return self.sum_sq_error / self.count
-    
-    def reset_states(self):
-        self.sum_sq_error.assign(0.0)
-        self.count.assign(0.0)
+class EnergyError(keras.losses.Loss):
+    """Specialized loss for error in energy.  Mean of log (1 + relative error^2)."""
+    def call(self, y_true, y_pred):
+        y_pred = ops.convert_to_tensor(y_pred)
+        y_true = math_ops.cast(y_true, y_pred.dtype)
+        rel_error = (y_pred - y_true) / y_true
+        # rel_abs_error = math_ops.abs(rel_error)
+        rel_sq_error =  math_ops.square(rel_error)
+        log_rel_error = math_ops.log1p(rel_sq_error)
+        return K.mean(log_rel_error, axis=-1)
 
 # ********************************************************************************************************************* 
-class AngularMomentumError(keras.metrics.Metric):
-    """Specialized loss for error in angular momentum.  Relative error, no cap."""
-    
-    def __init__(self, name='angular_momentum_error', **kwargs):
-        super(AngularMomentumError, self).__init__(**kwargs)
-        self.sum_sq_error = self.add_weight(name='sum_sq_error', initializer='zeros')
-        self.count = self.add_weight(name='count', initializer='zeros')
-        
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        # Test whether y_true was passed with shape (batch_size,) while y_pred had shape (batch_size, traj_size)
-        if len(y_pred.shape) == len(y_true.shape) + 1:
-            traj_size = y_pred.shape[1]
-            y_true = keras.layers.RepeatVector(n=traj_size)(y_true)
-
-        # Compute the relative error
-        relative_error = (y_pred - y_true) / y_true
-        
-        # Square the relative error
-        relative_error2 = tf.square(relative_error)
-
-        # Multiply by sample_weight if it was provided
-        if sample_weight is not None:
-            sample_weight = tf.cast(sample_weight, tf.float32)
-            relative_error2 = tf.multiply(relative_error2, sample_weight)
-            batch_weight = tf.reduce_sum(sample_weight)
-        # The weight of this batch is the number of elements in y_pred unless a sample weight was provided
-        else:
-            batch_weight = tf.cast(tf.size(y_pred), tf.float32)
-        
-        # Update the two state variables
-        self.sum_sq_error.assign_add(tf.reduce_sum(relative_error2))
-        self.count.assign_add(batch_weight)
-        
-    def result(self):
-        return self.sum_sq_error / self.count
-    
-    def reset_states(self):
-        self.sum_sq_error.assign(0.0)
-        self.count.assign(0.0)
+class AngularMomentumError(keras.losses.Loss):
+    """Specialized loss for error in angular momentum.  Mean squared relative error."""
+    def call(self, y_true, y_pred):
+        y_pred = ops.convert_to_tensor(y_pred)
+        y_true = math_ops.cast(y_true, y_pred.dtype)
+        rel_error = (y_pred - y_true) / y_true
+        return K.mean(math_ops.square(rel_error), axis=-1)
 
 # ********************************************************************************************************************* 
 # Custom Models

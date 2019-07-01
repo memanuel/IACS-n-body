@@ -83,6 +83,8 @@ def make_traj_r2bc(r0, theta0, n_years):
 
     # Repeat the energy traj_size times
     ones_vec = np.ones(shape=(N,))
+    T = T0 * ones_vec
+    U = U0 * ones_vec
     H = H0 * ones_vec
     L = L0 * ones_vec
     
@@ -102,6 +104,8 @@ def make_traj_r2bc(r0, theta0, n_years):
         'q0_rec': q0,
         'v0_rec': v0,
         # the energy and angular momentum, which should be conserved
+        'T': T,
+        'U': U,
         'H': H,
         'L': L}
 
@@ -139,6 +143,8 @@ def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float
     q = np.zeros(traj_shape, dtype=np.float32)
     v = np.zeros(traj_shape, dtype=np.float32)
     a = np.zeros(traj_shape, dtype=np.float32)
+    T = np.zeros(time_shape, dtype=np.float32)
+    U = np.zeros(time_shape, dtype=np.float32)
     H = np.zeros(time_shape, dtype=np.float32)
     L = np.zeros(time_shape, dtype=np.float32)
     
@@ -162,6 +168,8 @@ def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float
         q[i, :, :] = outputs['q']
         v[i, :, :] = outputs['v']
         a[i, :, :] = outputs['a']
+        T[i, :] = outputs['T']
+        U[i, :] = outputs['U']
         H[i, :] = outputs['H']
         L[i, :] = outputs['L']
 
@@ -179,6 +187,8 @@ def make_train_r2bc(n_traj: int, n_years: int, r_min: float = 0.25, r_max: float
         'a': a,
         'q0_rec': q0,
         'v0_rec': v0,
+        'T': T,
+        'U': U,
         'H': H,
         'L': L}
 
