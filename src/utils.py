@@ -8,7 +8,7 @@ Tue Jun  4 15:24:22 2019
 
 import numpy as np
 import matplotlib as mpl
-plt = mpl.pyplot
+import matplotlib.pyplot as plt
 import pickle
 
 from typing import Dict, Callable
