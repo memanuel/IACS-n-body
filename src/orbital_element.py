@@ -21,7 +21,7 @@ def make_data_orb_elt(n, a_min, a_max, e_max, inc_max, seed=42):
     # Initialize orbital element by sampling according to the inputs
     a = np.random.uniform(low=a_min, high=a_max, size=n).astype(np.float32)
     e = np.random.uniform(low=0.0, high=e_max, size=n).astype(np.float32)
-    inc = np.random.uniform(low=-inc_max, high=inc_max, size=n).astype(np.float32)
+    inc = np.random.uniform(low=0.0, high=inc_max, size=n).astype(np.float32)
     Omega = np.random.uniform(low=-np.pi, high=np.pi, size=n).astype(np.float32)
     omega = np.random.uniform(low=-np.pi, high=np.pi, size=n).astype(np.float32)
     f = np.random.uniform(low=-np.pi, high=np.pi, size=n).astype(np.float32)
@@ -76,6 +76,7 @@ def make_data_orb_elt(n, a_min, a_max, e_max, inc_max, seed=42):
     cart = {
         'q': q,
         'v': v,
+        'mu': mu,
     }
     
     return elts, cart
@@ -88,6 +89,23 @@ def make_dataset_elt_to_cfg(n, a_min, a_max, e_max, inc_max, seed=42, batch_size
     
     # Wrap these into a Dataset object
     ds = tf.data.Dataset.from_tensor_slices((elts, cart))
+
+    # Set shuffle buffer size
+    buffer_size = batch_size * 256
+
+    # Shuffle and batch data sets
+    ds = ds.shuffle(buffer_size=buffer_size).batch(batch_size)
+    
+    return ds
+
+# ********************************************************************************************************************* 
+def make_dataset_cfg_to_elt(n, a_min, a_max, e_max, inc_max, seed=42, batch_size=64):
+    """Dataset with mapping from configuration space to orbital elements."""
+    # Build data set as dictionaries of numpy arrays
+    elts, cart = make_data_orb_elt(n=n, a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed)
+    
+    # Wrap these into a Dataset object
+    ds = tf.data.Dataset.from_tensor_slices((cart, elts))
 
     # Set shuffle buffer size
     buffer_size = batch_size * 256
@@ -157,6 +175,7 @@ class OrbitalElementToConfig(keras.layers.Layer):
 
     def get_config(self):
         return dict()
+
 # ********************************************************************************************************************* 
 def make_model_elt_to_cfg():
     """Model that transforms from orbital elements to cartesian coordinates"""
@@ -187,5 +206,33 @@ def make_model_elt_to_cfg():
 
     # Create a model from inputs to outputs
     model = keras.Model(inputs=inputs, outputs=outputs, name='orbital_element_to_cartesian')
+    return model
+
+# ********************************************************************************************************************* 
+def make_model_cfg_to_elt():
+    """Model that transforms from orbital elements to cartesian coordinates"""
+    # The shape shared by all the inputs
+    input_shape = (1,)
+
+    # Create input layers    
+    qx = keras.Input(shape=input_shape, name='qx')
+    qy = keras.Input(shape=input_shape, name='qy')
+    qz = keras.Input(shape=input_shape, name='qz')
+    vx = keras.Input(shape=input_shape, name='vx')
+    vy = keras.Input(shape=input_shape, name='vy')
+    vz = keras.Input(shape=input_shape, name='vz')
+    mu = keras.Input(shape=input_shape, name='mu')
+    
+    # Wrap these up into one tuple of inputs
+    inputs = (qx, qy, qz, vx, vy, vz, mu,)
+
+    # Calculations are in one layer that does all the work...
+    a, e, inc, Omega, omega, f = ConfigToOrbitalElement(name='config_to_orbital_element')(inputs)
+
+    # Wrap up the outputs
+    outputs = (a, e, inc, Omega, omega, f)
+
+    # Create a model from inputs to outputs
+    model = keras.Model(inputs=inputs, outputs=outputs, name='cartesian_to_orbital_element')
     return model
 
