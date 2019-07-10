@@ -15,12 +15,6 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.keras import backend as K
 # import numpy as np
 
-# Aliases
-# keras = tf.keras
-# ops = tf.python.framework.ops
-# math_ops = tf.python.ops.math_ops
-# K = tf.python.Keras
-
 # ********************************************************************************************************************* 
 # Custom Layers
 # ********************************************************************************************************************* 
