@@ -218,7 +218,7 @@ class ConfigToOrbitalElement(keras.layers.Layer):
         
         # The speed and its square
         v2 = tf.square(vx) + tf.square(vy) + tf.square(vz)
-        v = tf.sqrt(v2)
+        # v = tf.sqrt(v2)
         
         # The speed squared of a circular orbit
         v2_circ = mu / r
@@ -286,6 +286,57 @@ class ConfigToOrbitalElement(keras.layers.Layer):
         
         return a, e, inc, Omega, omega, f, M, N
 
+    def get_config(self):
+        return dict()
+
+# ********************************************************************************************************************* 
+class MeanToEccentricAnomaly(keras.layers.Layer):
+    """
+    Convert the mean anomaly M to the eccentric anomly E given the eccentricity E.
+    """
+    def call(self, inputs):
+        # Unpack inputs
+        M, e = inputs
+        
+        # Move M to the inveral [0, 2pi]
+        two_pi = tf.constant(2.0 * np.pi)
+        M = tf.math.floormod(M, two_pi)
+
+        # Initialize E; guess M when eccentricity is small, otherwise guess pi
+        pi = tf.constant(np.pi)
+        E = tf.where(condition= e < 0.8, x=M, y=pi)
+        
+        # Initial error; from Kepler's equation M = E - e sin(E)
+        F = E - e * tf.sin(E) - M
+        
+        # Iterate to improve E; trial and error shows 8 usually enough for single precision convergence
+        for i in range(10):
+            # Only update where the error is above the tolerance
+            condition = tf.greater(tf.abs(F), tf.constant(1.0E-16))
+            E = tf.where(condition=condition, x=E - F / (1.0 - e * tf.cos(E)), y=E)
+            F = tf.where(condition=condition, x=E - e * tf.sin(E) - M, y=F)
+        
+        # Put E in the range [0, 2pi]        
+        return tf.math.floormod(E, two_pi)
+        
+    def get_config(self):
+        return dict()
+
+# ********************************************************************************************************************* 
+class MeanToTrueAnomaly(keras.layers.Layer):
+    """
+    Convert the mean anomaly M to the true anomly f given the eccentricity E.
+    """
+    def call(self, inputs):
+        # Unpack inputs
+        M, e = inputs
+        
+        # Compute the eccentric anomaly E
+        E = MeanToEccentricAnomaly()((M, e))
+        
+        # Compute the true anomaly from E
+        return 2.0*tf.math.atan(tf.sqrt((1.0+e)/(1.0-e))*tf.math.tan(0.5*E))
+        
     def get_config(self):
         return dict()
 
