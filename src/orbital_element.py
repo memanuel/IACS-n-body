@@ -12,6 +12,14 @@ from tensorflow import keras
 import rebound
 import numpy as np
 
+# Local imports
+from tf_utils import Identity
+
+# ********************************************************************************************************************* 
+# Data sets for testing orbital element conversions.
+# Simple approach, just wraps calls to rebound library
+# ********************************************************************************************************************* 
+
 # ********************************************************************************************************************* 
 def make_data_orb_elt(n, a_min, a_max, e_max, inc_max, seed=42):
     """Data with mapping between orbital elements and configuration space."""
@@ -116,6 +124,26 @@ def make_dataset_cfg_to_elt(n, a_min, a_max, e_max, inc_max, seed=42, batch_size
     return ds
 
 # ********************************************************************************************************************* 
+# Custom layers for converting between configurations (position and velocity) and orbital elements.
+# ********************************************************************************************************************* 
+
+# ********************************************************************************************************************* 
+class ArcCos2(keras.layers.Layer):
+    """
+    Variant of arc cosine taking three inputs: x, r, and y
+    Returns an angle theta such that r * cos(theta) = x and r * sin(theta) matches the sign of y
+    Follows function acos2 in rebound tools.c
+    """
+    def call(self, inputs):
+        # Unpack inputs
+        x, r, y = inputs
+        # Return the arc cosine with the appropriate sign
+        return tf.acos(x / r) * tf.math.sign(y)
+        
+    def get_config(self):
+        return dict()    
+    
+# ********************************************************************************************************************* 
 class OrbitalElementToConfig(keras.layers.Layer):
     def call(self, inputs):
         """Compute configuration (q, v) from orbital elements (a, e, inc, Omega, omega, f)"""
@@ -177,6 +205,96 @@ class OrbitalElementToConfig(keras.layers.Layer):
         return dict()
 
 # ********************************************************************************************************************* 
+class ConfigToOrbitalElement(keras.layers.Layer):
+    def call(self, inputs):
+        """Compute orbital elements (a, e, inc, Omega, omega, f) from configuration (qx, qy, qz, vx, vy, vz, mu)"""
+        # Unpack inputs
+        qx, qy, qz, vx, vy, vz, mu = inputs
+
+        # See rebound library tools.c, reb_tools_particle_to_orbit_err
+        
+        # The distance from the primary
+        r = tf.sqrt(tf.square(qx) + tf.square(qy) + tf.square(qz))
+        
+        # The speed and its square
+        v2 = tf.square(vx) + tf.square(vy) + tf.square(vz)
+        v = tf.sqrt(v2)
+        
+        # The speed squared of a circular orbit
+        v2_circ = mu / r
+        
+        # The semi-major axis
+        a = -mu / (v2 - tf.constant(2.0) * v2_circ)
+        
+        # The specific angular momentum vector and its magnitude
+        hx = qy*vz - qz*vy
+        hy = qz*vx - qx*vz
+        hz = qx*vy - qy*vx
+        h = tf.sqrt(tf.square(hx) + tf.square(hy) + tf.square(hz))
+        
+        # The excess squared speed vs. a circular orbit
+        v2_diff = v2 - v2_circ
+        
+        # The dot product of v and r; same as r times the radial speed vr
+        rvr = (qx * vx + qy*vy + qz*vz)
+        # The radial speed
+        vr = rvr / r
+        # Inverse of mu
+        mu_inv = tf.constant(1.0) / mu
+        
+        # Eccentricity vector
+        ex = mu_inv * (v2_diff * qx - rvr * vx)
+        ey = mu_inv * (v2_diff * qy - rvr * vy)
+        ez = mu_inv * (v2_diff * qz - rvr * vz)
+        # The eccentricity is the magnitude of this vector
+        e = tf.sqrt(tf.square(ex) + tf.square(ey) + tf.square(ez))
+        
+        # The mean motion
+        N = tf.sqrt(tf.abs(mu / (a*a*a)))
+        
+        # The inclination; zero when h points along z axis, i.e. hz = h
+        inc = tf.acos(hz / h)
+
+        # Vector pointing along the ascending node = zhat cross h
+        nx = -hy
+        ny = hx
+        n = tf.sqrt(tf.square(nx) + tf.square(ny))
+        
+        # Longitude of ascending node
+        # Omega = tf.acos(nx / n) * tf.math.sign(ny)
+        Omega = ArcCos2(name='Omega')((nx, n, ny))
+        
+        # Compute the eccentric anomaly for elliptical orbits (e < 1)
+        ea = ArcCos2(name='eccentric_anomaly')((tf.constant(1.0) - r / a, e, vr))
+        
+        # Compute the mean anomaly from the eccentric anomaly using Kepler's equation
+        M = ea - e * tf.sin(ea)
+        
+        # Sum of omega + f is always defined in the orbital plane when i != 0
+        omega_f = ArcCos2(name='omega_plus_f')((nx*qx + ny*qy, n*r, qz))
+
+        # The argument of pericenter
+        omega = ArcCos2(name='omega')((nx*ex + ny*ey, n*e, ez))
+                
+        # The true anomaly; may be larger than pi
+        f = omega_f - omega
+        
+        # Shift f to the interval [-pi, +pi]
+        pi = tf.constant(np.pi)
+        two_pi = tf.constant(2.0 * np.pi)
+        f = tf.math.floormod(f+pi, two_pi) - pi
+        
+        return a, e, inc, Omega, omega, f, M, N
+
+    def get_config(self):
+        return dict()
+
+# ********************************************************************************************************************* 
+# Models wrapping the layers performing the conversions
+# Makes it more convenient to test them using e.g. model.evaluate()
+# ********************************************************************************************************************* 
+
+# ********************************************************************************************************************* 
 def make_model_elt_to_cfg():
     """Model that transforms from orbital elements to cartesian coordinates"""
     # The shape shared by all the inputs
@@ -211,28 +329,43 @@ def make_model_elt_to_cfg():
 # ********************************************************************************************************************* 
 def make_model_cfg_to_elt():
     """Model that transforms from orbital elements to cartesian coordinates"""
-    # The shape shared by all the inputs
-    input_shape = (1,)
-
     # Create input layers    
-    qx = keras.Input(shape=input_shape, name='qx')
-    qy = keras.Input(shape=input_shape, name='qy')
-    qz = keras.Input(shape=input_shape, name='qz')
-    vx = keras.Input(shape=input_shape, name='vx')
-    vy = keras.Input(shape=input_shape, name='vy')
-    vz = keras.Input(shape=input_shape, name='vz')
-    mu = keras.Input(shape=input_shape, name='mu')
+    q = keras.Input(shape=(3,), name='q')
+    v = keras.Input(shape=(3,), name='v')
+    mu = keras.Input(shape=(1,), name='mu')
     
-    # Wrap these up into one tuple of inputs
-    inputs = (qx, qy, qz, vx, vy, vz, mu,)
+    # Wrap these up into one tuple of inputs for the model
+    inputs_model = (q, v, mu,)
+    
+    # Unpack coordinates from inputs
+    qx = keras.layers.Reshape(target_shape=(1,), name='qx')(q[:,0])
+    qy = keras.layers.Reshape(target_shape=(1,), name='qy')(q[:,1])
+    qz = keras.layers.Reshape(target_shape=(1,), name='qz')(q[:,2])
+    vx = keras.layers.Reshape(target_shape=(1,), name='vx')(v[:,0])
+    vy = keras.layers.Reshape(target_shape=(1,), name='vy')(v[:,1])
+    vz = keras.layers.Reshape(target_shape=(1,), name='vz')(v[:,2])
+
+    # Tuple of inputs for the layer
+    inputs_layer = (qx, qy, qz, vx, vy, vz, mu,)
 
     # Calculations are in one layer that does all the work...
-    a, e, inc, Omega, omega, f = ConfigToOrbitalElement(name='config_to_orbital_element')(inputs)
+    a, e, inc, Omega, omega, f, M, N = ConfigToOrbitalElement(name='config_to_orbital_element')(inputs_layer)
+
+    # Name the outputs of the layer
+    a = Identity(name='a')(a)
+    e = Identity(name='e')(e)
+    inc = Identity(name='inc')(inc)
+    Omega = Identity(name='Omega')(Omega)
+    omega = Identity(name='omega')(omega)
+    f = Identity(name='f')(f)
+    # "Bonus outputs" - mean anomaly and mean motion
+    M = Identity(name='M')(M)
+    N = Identity(name='N')(N)
 
     # Wrap up the outputs
-    outputs = (a, e, inc, Omega, omega, f)
+    outputs = (a, e, inc, Omega, omega, f, M, N)
 
     # Create a model from inputs to outputs
-    model = keras.Model(inputs=inputs, outputs=outputs, name='cartesian_to_orbital_element')
+    model = keras.Model(inputs=inputs_model, outputs=outputs, name='config_to_orbital_element')
     return model
 
