@@ -1,7 +1,7 @@
 """
 Harvard IACS Masters Thesis
-Restricted Two Body Problem
-Generate and plot training data (trajectories)
+Restricted Two Body Problem - Special Case of Circular Orbits (Eccentricity = 0)
+Generate training data (trajectories)
 
 Michael S. Emanuel
 Tue Jun  18 15:29 2019
