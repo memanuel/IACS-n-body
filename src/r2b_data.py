@@ -150,7 +150,7 @@ def make_train_r2b(n_traj: int, n_years: int, a_min: float = 0.50, a_max: float 
     space_dims = 3
 
     # Shape of arrays for various inputs and outputs
-    scalar_shape = (n_traj, 1)
+    scalar_shape = (n_traj, )
     init_shape = (n_traj, space_dims)
     time_shape = (n_traj, traj_size)
     traj_shape = (n_traj, traj_size, space_dims)
@@ -190,7 +190,7 @@ def make_train_r2b(n_traj: int, n_years: int, a_min: float = 0.50, a_max: float 
         t[i, :] = inputs['t']
         q0[i, :] = inputs['q0']
         v0[i, :] = inputs['v0']
-        mu[i, :] = inputs['mu']
+        mu[i] = inputs['mu']
         q[i, :, :] = outputs['q']
         v[i, :, :] = outputs['v']
         a[i, :, :] = outputs['a']
