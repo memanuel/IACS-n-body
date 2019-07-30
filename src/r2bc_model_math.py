@@ -16,9 +16,9 @@ keras = tf.keras
 
 # Local imports
 from tf_utils import Identity
-from r2b import KineticEnergy_R2B, PotentialEnergy_R2B, AngularMomentum_R2B
-from r2b import ConfigToPolar2D
-from r2b import Motion_R2B
+from r2bc import KineticEnergy_R2BC, PotentialEnergy_R2BC, AngularMomentum_R2BC
+from r2bc import ConfigToPolar2D
+from r2bc import Motion_R2BC
 
 # ********************************************************************************************************************* 
 # Functional API Models
@@ -125,7 +125,7 @@ def make_physics_model_r2bc_math(position_model: keras.Model, traj_size: int):
     }, message='make_physics_model_r2bc_math / polar elements r0, theta0, omega0')
         
     # Compute the motion from the specified position layer
-    q, v, a = Motion_R2B(position_model=position_model, name='motion')([t, r0, theta0, omega0])
+    q, v, a = Motion_R2BC(position_model=position_model, name='motion')([t, r0, theta0, omega0])
     
     # Name the outputs of the circular motion
     # These each have shape (batch_size, traj_size, 2)
@@ -152,15 +152,15 @@ def make_physics_model_r2bc_math(position_model: keras.Model, traj_size: int):
     }, message='make_physics_model_r2bc_math / outputs q0_rec, v0_rec')
 
     # Compute kinetic energy T and potential energy U
-    T = KineticEnergy_R2B(name='T')(v)
-    U = PotentialEnergy_R2B(name='U')([q, mu])
+    T = KineticEnergy_R2BC(name='T')(v)
+    U = PotentialEnergy_R2BC(name='U')([q, mu])
 
     # Compute the total energy H
     H = keras.layers.add(inputs=[T,U], name='H')
 
     # Compute angular momentum L
     # This has shape (batch_size, traj_size)
-    L = AngularMomentum_R2B(name='L')([q, v])
+    L = AngularMomentum_R2BC(name='L')([q, v])
     
     # Check sizes
     tf.debugging.assert_shapes(shapes={

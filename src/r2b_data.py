@@ -11,7 +11,7 @@ Thu Jul 11 16:28:58 2019
 import tensorflow as tf
 import rebound
 import numpy as np
-import sys
+import zlib
 import pickle
 from tqdm.auto import tqdm
 
@@ -240,7 +240,9 @@ def make_filename_r2b(n_traj: int, vt_split: float, n_years: int, a_min: float, 
         }
     
     # Create a non-negative hash ID of the attributes
-    hash_id = hash(frozenset(attributes.items())) & sys.maxsize
+    # hash_id = hash(frozenset(attributes.items())) & sys.maxsize
+    attributes_bytes = bytes(str(attributes), 'utf-8')
+    hash_id = zlib.crc32(attributes_bytes)
     
     # Create the filename
     return f'../data/r2b/{hash_id}.pickle'
@@ -266,6 +268,8 @@ def make_datasets_r2b(n_traj: int, vt_split: float, n_years: int, a_min: float, 
             print(f'Loaded data from {filename}.')
     # Generate the data and save it to the file
     except:
+        # Status 
+        print(f'Unable to load data from {filename}.')
         # Set the number of trajectories for train, validation and test
         n_traj_trn = n_traj
         n_traj_val = int(n_traj * vt_split)
