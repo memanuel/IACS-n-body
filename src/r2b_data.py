@@ -11,6 +11,8 @@ Thu Jul 11 16:28:58 2019
 import tensorflow as tf
 import rebound
 import numpy as np
+import sys
+import pickle
 from tqdm.auto import tqdm
 
 # Aliases
@@ -218,3 +220,106 @@ def make_train_r2b(n_traj: int, n_years: int, a_min: float = 0.50, a_max: float 
 
     # Return the dicts
     return (inputs, outputs)
+
+# ********************************************************************************************************************* 
+def make_filename_r2b(n_traj: int, vt_split: float, n_years: int, a_min: float, a_max: float, 
+                      e_max: float, inc_max: float, seed: int):
+    """Make file name for serializing datasets for the restricted 2 body problem"""
+    
+    # Create dictionary with attributes
+    attributes = {
+        'n_traj': n_traj,
+        'vt_split': vt_split,
+        'n_years': n_years,
+        'a_min': a_min,
+        'a_max': a_max,
+        'e_max': e_max,
+        'inc_max': inc_max,
+        'seed': seed,
+        # don't need to include batch_size because it doesn't affect data contents, only tf.data.Dataset
+        }
+    
+    # Create a non-negative hash ID of the attributes
+    hash_id = hash(frozenset(attributes.items())) & sys.maxsize
+    
+    # Create the filename
+    return f'../data/r2b/{hash_id}.pickle'
+
+
+# ********************************************************************************************************************* 
+def make_datasets_r2b(n_traj: int, vt_split: float, n_years: int, a_min: float, a_max: float, 
+                      e_max: float, inc_max: float, seed: int, batch_size: int):
+    """Make datasets for the restricted 2 body problem for train, val and test"""
+    # Get the filename for these arguments
+    filename = make_filename_r2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years,
+                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed)
+    # Attempt to load the file
+    try:
+        with open(filename, 'rb') as fh:
+            vartbl = pickle.load(fh)
+            inputs_trn = vartbl['inputs_trn']
+            outputs_trn = vartbl['outputs_trn']
+            inputs_val = vartbl['inputs_val']
+            outputs_val = vartbl['outputs_val']
+            inputs_tst = vartbl['inputs_tst']
+            outputs_tst = vartbl['outputs_tst']
+            print(f'Loaded data from {filename}.')
+    # Generate the data and save it to the file
+    except:
+        # Set the number of trajectories for train, validation and test
+        n_traj_trn = n_traj
+        n_traj_val = int(n_traj * vt_split)
+        n_traj_tst = n_traj_val
+
+        # Set the random seeds
+        seed_trn = seed + 0
+        seed_val = seed + 1
+        seed_tst = seed + 2
+
+        # Generate inputs and outputs for orbits with input parameters
+        inputs_trn, outputs_trn = make_train_r2b(n_traj=n_traj_trn, n_years=n_years, a_min=a_min, a_max=a_max, 
+                                                 e_max=e_max, inc_max=inc_max, seed=seed_trn)
+        inputs_val, outputs_val = make_train_r2b(n_traj=n_traj_val, n_years=n_years, a_min=a_min, a_max=a_max, 
+                                                 e_max=e_max, inc_max=inc_max, seed=seed_val)
+        inputs_tst, outputs_tst = make_train_r2b(n_traj=n_traj_tst, n_years=n_years, a_min=a_min, a_max=a_max, 
+                                                 e_max=e_max, inc_max=inc_max, seed=seed_tst)
+        
+        # Save these to file
+        vartbl = dict()
+        vartbl['inputs_trn'] = inputs_trn
+        vartbl['outputs_trn'] = outputs_trn
+        vartbl['inputs_val'] = inputs_val
+        vartbl['outputs_val'] = outputs_val
+        vartbl['inputs_tst'] = inputs_tst
+        vartbl['outputs_tst'] = outputs_tst
+        with open(filename, 'wb') as fh:
+            pickle.dump(vartbl, fh)
+
+    # Create DataSet objects for train, val and test sets
+    ds_trn = tf.data.Dataset.from_tensor_slices((inputs_trn, outputs_trn))
+    ds_val = tf.data.Dataset.from_tensor_slices((inputs_val, outputs_val))
+    ds_tst = tf.data.Dataset.from_tensor_slices((inputs_tst, outputs_tst))
+    
+    # Set shuffle buffer size
+    buffer_size = batch_size * 256
+
+    # Shuffle and batch data sets
+    ds_trn = ds_trn.shuffle(buffer_size=buffer_size).batch(batch_size)
+    ds_val = ds_val.shuffle(buffer_size=buffer_size).batch(batch_size)
+    ds_tst = ds_tst.shuffle(buffer_size=buffer_size).batch(batch_size)
+    
+    return ds_trn, ds_val, ds_tst
+
+# ********************************************************************************************************************* 
+def make_datasets_earth(n_traj=1000, vt_split=0.20, n_years=2, batch_size=64):
+    """Make 3 data sets for earth-like orbits with a=1"""
+    # Set the parameters for earth-like orbits
+    a_min = 1.0
+    a_max = 1.0
+    e_max = 0.02
+    inc_max = 0.02
+    seed = 42
+    
+    # Delegate to make_datasets_r2bc
+    return make_datasets_r2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, a_min=a_min, a_max=a_max, 
+                             e_max=e_max, inc_max=inc_max, seed=seed, batch_size=batch_size)
