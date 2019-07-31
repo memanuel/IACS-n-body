@@ -172,8 +172,8 @@ class Motion_R2B(keras.Model):
             v: the velocity at time t; shape (batch_size, traj_size, 3)
             a: the acceleration at time t; shape (batch_size, traj_size, 3)
         """
-        # Unpack time from first input; the rest are passed as-is to position_layer
-        t = inputs[0]
+        # Unpack the inputs
+        t, q0, v0 = inputs
 
         # Get the trajectory size and target shape of t
         traj_size = t.shape[1]
@@ -192,36 +192,52 @@ class Motion_R2B(keras.Model):
         # Evaluation of the position is under the scope of two gradient tapes
         # These are for velocity and acceleration
         with tf.GradientTape(persistent=True) as gt2:
-            gt2.watch(t)       
-        
+            gt2.watch(t)
+
             with tf.GradientTape(persistent=True) as gt1:
                 gt1.watch(t)       
         
                 # Get the position using the input position layer
-                # qx, qy = self.position_layer([t, r0, theta0, omega0])
-                position_inputs = [t] + inputs[1:]
-                qx, qy = self.position_model(position_inputs)
-                q = keras.layers.concatenate(inputs=[qx, qy], axis=2, name='q')
+                position_inputs = (t, q0, v0)
+                # The velocity from the position model assumes the orbital elements are not changing
+                # Here we only want to take the position output and do a full automatic differentiation
+                qx, qy, qz, vx_, vy_, vz_ = self.position_model(position_inputs)
+                q = keras.layers.concatenate(inputs=[qx, qy, qz], axis=2, name='q')
 
+                tf.debugging.assert_shapes(shapes={
+                    qx: (batch_size, traj_size, 1),
+                    qy: (batch_size, traj_size, 1),
+                    qz: (batch_size, traj_size, 1),
+                    vx_: (batch_size, traj_size, 1),
+                    vy_: (batch_size, traj_size, 1),
+                    vz_: (batch_size, traj_size, 1),
+                }, message='Motion_R2B / outputs of position model')
+                
             # Compute the velocity v = dq/dt with gt1
             vx = gt1.gradient(qx, t)
             vy = gt1.gradient(qy, t)
-            v = keras.layers.concatenate(inputs=[vx, vy], name='v')
+            vz = gt1.gradient(qz, t)
+            v = keras.layers.concatenate(inputs=[vx, vy, vz], axis=2, name='v')
             del gt1
             
+            tf.debugging.assert_shapes(shapes={
+                vx: (batch_size, traj_size, 1),
+                vy: (batch_size, traj_size, 1),
+                vz: (batch_size, traj_size, 1),
+            }, message='Motion_R2B / velocity by automatic differentation')
+
         # Compute the acceleration a = d2q/dt2 = dv/dt with gt2
         ax = gt2.gradient(vx, t)
         ay = gt2.gradient(vy, t)
-        a = keras.layers.concatenate(inputs=[ax, ay], name='a')
+        az = gt2.gradient(vz, t)
+        a = keras.layers.concatenate(inputs=[ax, ay, az], name='a')
         del gt2
         
         # Check shapes
-        batch_size = t.shape[0]
         tf.debugging.assert_shapes(shapes={
-            q: (batch_size, traj_size, 2),
-            v: (batch_size, traj_size, 2),
-            a: (batch_size, traj_size, 2),
+            q: (batch_size, traj_size, 3),
+            v: (batch_size, traj_size, 3),
+            a: (batch_size, traj_size, 3),
         }, message='Motion_R2B.call / outputs')
 
         return q, v, a
-

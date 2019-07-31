@@ -16,7 +16,8 @@ keras = tf.keras
 
 # Local imports
 from tf_utils import Identity
-from orbital_element import OrbitalElementToConfig, ConfigToOrbitalElement
+from orbital_element import make_model_cfg_to_elt
+from orbital_element import OrbitalElementToConfig, MeanToTrueAnomaly
 from r2b import KineticEnergy_R2B, PotentialEnergy_R2B, AngularMomentum_R2B
 from r2b import Motion_R2B
 
@@ -39,42 +40,21 @@ def make_position_model_r2b_math(traj_size = 731):
     # Wrap these up into one tuple of inputs for the model
     inputs = (t, q0, v0)
     
-    # Get batch size explicitly
-    batch_size = t.shape[0]
-
-    # Unpack coordinates from inputs
-    qx = keras.layers.Reshape(target_shape=(1,), name='qx')(q0[:,0])
-    qy = keras.layers.Reshape(target_shape=(1,), name='qy')(q0[:,1])
-    qz = keras.layers.Reshape(target_shape=(1,), name='qz')(q0[:,2])
-    vx = keras.layers.Reshape(target_shape=(1,), name='vx')(v0[:,0])
-    vy = keras.layers.Reshape(target_shape=(1,), name='vy')(v0[:,1])
-    vz = keras.layers.Reshape(target_shape=(1,), name='vz')(v0[:,2])
-
     # The gravitational constant; give this shape (1,1) for compatibility with RepeatVector
     # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value
     mu0 = tf.constant([[39.476924896240234]])
 
-    # Tuple of inputs for the layer converting from configuration to orbital elements
-    inputs_c2e = (qx, qy, qz, vx, vy, vz, mu0)
+    # Tuple of inputs for the model converting from configuration to orbital elements
+    inputs_c2e = (q0, v0, mu0)
 
-    # Extract the orbital elements of the initial conditions
-    a0, e0, inc0, Omega0, omega0, f0, M0, N0 = ConfigToOrbitalElement(name='config_to_orbital_element')(inputs_c2e)
-
-    # Name the outputs of the layer
-    a0 = Identity(name='a0')(a0)
-    e0 = Identity(name='e0')(e0)
-    inc0 = Identity(name='inc0')(inc0)
-    Omega0 = Identity(name='Omega0')(Omega0)
-    omega0 = Identity(name='omega0')(omega0)
-    f0 = Identity(name='f0')(f0)
-    # "Bonus outputs" - mean anomaly and mean motion
-    M0 = Identity(name='M0')(M0)
-    N0 = Identity(name='N0')(N0)
-
-    # Reshape initial orbital elements
-    # mu0 = tf.reshape(mu0, (-1, 1,))
+    # Model mapping cartesian coordinates to orbital elements
+    model_c2e = make_model_cfg_to_elt()
     
+    # Extract the orbital elements of the initial conditions
+    a0, e0, inc0, Omega0, omega0, f0, M0, N0 = model_c2e(inputs_c2e)
+
     # Check shapes of initial orbital elements
+    batch_size = t.shape[0]
     tf.debugging.assert_shapes(shapes={
         a0: (batch_size, 1),
         e0: (batch_size, 1),
@@ -85,7 +65,7 @@ def make_position_model_r2b_math(traj_size = 731):
     }, message='make_position_model_r2b_math / initial orbital elements')
     
     # Reshape t to (batch_size, traj_size, 1)
-    # t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(t)
+    t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(t)
     
     # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size)
     a = keras.layers.RepeatVector(n=traj_size, name='a')(a0)
@@ -95,22 +75,37 @@ def make_position_model_r2b_math(traj_size = 731):
     omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
     mu = keras.layers.RepeatVector(n=traj_size, name='mu_vec')(mu0)
 
-    # Throwaway - duplicate the initial true anomaly
-    # This is wrong, but the code should run
-    f = keras.layers.RepeatVector(n=traj_size, name='f')(f0)
-    
-    # Check shapes
+    # Check shapes of orbital element calculations
     tf.debugging.assert_shapes(shapes={
         a: (batch_size, traj_size, 1),
         e: (batch_size, traj_size, 1),
         inc: (batch_size, traj_size, 1),
         Omega: (batch_size, traj_size, 1),
         omega: (batch_size, traj_size, 1),
-        f: (batch_size, traj_size, 1),
+        # f: (batch_size, traj_size, 1),
         mu: (batch_size, traj_size, 1),
     }, message='make_position_model_r2b_math / orbital element calcs')
 
-    # Wrap these up into one tuple of inputs
+    # Repeat initial mean anomaly M0 and mean motion N0 to match shape of outputs
+    M0_vec = keras.layers.RepeatVector(n=traj_size, name='M0_vec')(M0)
+    N0_vec = keras.layers.RepeatVector(n=traj_size, name='N0_vec')(N0)
+    # Compute the mean anomaly M(t) as a function of time
+    N_t = keras.layers.multiply(inputs=[N0_vec, t_vec])
+    M = keras.layers.add(inputs=[M0_vec, N_t])
+
+    # Compute the true anomaly from the mean anomly and eccentricity
+    f = MeanToTrueAnomaly(name='mean_to_true_anomaly')([M, e])
+    
+    # Check shapes of calculations for true anomaly f
+    tf.debugging.assert_shapes(shapes={
+        M0_vec: (batch_size, traj_size, 1),
+        N0_vec: (batch_size, traj_size, 1),
+        N_t: (batch_size, traj_size, 1),
+        M: (batch_size, traj_size, 1),
+    }, message='make_position_model_r2b_math / orbital element calcs')
+    
+    
+    # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
     inputs_e2c = (a, e, inc, Omega, omega, f, mu,)
     
     # Convert from orbital elements to cartesian
