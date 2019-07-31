@@ -16,7 +16,7 @@ keras = tf.keras
 
 # Local imports
 from tf_utils import Identity
-from orbital_element import OrbitalElementToConfig
+from orbital_element import OrbitalElementToConfig, ConfigToOrbitalElement
 from r2b import KineticEnergy_R2B, PotentialEnergy_R2B, AngularMomentum_R2B
 from r2b import Motion_R2B
 
@@ -31,32 +31,50 @@ def make_position_model_r2b_math(traj_size = 731):
     the initial orbital elements with a deterministic mathematical model.
     Factory function that returns a functional model.
     """
-    # Create input layers
-    t = keras.Input(shape=(traj_size), name='t')
-    a0 = keras.Input(shape=(1,), name='a0')
-    e0 = keras.Input(shape=(1,), name='e0')
-    inc0 = keras.Input(shape=(1,), name='inc0')
-    Omega0 = keras.Input(shape=(1,), name='Omega0')
-    omega0 = keras.Input(shape=(1,), name='omega0')
-    f0 = keras.Input(shape=(1,), name='f0')
-    mu0 = keras.Input(shape=(1,), name='mu0')
+    # Create input layers 
+    t = keras.Input(shape=(traj_size,), name='t')
+    q0 = keras.Input(shape=(3,), name='q0')
+    v0 = keras.Input(shape=(3,), name='v0')
     
-    # The combined input layers
-    inputs = [t, a0, e0, inc0, Omega0, omega0, f0, mu0]
-
+    # Wrap these up into one tuple of inputs for the model
+    inputs = (t, q0, v0)
+    
     # Get batch size explicitly
     batch_size = t.shape[0]
 
-    # Reshape inputs if necessary
-    a0 = tf.reshape(a0, (-1, 1,))
-    e0 = tf.reshape(e0, (-1, 1,))
-    inc0 = tf.reshape(inc0, (-1, 1,))
-    Omega0 = tf.reshape(Omega0, (-1, 1,))
-    omega0 = tf.reshape(omega0, (-1, 1,))
-    f0 = tf.reshape(f0, (-1, 1,))
-    mu0 = tf.reshape(mu0, (-1, 1,))
+    # Unpack coordinates from inputs
+    qx = keras.layers.Reshape(target_shape=(1,), name='qx')(q0[:,0])
+    qy = keras.layers.Reshape(target_shape=(1,), name='qy')(q0[:,1])
+    qz = keras.layers.Reshape(target_shape=(1,), name='qz')(q0[:,2])
+    vx = keras.layers.Reshape(target_shape=(1,), name='vx')(v0[:,0])
+    vy = keras.layers.Reshape(target_shape=(1,), name='vy')(v0[:,1])
+    vz = keras.layers.Reshape(target_shape=(1,), name='vz')(v0[:,2])
+
+    # The gravitational constant; give this shape (1,1) for compatibility with RepeatVector
+    # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value
+    mu0 = tf.constant([[39.476924896240234]])
+
+    # Tuple of inputs for the layer converting from configuration to orbital elements
+    inputs_c2e = (qx, qy, qz, vx, vy, vz, mu0)
+
+    # Extract the orbital elements of the initial conditions
+    a0, e0, inc0, Omega0, omega0, f0, M0, N0 = ConfigToOrbitalElement(name='config_to_orbital_element')(inputs_c2e)
+
+    # Name the outputs of the layer
+    a0 = Identity(name='a0')(a0)
+    e0 = Identity(name='e0')(e0)
+    inc0 = Identity(name='inc0')(inc0)
+    Omega0 = Identity(name='Omega0')(Omega0)
+    omega0 = Identity(name='omega0')(omega0)
+    f0 = Identity(name='f0')(f0)
+    # "Bonus outputs" - mean anomaly and mean motion
+    M0 = Identity(name='M0')(M0)
+    N0 = Identity(name='N0')(N0)
+
+    # Reshape initial orbital elements
+    # mu0 = tf.reshape(mu0, (-1, 1,))
     
-    # Check inputs shapes
+    # Check shapes of initial orbital elements
     tf.debugging.assert_shapes(shapes={
         a0: (batch_size, 1),
         e0: (batch_size, 1),
@@ -64,7 +82,7 @@ def make_position_model_r2b_math(traj_size = 731):
         Omega0: (batch_size, 1),
         omega0: (batch_size, 1),
         mu0: (batch_size, 1),
-    }, message='make_position_model_r2b_math / inputs')
+    }, message='make_position_model_r2b_math / initial orbital elements')
     
     # Reshape t to (batch_size, traj_size, 1)
     # t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(t)
@@ -75,8 +93,12 @@ def make_position_model_r2b_math(traj_size = 731):
     inc = keras.layers.RepeatVector(n=traj_size, name='inc')(inc0)
     Omega = keras.layers.RepeatVector(n=traj_size, name='Omega')(Omega0)
     omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
-    mu = keras.layers.RepeatVector(n=traj_size, name='mu')(mu0)
+    mu = keras.layers.RepeatVector(n=traj_size, name='mu_vec')(mu0)
 
+    # Throwaway - duplicate the initial true anomaly
+    # This is wrong, but the code should run
+    f = keras.layers.RepeatVector(n=traj_size, name='f')(f0)
+    
     # Check shapes
     tf.debugging.assert_shapes(shapes={
         a: (batch_size, traj_size, 1),
@@ -84,31 +106,27 @@ def make_position_model_r2b_math(traj_size = 731):
         inc: (batch_size, traj_size, 1),
         Omega: (batch_size, traj_size, 1),
         omega: (batch_size, traj_size, 1),
-        mu: (batch_size, traj_size, 1),
-    }, message='make_position_model_r2b_math / calcs')
-
-    # Throwaway - duplicate the initial true anomaly
-    # This is wrong, but the code should run
-    f = keras.layers.RepeatVector(n=traj_size, name='f')(f0)
-    
-    tf.debugging.assert_shapes(shapes={
         f: (batch_size, traj_size, 1),
-    }, message='make_position_model_r2b_math / f')
-    
+        mu: (batch_size, traj_size, 1),
+    }, message='make_position_model_r2b_math / orbital element calcs')
+
     # Wrap these up into one tuple of inputs
-    inputs_elt = (a, e, inc, Omega, omega, f, mu,)
+    inputs_e2c = (a, e, inc, Omega, omega, f, mu,)
     
     # Convert from orbital elements to cartesian
-    qx, qy, qz, vx, vy, vz = OrbitalElementToConfig(name='orbital_element_to_config')(inputs_elt)
+    qx, qy, qz, vx, vy, vz = OrbitalElementToConfig(name='orbital_element_to_config')(inputs_e2c)
     
     # Wrap up the outputs
-    outputs = (qx, qy, qz)
+    outputs = (qx, qy, qz, vx, vy, vz)
     
     # Check shapes
     tf.debugging.assert_shapes(shapes={
         qx: (batch_size, traj_size, 1),
         qy: (batch_size, traj_size, 1),
         qz: (batch_size, traj_size, 1),
+        vx: (batch_size, traj_size, 1),
+        vy: (batch_size, traj_size, 1),
+        vz: (batch_size, traj_size, 1),
     }, message='make_position_model_r2b_math / outputs')
     
     # Wrap this into a model
@@ -116,7 +134,7 @@ def make_position_model_r2b_math(traj_size = 731):
     return model
 
 # ********************************************************************************************************************* 
-def make_physics_model_r2bc_math(position_model: keras.Model, traj_size: int):
+def make_physics_model_r2b_math(position_model: keras.Model, traj_size: int):
     """Create a physics model for the restricted two body problem from a position model"""
     # Create input layers
     t = keras.Input(shape=(traj_size,), name='t')

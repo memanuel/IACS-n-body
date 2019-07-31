@@ -165,13 +165,12 @@ class Motion_R2B(keras.Model):
         then uses automatic differentiation for velocity v and acceleration a.
         INPUTS:
             t: the times to report the orbit; shape (batch_size, traj_size)
-            r0: the initial distance; shape (batch_size, 1)
-            theta0: the initial angle; shape (batch_size, 1)
-            omega0: the angular velocity; shape (batch_size, 1)
+            q0: the initial position; shape (batch_size, 3)
+            v0: the initial velocity; shape (batch_size, 3)
         OUTPUTS:
-            q: the position at time t; shape (batch_size, traj_size, 2)
-            v: the velocity at time t; shape (batch_size, traj_size, 2)
-            a: the acceleration at time t; shape (batch_size, traj_size, 2)
+            q: the position at time t; shape (batch_size, traj_size, 3)
+            v: the velocity at time t; shape (batch_size, traj_size, 3)
+            a: the acceleration at time t; shape (batch_size, traj_size, 3)
         """
         # Unpack time from first input; the rest are passed as-is to position_layer
         t = inputs[0]
