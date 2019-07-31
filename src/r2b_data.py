@@ -46,8 +46,9 @@ def make_traj_r2b(a, e, inc, Omega, omega, f, n_years):
     # Set units
     sim.units = ('yr', 'AU', 'Msun')
 
-    # Set integrator to whfast: will be perfect for 2 body problem
-    sim.integrator = 'whfast'
+    # Set integrator to ias15: 
+    # While 'whfast' will be perfect for 2 body problem, it doesn't include acceleration outputs
+    sim.integrator = 'ias15'
 
     # Set the simulation time step based on sample_freq
     sim.dt = 1.0 / sample_freq
@@ -61,7 +62,7 @@ def make_traj_r2b(a, e, inc, Omega, omega, f, n_years):
     # Initialize cartesian entries to zero vectors; these are placeholders
     q = np.zeros((N,3), dtype=np.float32)
     v = np.zeros((N,3), dtype=np.float32)
-    a = np.zeros((N,3), dtype=np.float32)
+    acc = np.zeros((N,3), dtype=np.float32)
 
     # Initialize placeholders for kinetic, potential, and total energy
     T = np.zeros(N, dtype=np.float32)
@@ -80,15 +81,19 @@ def make_traj_r2b(a, e, inc, Omega, omega, f, n_years):
     p = sim.particles[1]
 
     # Simulate the orbits
+    # Start by integrating backward, then forward for a small step
+    # This allows rebound to correctly initialize the acceleration
+    sim.integrate(-1E-6, exact_finish_time=1)
+    sim.integrate(1E-6, exact_finish_time=1)
     for i, t in enumerate(ts):
         # Take one time step; this is one day
-        sim.integrate(t, exact_finish_time=0)
+        sim.integrate(t, exact_finish_time=1)
         # Save the position
         q[i] = [p.x, p.y, p.z]
         # Save the velocity
         v[i] = [p.vx, p.vy, p.vz]
         # Save the acceleration
-        a[i] = [p.ax, p.ay, p.az]
+        acc[i] = [p.ax, p.ay, p.az]
 
         # Save the energy terms
         T[i] = 0.5 * np.sum(v[i] * v[i])
@@ -115,7 +120,7 @@ def make_traj_r2b(a, e, inc, Omega, omega, f, n_years):
     outputs = {
         'q': q,
         'v': v,
-        'a': a,
+        'a': acc,
         # the initial conditions, which should be recovered
         'q0_rec': q0,
         'v0_rec': v0,
