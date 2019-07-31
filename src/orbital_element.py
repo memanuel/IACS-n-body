@@ -138,7 +138,10 @@ class ArcCos2(keras.layers.Layer):
         # Unpack inputs
         x, r, y = inputs
         # Return the arc cosine with the appropriate sign
-        return tf.acos(x / r) * tf.math.sign(y)
+        # return tf.acos(x / r) * tf.math.sign(y)
+        cosine = tf.clip_by_value(x / r, -1.0, 1.0)
+        return tf.acos(cosine) * tf.math.sign(y)
+
         
     def get_config(self):
         return dict()    

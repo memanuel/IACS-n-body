@@ -53,15 +53,17 @@ class PotentialEnergy_R2B(keras.layers.Layer):
 
     def call(self, inputs):
         # Unpack inputs
-        q, mu = inputs
+        q = inputs
 
         # Shape of q is (batch_size, traj_size, 3,)
-        # Shape of mu is (batch_size, 1)
         batch_size, traj_size = q.shape[0:2]
         tf.debugging.assert_shapes(shapes={
             q: (batch_size, traj_size, 3),
-            mu: (batch_size,)
         }, message='PotentialEnergy_R2B / inputs')
+
+        # The gravitational constant
+        # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value
+        mu = tf.constant(-39.476924896240234)
 
         # Compute the norm of a 2D vector
         norm_func = lambda q : tf.norm(q, axis=-1, keepdims=False)
@@ -69,11 +71,8 @@ class PotentialEnergy_R2B(keras.layers.Layer):
         # The distance r; shape (batch_size, traj_size)
         r = keras.layers.Activation(norm_func, name='r')(q)
         
-        # Reshape mu to (batch_size, 1)
-        mu_vec = keras.layers.Reshape(target_shape=(1,), name='mu_vec')(mu)        
-        
         # The gravitational potential is -G m0 m1 / r = - mu / r per unit mass m1 in restricted problem
-        U = tf.negative(tf.divide(mu_vec, r))
+        U = tf.divide(mu, r)
 
         # Check shapes
         tf.debugging.assert_shapes(shapes={
@@ -109,6 +108,7 @@ class AngularMomentum_R2B(keras.layers.Layer):
         }, message='AngularMomentum_R2B / outputs')
         
         return L
+
 # ********************************************************************************************************************* 
 # Custom Losses
 # ********************************************************************************************************************* 
