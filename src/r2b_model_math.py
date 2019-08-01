@@ -36,13 +36,18 @@ def make_position_model_r2b_math(traj_size = 731):
     t = keras.Input(shape=(traj_size,), name='t')
     q0 = keras.Input(shape=(3,), name='q0')
     v0 = keras.Input(shape=(3,), name='v0')
+    mu = keras.Input(shape=(1,), name='mu')
     
     # Wrap these up into one tuple of inputs for the model
-    inputs = (t, q0, v0)
+    # inputs = (t, q0, v0)
+    inputs = (t, q0, v0, mu)
     
     # The gravitational constant; give this shape (1,1) for compatibility with RepeatVector
     # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value
-    mu0 = tf.constant([[39.476924896240234]])
+    # mu0 = tf.constant([[39.476924896240234]])
+    
+    # Reshape the gravitational field strength from (batch_size,) to (batch_size, 1,)
+    mu0 = keras.layers.Reshape((1,))(mu)
 
     # Tuple of inputs for the model converting from configuration to orbital elements
     inputs_c2e = (q0, v0, mu0)
@@ -135,9 +140,10 @@ def make_physics_model_r2b_math(position_model: keras.Model, traj_size: int):
     t = keras.Input(shape=(traj_size,), name='t')
     q0 = keras.Input(shape=(3,), name='q0')
     v0 = keras.Input(shape=(3,), name='v0')
+    mu = keras.Input(shape=(1,), name='mu')
     
     # Wrap these up into one tuple of inputs for the model
-    inputs = (t, q0, v0)
+    inputs = (t, q0, v0, mu)
     
     # Check sizes of inputs
     batch_size = t.shape[0]
@@ -145,6 +151,7 @@ def make_physics_model_r2b_math(position_model: keras.Model, traj_size: int):
         t: (batch_size, traj_size),
         q0: (batch_size, 3),
         v0: (batch_size, 3),
+        mu: (batch_size, 1),
     }, message='make_physics_model_r2b_math / inputs')
         
     # Return row 0 of a position or velocity for q0_rec and v0_rec

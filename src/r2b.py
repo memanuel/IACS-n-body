@@ -63,6 +63,7 @@ class PotentialEnergy_R2B(keras.layers.Layer):
 
         # The gravitational constant
         # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value
+        
         mu = tf.constant(-39.476924896240234)
 
         # Compute the norm of a 2D vector
@@ -167,13 +168,14 @@ class Motion_R2B(keras.Model):
             t: the times to report the orbit; shape (batch_size, traj_size)
             q0: the initial position; shape (batch_size, 3)
             v0: the initial velocity; shape (batch_size, 3)
+            mu: the gratitational field strength; shape (batch_size, 1)
         OUTPUTS:
             q: the position at time t; shape (batch_size, traj_size, 3)
             v: the velocity at time t; shape (batch_size, traj_size, 3)
             a: the acceleration at time t; shape (batch_size, traj_size, 3)
         """
         # Unpack the inputs
-        t, q0, v0 = inputs
+        t, q0, v0, mu = inputs
 
         # Get the trajectory size and target shape of t
         traj_size = t.shape[1]
@@ -198,7 +200,7 @@ class Motion_R2B(keras.Model):
                 gt1.watch(t)       
         
                 # Get the position using the input position layer
-                position_inputs = (t, q0, v0)
+                position_inputs = (t, q0, v0, mu)
                 # The velocity from the position model assumes the orbital elements are not changing
                 # Here we only want to take the position output and do a full automatic differentiation
                 qx, qy, qz, vx_, vy_, vz_ = self.position_model(position_inputs)
