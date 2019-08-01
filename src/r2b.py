@@ -53,33 +53,37 @@ class PotentialEnergy_R2B(keras.layers.Layer):
 
     def call(self, inputs):
         # Unpack inputs
-        q = inputs
+        q, mu = inputs
 
         # Shape of q is (batch_size, traj_size, 3,)
-        batch_size, traj_size = q.shape[0:2]
-        tf.debugging.assert_shapes(shapes={
-            q: (batch_size, traj_size, 3),
-        }, message='PotentialEnergy_R2B / inputs')
+        # batch_size, traj_size = q.shape[0:2]
+        # tf.debugging.assert_shapes(shapes={
+        #    q: (batch_size, traj_size, 3),
+        #    mu: (batch_size,),
+        # }, message='PotentialEnergy_R2B / inputs')
 
         # The gravitational constant
-        # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value
-        
-        mu = tf.constant(-39.476924896240234)
-
+        # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value        
+        # mu = tf.constant(-39.476924896240234)
+               
         # Compute the norm of a 2D vector
         norm_func = lambda q : tf.norm(q, axis=-1, keepdims=False)
 
         # The distance r; shape (batch_size, traj_size)
         r = keras.layers.Activation(norm_func, name='r')(q)
         
+        # Reshape gravitational field constant to match r
+        target_shape = [1] * (len(r.shape)-1)
+        mu = keras.layers.Reshape(target_shape, name='mu_vec')(mu)
+        
         # The gravitational potential is -G m0 m1 / r = - mu / r per unit mass m1 in restricted problem
-        U = tf.divide(mu, r)
+        U = tf.negative(tf.divide(mu, r))
 
         # Check shapes
-        tf.debugging.assert_shapes(shapes={
-            r: (batch_size, traj_size),
-            U: (batch_size, traj_size)
-        }, message='PotentialEnergy_R2B / outputs')
+        # tf.debugging.assert_shapes(shapes={
+        #    r: (batch_size, traj_size),
+        #    U: (batch_size, traj_size)
+        #}, message='PotentialEnergy_R2B / outputs')
 
         return U
 

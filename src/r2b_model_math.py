@@ -187,7 +187,7 @@ def make_physics_model_r2b_math(position_model: keras.Model, traj_size: int):
 
     # Compute kinetic energy T and potential energy U
     T = KineticEnergy_R2B(name='T')(v)
-    U = PotentialEnergy_R2B(name='U')(q)
+    U = PotentialEnergy_R2B(name='U')((q, mu))
 
     # Compute the total energy H
     H = keras.layers.add(inputs=[T,U], name='H')
