@@ -288,12 +288,23 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev
 
     # Add the times to the history
     history = hist.history
-    history['time'] = cb_time.times
+    # history['time'] = cb_time.times
     
+    # Convert from lists to numpy arrays 
+    for key in history.keys():
+        history[key] = np.array(history[key])
+
     # Merge the previous history if provided
     if prev_history is not None:
-        for key in prev_history.keys():
+        for key in history.keys():
             history[key] = np.concatenate([prev_history[key], history[key]])
+        # Merge wall times; new times need to add offset from previous wall time
+        prev_times = prev_history['time']
+        time_offset = prev_times[-1]
+        new_times = np.array(cb_time.times) + time_offset
+        history['time'] = np.concatenate([prev_times, new_times])
+    else:
+        history['time'] = np.array(cb_time.times)
     
     # Restore the model to the best weights
     model.load_weights(filepath)

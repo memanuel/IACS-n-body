@@ -39,7 +39,6 @@ def make_position_model_r2b_math(traj_size = 731):
     mu = keras.Input(shape=(1,), name='mu')
     
     # Wrap these up into one tuple of inputs for the model
-    # inputs = (t, q0, v0)
     inputs = (t, q0, v0, mu)
     
     # The gravitational constant; give this shape (1,1) for compatibility with RepeatVector
