@@ -320,14 +320,26 @@ def make_datasets_r2b(n_traj: int, vt_split: float, n_years: int, a_min: float, 
     return ds_trn, ds_val, ds_tst
 
 # ********************************************************************************************************************* 
-def make_datasets_earth(n_traj=1000, vt_split=0.20, n_years=2, batch_size=64):
+def make_datasets_earth(n_traj=1000, vt_split=0.20, n_years=2, batch_size=64, seed=42):
     """Make 3 data sets for earth-like orbits with a=1"""
     # Set the parameters for earth-like orbits
     a_min = 1.0
     a_max = 1.0
     e_max = 0.02
     inc_max = 0.02
-    seed = 42
+    
+    # Delegate to make_datasets_r2bc
+    return make_datasets_r2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, a_min=a_min, a_max=a_max, 
+                             e_max=e_max, inc_max=inc_max, seed=seed, batch_size=batch_size)
+    
+# ********************************************************************************************************************* 
+def make_datasets_solar(n_traj=1000, vt_split=0.20, n_years=2, batch_size=64, seed=42):
+    """Make 3 data sets for solar-system -like orbits with a range of a, e, and inclinations."""
+    # Set the parameters for earth-like orbits
+    a_min = 0.50
+    a_max = 32.0
+    e_max = 0.20
+    inc_max = np.pi / 4.0
     
     # Delegate to make_datasets_r2bc
     return make_datasets_r2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, a_min=a_min, a_max=a_max, 
