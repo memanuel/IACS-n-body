@@ -142,7 +142,6 @@ class ArcCos2(keras.layers.Layer):
         cosine = tf.clip_by_value(x / r, -1.0, 1.0)
         return tf.acos(cosine) * tf.math.sign(y)
 
-        
     def get_config(self):
         return dict()    
     
@@ -301,26 +300,20 @@ class MeanToEccentricAnomaly(keras.layers.Layer):
         # Unpack inputs
         M, e = inputs
         
-        # Move M to the inveral [0, 2pi]
-        two_pi = tf.constant(2.0 * np.pi)
-        M = tf.math.floormod(M, two_pi)
-
         # Initialize E; guess M when eccentricity is small, otherwise guess pi
-        pi = tf.constant(np.pi)
-        E = tf.where(condition= e < 0.8, x=M, y=pi)
+        # E = tf.where(condition= e < 0.8, x=M, y=tf.constant(np.pi))
+        E = M
         
         # Initial error; from Kepler's equation M = E - e sin(E)
         F = E - e * tf.sin(E) - M
         
-        # Iterate to improve E; trial and error shows 8 usually enough for single precision convergence
+        # Iterate to improve E; trial and error shows 10 enough for single precision convergence
         for i in range(10):
-            # Only update where the error is above the tolerance
-            condition = tf.greater(tf.abs(F), tf.constant(1.0E-16))
-            E = tf.where(condition=condition, x=E - F / (1.0 - e * tf.cos(E)), y=E)
-            F = tf.where(condition=condition, x=E - e * tf.sin(E) - M, y=F)
-        
-        # Put E in the range [0, 2pi]        
-        return tf.math.floormod(E, two_pi)
+            # One step of Newton's Method
+            E = E - F / (1.0 - e * tf.cos(E))
+            F = E - e * tf.sin(E) - M
+
+        return E
         
     def get_config(self):
         return dict()

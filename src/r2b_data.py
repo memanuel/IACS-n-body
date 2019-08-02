@@ -135,7 +135,7 @@ def make_traj_r2b(a, e, inc, Omega, omega, f, n_years):
 
 
 # ********************************************************************************************************************* 
-def make_train_r2b(n_traj: int, n_years: int, a_min: float = 0.50, a_max: float = 32.0, 
+def make_data_r2b(n_traj: int, n_years: int, a_min: float = 0.50, a_max: float = 32.0, 
                    e_max = 0.20, inc_max = 0.0, seed = 42):
     """
     Make a set of training data for the restricted two body problem
@@ -286,11 +286,11 @@ def make_datasets_r2b(n_traj: int, vt_split: float, n_years: int, a_min: float, 
         seed_tst = seed + 2
 
         # Generate inputs and outputs for orbits with input parameters
-        inputs_trn, outputs_trn = make_train_r2b(n_traj=n_traj_trn, n_years=n_years, a_min=a_min, a_max=a_max, 
+        inputs_trn, outputs_trn = make_data_r2b(n_traj=n_traj_trn, n_years=n_years, a_min=a_min, a_max=a_max, 
                                                  e_max=e_max, inc_max=inc_max, seed=seed_trn)
-        inputs_val, outputs_val = make_train_r2b(n_traj=n_traj_val, n_years=n_years, a_min=a_min, a_max=a_max, 
+        inputs_val, outputs_val = make_data_r2b(n_traj=n_traj_val, n_years=n_years, a_min=a_min, a_max=a_max, 
                                                  e_max=e_max, inc_max=inc_max, seed=seed_val)
-        inputs_tst, outputs_tst = make_train_r2b(n_traj=n_traj_tst, n_years=n_years, a_min=a_min, a_max=a_max, 
+        inputs_tst, outputs_tst = make_data_r2b(n_traj=n_traj_tst, n_years=n_years, a_min=a_min, a_max=a_max, 
                                                  e_max=e_max, inc_max=inc_max, seed=seed_tst)
         
         # Save these to file
