@@ -62,30 +62,30 @@ def make_position_model_r2b_nn(hidden_sizes, skip_layers=True, traj_size = 731):
     inc0_vec = keras.layers.RepeatVector(n=traj_size, name='inc0_vec')(inc0)
     Omega0_vec = keras.layers.RepeatVector(n=traj_size, name='Omega0_vec')(Omega0)
     omega0_vec = keras.layers.RepeatVector(n=traj_size, name='omega0_vec')(omega0)
+    f0_vec = keras.layers.RepeatVector(n=traj_size, name='f0_vec')(f0)
     mu_vec = keras.layers.RepeatVector(n=traj_size, name='mu_vec')(mu)
 
     # Repeat initial mean anomaly M0 and mean motion N0 to match shape of outputs
     M0_vec = keras.layers.RepeatVector(n=traj_size, name='M0_vec')(M0)
     N0_vec = keras.layers.RepeatVector(n=traj_size, name='N0_vec')(N0)
     # Compute the mean anomaly M(t) as a function of time
-    N_t = keras.layers.multiply(inputs=[N0_vec, t_vec])
-    M_vec = keras.layers.add(inputs=[M0_vec, N_t])
+    N_t = keras.layers.multiply(inputs=[N0_vec, t_vec], name='N_t')
+    M_vec = keras.layers.add(inputs=[M0_vec, N_t], name='M_vec')
 
     # Compute the true anomaly from the mean anomly and eccentricity
     f_vec = MeanToTrueAnomaly(name='mean_to_true_anomaly')([M_vec, e0_vec])
     
-    # Combine the trajectory-wide scalars into one feature of shape (batch_size, 14)
-    # One row has 3+3+6 = 12 elements
+    # Combine the trajectory-wide scalars into one feature of shape (batch_size, num_features)
     phi_traj = keras.layers.concatenate(
-        inputs=[q0, v0, a0, e0, inc0, Omega0, omega0, N0], 
+        inputs=[q0, v0, mu, a0, e0, inc0, Omega0, omega0, N0], 
         name='phi_traj')
     
-    # Repeat phi_traj traj_size times so it has a shape of (batch_size, traj_size, 14)
+    # Repeat phi_traj traj_size times so it has a shape of (batch_size, traj_size, num_features)
     phi_traj_vec = keras.layers.RepeatVector(n=traj_size, name='phi_traj_vec')(phi_traj)
 
     # Combine the following into an initial feature vector, phi_0
     # 1) The time t
-    # 2) The repeated orbital elements (which remain constant); not including f0
+    # 2) The repeated orbital elements (which remain constant)
     # 3) The computed mean anomaly M and true anomaly f
     phi_0 = keras.layers.concatenate(
         inputs=[t_vec, phi_traj_vec, M_vec, f_vec], 
@@ -139,12 +139,17 @@ def make_position_model_r2b_nn(hidden_sizes, skip_layers=True, traj_size = 731):
         units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_f')(phi_n)    
 
     # Compute the orbital elements as the sum of the original elemenets and their change
+    # Limit a to be non-negative
     a = keras.layers.add(inputs=[a0_vec, delta_a], name='a')
-    a = tf.nn.relu(a)
+    a = keras.layers.ReLU(name='a_relu')(a)
     
+    # Limit e to be in interval [0.0, 1.0]
     e = keras.layers.add(inputs=[e0_vec, delta_e], name='e')
-    e = tf.clip_by_value(e, 0.0, 1.0)
+    # e = tf.clip_by_value(e, 0.0, 1.0)
+    clip_func = lambda x : tf.clip_by_value(x, 0.0, 1.0)
+    e = keras.layers.Activation(activation=clip_func, name='e_clip')(e)
     
+    # The remaining elements can take any value; angles can wrap around past 2pi
     inc = keras.layers.add(inputs=[inc0_vec, delta_inc], name='inc')
     Omega = keras.layers.add(inputs=[Omega0_vec, delta_Omega], name='Omega')
     omega = keras.layers.add(inputs=[omega0_vec, delta_omega], name='omega')
