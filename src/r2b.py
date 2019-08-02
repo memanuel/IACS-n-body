@@ -8,12 +8,13 @@ Tue Jul 30 11:44:00 2019
 """
 
 # Library imports
+import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.keras import backend as K
-from tf_utils import Identity
+from tf_utils import Identity, EpochLoss, TimeHistory
 
 # ********************************************************************************************************************* 
 # Custom Layers
@@ -328,3 +329,68 @@ def make_physics_model_r2b(position_model: keras.Model, traj_size: int):
     model = keras.Model(inputs=inputs, outputs=outputs, name=model_name)
     return model
 
+# ********************************************************************************************************************* 
+# Utility Functions
+# ********************************************************************************************************************* 
+
+# ********************************************************************************************************************* 
+def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev_history=None):
+    # Compile the model
+    model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
+    model_name = model.name
+    filepath=f'../models/r2b/{model_name}.h5'
+
+    # Parameters for callbacks
+    interval = 1
+    patience = max(epochs // 10, 1)
+    
+    # Create callbacks
+    cb_log = EpochLoss(interval=interval, newline=True)
+    
+    cb_time = TimeHistory()
+
+    cb_ckp = keras.callbacks.ModelCheckpoint(
+            filepath=filepath, 
+            save_freq=save_freq,
+            save_best_only=True,
+            save_weights_only=True,
+            monitor='loss',
+            verbose=0)    
+
+    cb_early_stop = keras.callbacks.EarlyStopping(
+            monitor='loss',
+            min_delta=0.0,
+            patience=patience,
+            verbose=2,
+            restore_best_weights=True)    
+
+    # All selected callbacks
+    # callbacks = [cb_log, cb_time, cb_ckp, cb_early_stop]
+    callbacks = [cb_log, cb_time, cb_ckp]
+    
+    # Fit the model
+    hist = model.fit(ds, epochs=epochs, callbacks=callbacks, verbose=1)
+
+    # Add the times to the history
+    history = hist.history
+    
+    # Convert from lists to numpy arrays 
+    for key in history.keys():
+        history[key] = np.array(history[key])
+
+    # Merge the previous history if provided
+    if prev_history is not None:
+        for key in history.keys():
+            history[key] = np.concatenate([prev_history[key], history[key]])
+        # Merge wall times; new times need to add offset from previous wall time
+        prev_times = prev_history['time']
+        time_offset = prev_times[-1]
+        new_times = np.array(cb_time.times) + time_offset
+        history['time'] = np.concatenate([prev_times, new_times])
+    else:
+        history['time'] = np.array(cb_time.times)
+    
+    # Restore the model to the best weights
+    model.load_weights(filepath)
+
+    return history

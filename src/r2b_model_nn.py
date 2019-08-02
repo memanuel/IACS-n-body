@@ -18,8 +18,8 @@ keras = tf.keras
 from orbital_element import make_model_cfg_to_elt
 from orbital_element import OrbitalElementToConfig, MeanToTrueAnomaly
 from r2b import make_physics_model_r2b
-from tf_utils import EpochLoss, TimeHistory
-import numpy as np
+# from tf_utils import EpochLoss, TimeHistory
+# import numpy as np
 
 # ********************************************************************************************************************* 
 # Functional API Models
@@ -42,10 +42,10 @@ def make_position_model_r2b_nn(hidden_sizes, skip_layers=True, traj_size = 731):
     inputs = (t, q0, v0, mu)
     
     # Reshape the gravitational field strength from (batch_size,) to (batch_size, 1,)
-    mu0 = keras.layers.Reshape((1,))(mu)
+    mu = keras.layers.Reshape((1,), name='mu_reshape')(mu)
 
     # Tuple of inputs for the model converting from configuration to orbital elements
-    inputs_c2e = (q0, v0, mu0)
+    inputs_c2e = (q0, v0, mu)
 
     # Model mapping cartesian coordinates to orbital elements
     model_c2e = make_model_cfg_to_elt()
@@ -57,22 +57,22 @@ def make_position_model_r2b_nn(hidden_sizes, skip_layers=True, traj_size = 731):
     t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(t)
     
     # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size)
-    # a = keras.layers.RepeatVector(n=traj_size, name='a')(a0)
-    e_ = keras.layers.RepeatVector(n=traj_size, name='e_')(e0)
-    # inc = keras.layers.RepeatVector(n=traj_size, name='inc')(inc0)
-    # Omega = keras.layers.RepeatVector(n=traj_size, name='Omega')(Omega0)
-    # omega = keras.layers.RepeatVector(n=traj_size, name='omega')(omega0)
-    mu = keras.layers.RepeatVector(n=traj_size, name='mu_vec')(mu0)
+    a0_vec = keras.layers.RepeatVector(n=traj_size, name='a0_vec')(a0)
+    e0_vec = keras.layers.RepeatVector(n=traj_size, name='e0_vec')(e0)
+    inc0_vec = keras.layers.RepeatVector(n=traj_size, name='inc0_vec')(inc0)
+    Omega0_vec = keras.layers.RepeatVector(n=traj_size, name='Omega0_vec')(Omega0)
+    omega0_vec = keras.layers.RepeatVector(n=traj_size, name='omega0_vec')(omega0)
+    mu_vec = keras.layers.RepeatVector(n=traj_size, name='mu_vec')(mu)
 
     # Repeat initial mean anomaly M0 and mean motion N0 to match shape of outputs
     M0_vec = keras.layers.RepeatVector(n=traj_size, name='M0_vec')(M0)
     N0_vec = keras.layers.RepeatVector(n=traj_size, name='N0_vec')(N0)
     # Compute the mean anomaly M(t) as a function of time
     N_t = keras.layers.multiply(inputs=[N0_vec, t_vec])
-    M_ = keras.layers.add(inputs=[M0_vec, N_t])
+    M_vec = keras.layers.add(inputs=[M0_vec, N_t])
 
     # Compute the true anomaly from the mean anomly and eccentricity
-    f_ = MeanToTrueAnomaly(name='mean_to_true_anomaly')([M_, e_])
+    f_vec = MeanToTrueAnomaly(name='mean_to_true_anomaly')([M_vec, e0_vec])
     
     # Combine the trajectory-wide scalars into one feature of shape (batch_size, 14)
     # One row has 3+3+6 = 12 elements
@@ -88,7 +88,7 @@ def make_position_model_r2b_nn(hidden_sizes, skip_layers=True, traj_size = 731):
     # 2) The repeated orbital elements (which remain constant); not including f0
     # 3) The computed mean anomaly M and true anomaly f
     phi_0 = keras.layers.concatenate(
-        inputs=[t_vec, phi_traj_vec, M_, f_], 
+        inputs=[t_vec, phi_traj_vec, M_vec, f_vec], 
         name='phi_0')
     
     # Hidden layers as specified in hidden_sizes
@@ -112,32 +112,44 @@ def make_position_model_r2b_nn(hidden_sizes, skip_layers=True, traj_size = 731):
             phi_2 = keras.layers.concatenate(inputs=[phi_1, phi_2], name='phi_2_aug')
         phi_n = phi_2
 
-    # Compute the orbital elements from the final features
+    # Compute the change in orbital elements from the final features
     
     # Semimajor axis
-    a = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='ones', name='a')(phi_n)
+    delta_a = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_a')(phi_n)
 
     # Eccentricity
-    e = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='e')(phi_n)
+    delta_e = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_e')(phi_n)
 
     # Inclination
-    inc = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='inc')(phi_n)
+    delta_inc = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_inc')(phi_n)
     
     # Longitude of ascending node
-    Omega = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='Omega')(phi_n)
+    delta_Omega = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_Omega')(phi_n)
     
     # Argument of periapsis
-    omega = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='omega')(phi_n)
+    delta_omega = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_omega')(phi_n)
     
     # True anomaly
-    f = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='f')(phi_n)    
+    delta_f = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_f')(phi_n)    
 
+    # Compute the orbital elements as the sum of the original elemenets and their change
+    a = keras.layers.add(inputs=[a0_vec, delta_a], name='a')
+    a = tf.nn.relu(a)
+    
+    e = keras.layers.add(inputs=[e0_vec, delta_e], name='e')
+    e = tf.clip_by_value(e, 0.0, 1.0)
+    
+    inc = keras.layers.add(inputs=[inc0_vec, delta_inc], name='inc')
+    Omega = keras.layers.add(inputs=[Omega0_vec, delta_Omega], name='Omega')
+    omega = keras.layers.add(inputs=[omega0_vec, delta_omega], name='omega')
+    f = keras.layers.add(inputs=[f_vec, delta_f], name='f')
+    
     # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
     inputs_e2c = (a, e, inc, Omega, omega, f, mu,)
     
@@ -162,64 +174,3 @@ def make_model_r2b_nn(hidden_sizes, skip_layers=True, traj_size = 731):
     # Build the model with this position layer and the input trajectory size
     return make_physics_model_r2b(position_model=position_model, traj_size=traj_size)
 
-# ********************************************************************************************************************* 
-def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev_history=None):
-    # Compile the model
-    model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
-    model_name = model.name
-    filepath=f'../models/r2b/{model_name}.h5'
-
-    # Parameters for callbacks
-    interval = 1
-    patience = max(epochs // 10, 1)
-    
-    # Create callbacks
-    cb_log = EpochLoss(interval=interval, newline=True)
-    
-    cb_time = TimeHistory()
-
-    cb_ckp = keras.callbacks.ModelCheckpoint(
-            filepath=filepath, 
-            save_freq=save_freq,
-            save_best_only=True,
-            save_weights_only=True,
-            monitor='loss',
-            verbose=0)    
-
-    cb_early_stop = keras.callbacks.EarlyStopping(
-            monitor='loss',
-            min_delta=0.0,
-            patience=patience,
-            verbose=2,
-            restore_best_weights=True)    
-
-    # All selected callbacks
-    # callbacks = [cb_log, cb_time, cb_ckp, cb_early_stop]
-    callbacks = [cb_log, cb_time, cb_ckp]
-    
-    # Fit the model
-    hist = model.fit(ds, epochs=epochs, callbacks=callbacks, verbose=1)
-
-    # Add the times to the history
-    history = hist.history
-    
-    # Convert from lists to numpy arrays 
-    for key in history.keys():
-        history[key] = np.array(history[key])
-
-    # Merge the previous history if provided
-    if prev_history is not None:
-        for key in history.keys():
-            history[key] = np.concatenate([prev_history[key], history[key]])
-        # Merge wall times; new times need to add offset from previous wall time
-        prev_times = prev_history['time']
-        time_offset = prev_times[-1]
-        new_times = np.array(cb_time.times) + time_offset
-        history['time'] = np.concatenate([prev_times, new_times])
-    else:
-        history['time'] = np.array(cb_time.times)
-    
-    # Restore the model to the best weights
-    model.load_weights(filepath)
-
-    return history

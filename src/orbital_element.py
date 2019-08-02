@@ -311,6 +311,7 @@ class MeanToEccentricAnomaly(keras.layers.Layer):
         for i in range(10):
             # One step of Newton's Method
             E = E - F / (1.0 - e * tf.cos(E))
+            # The new error term
             F = E - e * tf.sin(E) - M
 
         return E
