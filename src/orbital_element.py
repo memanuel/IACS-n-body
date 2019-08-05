@@ -51,7 +51,7 @@ def make_data_orb_elt(n, a_min, a_max, e_max, inc_max, seed=42):
     # Add primary with 1 solar mass at origin with 0 velocity
     sim.add(m=1.0)
     
-    # The graviational constant mu as a scalar; assume the small particles have mass 0
+    # The gravitational constant mu as a scalar; assume the small particles have mass 0
     mu0 = sim.G * sim.particles[0].m
     # The gravitaional constant as a vector
     mu = mu0 * np.ones(n, dtype=np.float32)
