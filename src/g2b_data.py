@@ -63,23 +63,25 @@ def make_traj_g2b(m1, m2, a, e, inc, Omega, omega, f, n_years):
     # Move to the center-of-momentum coordinate system
     sim.move_to_com()
 
-    # Initialize cartesian entries to zero vectors for particle 1
-    q1 = np.zeros((N,3), dtype=np.float32)
-    v1 = np.zeros((N,3), dtype=np.float32)
-    a1 = np.zeros((N,3), dtype=np.float32)
+    # Initialize cartesian entries to zero vectors
+    num_particles = 2
+    space_dims = 3
+    traj_shape = (N, num_particles, space_dims)
+    q = np.zeros(traj_shape, dtype=np.float32)
+    v = np.zeros(traj_shape, dtype=np.float32)
+    acc = np.zeros(traj_shape, dtype=np.float32)
 
-    # Initialize cartesian entries to zero vectors for particle 2
-    q2 = np.zeros((N,3), dtype=np.float32)
-    v2 = np.zeros((N,3), dtype=np.float32)
-    a2 = np.zeros((N,3), dtype=np.float32)
+    # Mass vector
+    m = np.array([m1, m2], dtype=np.float32)
 
     # Initialize placeholders for kinetic and potential energy
     T = np.zeros(N, dtype=np.float32)
     U = np.zeros(N, dtype=np.float32)
 
     # Initialize momentum and angular momentum
-    P = np.zeros((N,3), dtype=np.float32)
-    L = np.zeros((N,3), dtype=np.float32)
+    mom_shape = (N, 3)
+    P = np.zeros(mom_shape, dtype=np.float32)
+    L = np.zeros(mom_shape, dtype=np.float32)
 
     # The coefficient for gravitational potential energy
     k = sim.G * m1 * m2
@@ -100,62 +102,64 @@ def make_traj_g2b(m1, m2, a, e, inc, Omega, omega, f, n_years):
         # Integrate to the current time step with an exact finish time
         sim.integrate(t, exact_finish_time=1)
         # Save the position
-        q1[i] = [p1.x, p1.y, p1.z]
-        q2[i] = [p2.x, p2.y, p2.z]
+        q[i] = [[p1.x, p1.y, p1.z],
+                [p2.x, p2.y, p2.z]]
         # Save the velocity
-        v1[i] = [p1.vx, p1.vy, p1.vz]
-        v2[i] = [p2.vx, p2.vy, p2.vz]
+        v[i] = [[p1.vx, p1.vy, p1.vz],
+                [p2.vx, p2.vy, p2.vz]]
         # Save the acceleration
-        a1[i] = [p1.ax, p1.ay, p1.az]
-        a2[i] = [p2.ax, p2.ay, p2.az]
+        acc[i] = [[p1.ax, p1.ay, p1.az],
+                  [p2.ax, p2.ay, p2.az]]
+        
+        # Extract the two positions and velocities for energy and momentum calculations
+        q1 = q[i,0]
+        q2 = q[i,1]
+        v1 = v[i,0]
+        v2 = v[i,1]
 
         # Kinetic energy
-        T1 = 0.5 * m1 * np.sum(v1[i] * v1[i])
-        T2 = 0.5 * m2 * np.sum(v2[i] * v2[i])
+        # T1 = 0.5 * m1 * np.sum(v1[i] * v1[i])
+        # T2 = 0.5 * m2 * np.sum(v2[i] * v2[i])
+        T1 = 0.5 * m1 * np.sum(np.square(v1))
+        T2 = 0.5 * m2 * np.sum(np.square(v2))
         T[i] = T1 + T2
         
         # Potential energy
-        r = np.linalg.norm(q2[i] - q1[i])
+        # r = np.linalg.norm(q2[i] - q1[i])
+        r = np.linalg.norm(q2 - q1)
         U[i] = -k / r
 
         # The momentum vector; should be zero in the COM frame
-        P[i] = m1 * v1[i] + m2 * v2[i]
+        # P[i] = m1 * v1[i] + m2 * v2[i]
+        P[i] = m1 * v1 + m2 * v2
 
         # The angular momentum vector; should be constant by conservation of angular momentum
-        L[i] = np.cross(q1[i], m1*v1[i]) + np.cross(q2[i], m2*v2[i])
+        # L[i] = np.cross(q1[i], m1*v1[i]) + np.cross(q2[i], m2*v2[i])
+        L[i] = np.cross(q1, m1*v1) + np.cross(q2, m2*v2)
 
     # The total energy is the sum of kinetic and potential; should be constant by conservation of energy
     H = T + U
     
     # The initial position and velocity
-    q1_init = q1[0]
-    q2_init = q2[0]
-    v1_init = v1[0]
-    v2_init = v2[0]
+    q0 = q[0]
+    v0 = v[0]
     
     # Assemble the input dict
     inputs = {
         't': ts,
-        'q1_init': q1_init,
-        'q2_init': q2_init,
-        'v1_init': v1_init,
-        'v2_init': v2_init,
-        'm1': m1,
-        'm2': m2}
+        'q0': q0,
+        'v0': v0,
+        'm': m
+        }
 
     # Assemble the output dict
     outputs = {
-        'q1': q1,
-        'q2': q2,
-        'v1': v1,
-        'v2': v2,
-        'a1': a1,
-        'a2': a2,
+        'q': q,
+        'v': v,
+        'a': acc,
         # the initial conditions, which should be recovered
-        'q1_rec': q1_init,
-        'q2_rec': q2_init,
-        'v1_rec': v1_init,
-        'v2_rec': v2_init,
+        'q0_rec': q0,
+        'v0_rec': v0,
         # the energy and angular momentum, which should be conserved
         'T': T,
         'U': U,
@@ -186,14 +190,17 @@ def make_data_g2b(n_traj: int, n_years: int, m_max: float=1.0,
     sample_freq = 365
     # Number of samples including both start and end in each trajectory
     traj_size = sample_freq*n_years + 1
-    # Number of spatial dimensions
+
+    # Number of particles and spatial dimensions
+    num_particles = 2
     space_dims = 3
 
     # Shape of arrays for various inputs and outputs
-    # scalar_shape = (n_traj, )
-    init_shape = (n_traj, space_dims)
     time_shape = (n_traj, traj_size)
-    traj_shape = (n_traj, traj_size, space_dims)
+    init_shape = (n_traj, num_particles, space_dims)
+    mass_shape = (n_traj, num_particles)
+    traj_shape = (n_traj, traj_size, num_particles, space_dims)
+    mom_shape = (n_traj, traj_size, space_dims)
     
     # Set random seed for reproducible results
     np.random.seed(seed=seed)
@@ -211,22 +218,20 @@ def make_data_g2b(n_traj: int, n_years: int, m_max: float=1.0,
     orb_f = np.random.uniform(low=-np.pi, high=np.pi, size=n_traj).astype(np.float32)
 
     # Initialize arrays for the data
+    # Inputs
     t = np.zeros(time_shape, dtype=np.float32)
-    q1_init = np.zeros(init_shape, dtype=np.float32)
-    q2_init = np.zeros(init_shape, dtype=np.float32)
-    v1_init = np.zeros(init_shape, dtype=np.float32)
-    v2_init = np.zeros(init_shape, dtype=np.float32)
-    q1 = np.zeros(traj_shape, dtype=np.float32)
-    q2 = np.zeros(traj_shape, dtype=np.float32)
-    v1 = np.zeros(traj_shape, dtype=np.float32)
-    v2 = np.zeros(traj_shape, dtype=np.float32)
-    a1 = np.zeros(traj_shape, dtype=np.float32)
-    a2 = np.zeros(traj_shape, dtype=np.float32)
+    q0 = np.zeros(init_shape, dtype=np.float32)
+    v0 = np.zeros(init_shape, dtype=np.float32)
+    m = np.zeros(mass_shape, dtype=np.float32)
+    # Outputs
+    q = np.zeros(traj_shape, dtype=np.float32)
+    v = np.zeros(traj_shape, dtype=np.float32)
+    acc = np.zeros(traj_shape, dtype=np.float32)
     T = np.zeros(time_shape, dtype=np.float32)
     U = np.zeros(time_shape, dtype=np.float32)
     H = np.zeros(time_shape, dtype=np.float32)
-    P = np.zeros(traj_shape, dtype=np.float32)
-    L = np.zeros(traj_shape, dtype=np.float32)
+    P = np.zeros(mom_shape, dtype=np.float32)
+    L = np.zeros(mom_shape, dtype=np.float32)
     
     # Sample the trajectories
     for i in tqdm(range(n_traj)):
@@ -235,47 +240,34 @@ def make_data_g2b(n_traj: int, n_years: int, m_max: float=1.0,
                                         Omega=orb_Omega[i], omega=orb_omega[i], f=orb_f[i], n_years=n_years)
         
         # Copy results into main arrays
-        t[i, :] = inputs['t']
-        q1_init[i, :] = inputs['q1_init']
-        q2_init[i, :] = inputs['q2_init']
-        v1_init[i, :] = inputs['v1_init']
-        v2_init[i, :] = inputs['v2_init']
-        # m1[i] = inputs['m1']
-        # m2[i] = inputs['m2']
-        q1[i, :, :] = outputs['q1']
-        q2[i, :, :] = outputs['q2']
-        v1[i, :, :] = outputs['v1']
-        v2[i, :, :] = outputs['v2']
-        a1[i, :, :] = outputs['a1']
-        a2[i, :, :] = outputs['a2']
-        T[i, :] = outputs['T']
-        U[i, :] = outputs['U']
-        H[i, :] = outputs['H']
-        P[i, :] = outputs['P']
-        L[i, :] = outputs['L']
+        t[i] = inputs['t']
+        q0[i] = inputs['q0']
+        v0[i] = inputs['v0']
+        m[i] = inputs['m']
+        q[i] = outputs['q']
+        v[i] = outputs['v']
+        acc[i] = outputs['a']
+        T[i] = outputs['T']
+        U[i] = outputs['U']
+        H[i] = outputs['H']
+        P[i] = outputs['P']
+        L[i] = outputs['L']
 
     # Assemble the input dict
     inputs = {
         't': t,
-        'q1_init': q1_init,
-        'q2_init': q2_init,
-        'v1_init': v1_init,
-        'v2_init': v2_init,
-        'm1': m1,
-        'm2': m2}
+        'q0': q0,
+        'v0': v0,
+        'm': m,
+        }
 
     # Assemble the output dict
     outputs = {
-        'q1': q1,
-        'q2': q2,
-        'v1': v1,
-        'v2': v2,
-        'a1': a1,
-        'a2': a2,
-        'q1_rec': q1_init,
-        'q2_rec': q2_init,
-        'v1_rec': v1_init,
-        'v2_rec': v2_init,
+        'q': q,
+        'v': v,
+        'a': acc,
+        'q0_rec': q0,
+        'v0_rec': v0,
         'T': T,
         'U': U,
         'H': H,

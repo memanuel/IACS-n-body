@@ -20,25 +20,28 @@ def plot_orbit_q(data, p_num=0):
     """Plot the orbit position in a training sample"""
     # Unpack data
     t = data['t']
-    q1 = data['q1']
-    q2 = data['q2']
+    q = data['q']
+
+    # Indivividual particles
+    q1 = q[:,0]
+    q2 = q[:,1]
 
     # Selected particle to plot
     if p_num == 1:
         # Plot particle 1
-        q = q1
+        q_plot = q1
     elif p_num == 2:
         # Plot particle 2
-        q = q2
+        q_plot = q2
     else:
         # Plot relative displacement
-        q = q2 - q1
+        q_plot = q2 - q1
     
     # Components
-    qx = q[:, 0]
-    qy = q[:, 1]
+    qx = q_plot[:, 0]
+    qy = q_plot[:, 1]
     # Compute the distance r
-    r = np.linalg.norm(q, axis=1)
+    r = np.linalg.norm(q_plot, axis=1)
 
     # Plot the x and y coordinate
     fig, ax = plt.subplots(figsize=[16, 9])
@@ -60,24 +63,27 @@ def plot_orbit_v(data, p_num=0):
     """Plot the orbit velocity in a training sample"""
     # Unpack data
     t = data['t']
-    v1 = data['v1']
-    v2 = data['v2']
+    v = data['v']
+
+    # Indivividual particles
+    v1 = v[:,0]
+    v2 = v[:,1]
 
     # Selected particle to plot
     if p_num == 1:
         # Plot particle 1
-        v = v1
+        v_plot = v1
     elif p_num == 2:
         # Plot particle 2
-        v = v2
+        v_plot = v2
     else:
         # Plot relative displacement
-        v = v2 - v1
+        v_plot = v2 - v1
 
     # Components and speed
-    vx = v[:, 0]
-    vy = v[:, 1]
-    spd = np.linalg.norm(v, axis=1)
+    vx = v_plot[:, 0]
+    vy = v_plot[:, 1]
+    spd = np.linalg.norm(v_plot, axis=1)
     
     # Plot the x and y coordinate
     fig, ax = plt.subplots(figsize=[16, 9])
@@ -99,24 +105,27 @@ def plot_orbit_a(data, p_num=0):
     """Plot the orbit acceleration in a training sample"""
     # Unpack data
     t = data['t']
-    a1 = data['a1']
-    a2 = data['a2']
+    a = data['a']
+
+    # Indivividual particles
+    a1 = a[:,0]
+    a2 = a[:,1]
 
     # Selected particle to plot
     if p_num == 1:
         # Plot particle 1
-        a = a1
+        a_plot = a1
     elif p_num == 2:
         # Plot particle 2
-        a = a2
+        a_plot = a2
     else:
         # Plot relative displacement
-        a = a2 - a1
+        a_plot = a2 - a1
 
-    # Components and magnitude
-    ax = a[:, 0]
-    ay = a[:, 1]
-    acc = np.linalg.norm(a, axis=1)
+    # Components and speed
+    ax = a_plot[:, 0]
+    ay = a_plot[:, 1]
+    acc = np.linalg.norm(a_plot, axis=1)
     
     # Plot the x and y coordinate
     # Name the axes object ax_ rather than ax to avoid a name collision with the x component of acceleration, ax
