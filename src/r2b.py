@@ -144,15 +144,6 @@ class EnergyError(keras.losses.Loss):
         return K.mean(log_rel_error, axis=-1)
 
 # ********************************************************************************************************************* 
-class AngularMomentumError(keras.losses.Loss):
-    """Specialized loss for error in angular momentum.  Mean squared relative error."""
-    def call(self, y_true, y_pred):
-        y_pred = ops.convert_to_tensor(y_pred)
-        y_true = math_ops.cast(y_true, y_pred.dtype)
-        rel_error = (y_pred - y_true) / y_true
-        return K.mean(math_ops.square(rel_error), axis=-1)
-
-# ********************************************************************************************************************* 
 # Custom Models
 # ********************************************************************************************************************* 
 

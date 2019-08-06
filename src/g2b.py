@@ -22,52 +22,60 @@ from tf_utils import Identity, EpochLoss, TimeHistory
 
 # ********************************************************************************************************************* 
 class KineticEnergy_G2B(keras.layers.Layer):
-    """Compute the kinetic energy from velocity"""
+    """Compute the kinetic energy from masses m and velocities v"""
 
     def call(self, inputs):
-        # Alias inputs to v
+        # Unpack inputs
         # Shape of m is (batch_size, num_particles,)
         # Shape of v is (batch_size, traj_size, num_particles, 3,)
         m, v = inputs
 
         # Element-wise velocity squared
         v2 = tf.square(v)
+        # Reshape mass to (batch_size, 1, num_particles)
+        target_shape = (1, -1)
+        m_vec = keras.layers.Reshape(target_shape)(m)
         
         # The KE is 1/2 m v^2 = 1/2 v^2 per unit mass in restricted problem
-        T = 0.5 * tf.reduce_sum(v2, axis=-1, keepdims=False)
+        # First compute the K.E. for each particle
+        Ti = 0.5 * m_vec * tf.reduce_sum(v2, axis=-1, keepdims=False)
+        # Sum the K.E. for the whole system
+        T = tf.reduce_sum(Ti, axis=-1, keepdims=False)        
 
-        # Check shapes
-        batch_size, traj_size = v.shape[0:2]
-        tf.debugging.assert_shapes(shapes={
-            v: (batch_size, traj_size, 3),
-            v2: (batch_size, traj_size, 3),
-            T: (batch_size, traj_size)
-        }, message='KineticEnergy_R2B')
-        
         return T
 
     def get_config(self):
         return dict()
-   
+
 # ********************************************************************************************************************* 
 class PotentialEnergy_G2B(keras.layers.Layer):
-    """Compute the potential energy from position q and gravitational constant mu"""
-
+    """Compute the potential energy from masses m and positions q"""
+    def __init__(self, **kwargs):
+        super(PotentialEnergy_G2B, self).__init__(**kwargs)
+        # Compute the norm of a 3D vector
+        self.norm_func = lambda q : tf.norm(q, axis=-1, keepdims=False)
+    
     def call(self, inputs):
         # Unpack inputs
-        q, mu = inputs
-
-        # Shape of q is (batch_size, traj_size, 3,)
+        # Shape of m is (batch_size, num_particles,)
+        # Shape of q is (batch_size, traj_size, num_particles, 3,)
+        m, q = inputs
 
         # The gravitational constant; numerical value close to 4 pi^2; see rebound documentation for exact value        
         G = tf.constant(39.476926421373)
-               
-        # Compute the norm of a 2D vector
-        norm_func = lambda q : tf.norm(q, axis=-1, keepdims=False)
+        # Gravitational field strength
+        m1 = m[:, 0]
+        m2 = m[:, 1]
+        mu = G * m1 * m2
 
-        # The distance r; shape (batch_size, traj_size)
-        r = keras.layers.Activation(norm_func, name='r')(q)
-        
+        # The displacement q_12
+        q1 = q[:, :, 0, :]
+        q2 = q[:, :, 1, :]
+        q_12 = q2 - q1
+
+        # The distance r; shape (batch_size, num_particles, traj_size)
+        r = keras.layers.Activation(self.norm_func, name='r')(q_12)
+
         # Reshape gravitational field constant to match r
         target_shape = [1] * (len(r.shape)-1)
         mu = keras.layers.Reshape(target_shape, name='mu_vec')(mu)
@@ -81,27 +89,52 @@ class PotentialEnergy_G2B(keras.layers.Layer):
         return dict()
 
 # ********************************************************************************************************************* 
+class Momentum_G2B(keras.layers.Layer):
+    """Compute the momentum from masses m and velocities v"""
+
+    def call(self, inputs):
+        # Unpack inputs
+        # Shape of m is (batch_size, num_particles,)
+        # Shape of v is (batch_size, traj_size, num_particles, 3,)
+        m, v = inputs
+
+        # Reshape mass to (batch_size, 1, num_particles, 1)
+        target_shape = (1, 2, 1,)
+        m_vec = keras.layers.Reshape(target_shape)(m)
+        
+        # The momentum is m * v
+        # First compute the momentum for each particle
+        Pi = 0.5 * m_vec * v
+        # Sum the momentum for the whole system
+        P = tf.reduce_sum(Pi, axis=-2, keepdims=False)        
+
+        return P
+
+    def get_config(self):
+        return dict()
+    
+# ********************************************************************************************************************* 
 class AngularMomentum_G2B(keras.layers.Layer):
     """Compute the angular momentum from position and velocity"""
     def call(self, inputs):
         # Unpack inputs
-        q, v = inputs
-        
-        # Shape of q and v is (batch_size, traj_size, 3,)
-        batch_size, traj_size = q.shape[0:2]
-        tf.debugging.assert_shapes(shapes={
-            q: (batch_size, traj_size, 3),
-            v: (batch_size, traj_size, 3)
-        }, message='AngularMomentum_R2B / inputs')
+        # Shape of m is (batch_size, num_particles,)
+        # Shape of q, v are (batch_size, traj_size, num_particles, 3,)
+        m, q, v = inputs
 
-        # Compute the angular momentum
-        L = tf.linalg.cross(a=q, b=v, name='L')
+        # Reshape mass to (batch_size, 1, num_particles, 1)
+        target_shape = (1, 2, 1,)
+        m_vec = keras.layers.Reshape(target_shape)(m)
         
-        # Check shape
-        tf.debugging.assert_shapes(shapes={
-            L: (batch_size, traj_size, 3)
-        }, message='AngularMomentum_R2B / outputs')
+        # Compute the momentum of each particle, m * v
+        P = 0.5 * m_vec * v
         
+        # Compute the angular momentum of each particle, q x (m*v)
+        Li = tf.linalg.cross(a=q, b=P, name='Li')
+
+        # Sum the angular momentum for the whole system
+        L = tf.reduce_sum(Li, axis=-2, keepdims=False)        
+
         return L
 
 # ********************************************************************************************************************* 
@@ -133,58 +166,42 @@ class EnergyError(keras.losses.Loss):
         return K.mean(log_rel_error, axis=-1)
 
 # ********************************************************************************************************************* 
-class AngularMomentumError(keras.losses.Loss):
-    """Specialized loss for error in angular momentum.  Mean squared relative error."""
-    def call(self, y_true, y_pred):
-        y_pred = ops.convert_to_tensor(y_pred)
-        y_true = math_ops.cast(y_true, y_pred.dtype)
-        rel_error = (y_pred - y_true) / y_true
-        return K.mean(math_ops.square(rel_error), axis=-1)
-
-# ********************************************************************************************************************* 
 # Custom Models
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-class Motion_R2B(keras.Model):
-    """Motion for restricted two body problem generated from a position calculation model."""
+class Motion_G2B(keras.Model):
+    """Motion for general two body problem generated from a position calculation model."""
 
     def __init__(self, position_model, **kwargs):
-        super(Motion_R2B, self).__init__(**kwargs)
+        super(Motion_G2B, self).__init__(**kwargs)
         self.position_model = position_model
 
     def call(self, inputs):
         """
-        Compute full orbits for the restricted two body problem.
+        Compute full orbits for the general two body problem.
         Computes positions using the passed position_layer, 
         then uses automatic differentiation for velocity v and acceleration a.
         INPUTS:
             t: the times to report the orbit; shape (batch_size, traj_size)
-            q0: the initial position; shape (batch_size, 3)
-            v0: the initial velocity; shape (batch_size, 3)
-            mu: the gratitational field strength; shape (batch_size, 1)
+            q0: the initial position; shape (batch_size, 2, 3)
+            v0: the initial velocity; shape (batch_size, 2, 3)
+            m: the object masses; shape (batch_size, 2)
         OUTPUTS:
-            q: the position at time t; shape (batch_size, traj_size, 3)
-            v: the velocity at time t; shape (batch_size, traj_size, 3)
-            a: the acceleration at time t; shape (batch_size, traj_size, 3)
+            q: the position at time t; shape (batch_size, traj_size, 2, 3)
+            v: the velocity at time t; shape (batch_size, traj_size, 2, 3)
+            a: the acceleration at time t; shape (batch_size, traj_size, 2, 3)
         """
         # Unpack the inputs
-        t, q0, v0, mu = inputs
+        t, q0, v0, m = inputs
 
         # Get the trajectory size and target shape of t
         traj_size = t.shape[1]
-        target_shape = (traj_size, 1)
+        time_shape = (traj_size, 1)
 
         # Reshape t to have shape (batch_size, traj_size, 1)
-        t = keras.layers.Reshape(target_shape=target_shape, name='t')(t)
+        t = keras.layers.Reshape(target_shape=time_shape, name='t')(t)
 
-        # Check shapes after resizing operation; can accept t of shape EITHER 
-        # (batch_size, traj_size) or (batch_size, traj_size, 1)
-        batch_size = t.shape[0]
-        tf.debugging.assert_shapes(shapes={
-            t: (batch_size, traj_size, 1),
-        }, message='Motion_R2B.call / inputs')
-    
         # Evaluation of the position is under the scope of two gradient tapes
         # These are for velocity and acceleration
         with tf.GradientTape(persistent=True) as gt2:
@@ -194,21 +211,12 @@ class Motion_R2B(keras.Model):
                 gt1.watch(t)       
         
                 # Get the position using the input position layer
-                position_inputs = (t, q0, v0, mu)
+                position_inputs = (t, q0, v0, m)
                 # The velocity from the position model assumes the orbital elements are not changing
                 # Here we only want to take the position output and do a full automatic differentiation
                 qx, qy, qz, vx_, vy_, vz_ = self.position_model(position_inputs)
                 q = keras.layers.concatenate(inputs=[qx, qy, qz], axis=2, name='q')
 
-                tf.debugging.assert_shapes(shapes={
-                    qx: (batch_size, traj_size, 1),
-                    qy: (batch_size, traj_size, 1),
-                    qz: (batch_size, traj_size, 1),
-                    vx_: (batch_size, traj_size, 1),
-                    vy_: (batch_size, traj_size, 1),
-                    vz_: (batch_size, traj_size, 1),
-                }, message='Motion_R2B / outputs of position model')
-                
             # Compute the velocity v = dq/dt with gt1
             vx = gt1.gradient(qx, t)
             vy = gt1.gradient(qy, t)
@@ -216,12 +224,6 @@ class Motion_R2B(keras.Model):
             v = keras.layers.concatenate(inputs=[vx, vy, vz], axis=2, name='v')
             del gt1
             
-            tf.debugging.assert_shapes(shapes={
-                vx: (batch_size, traj_size, 1),
-                vy: (batch_size, traj_size, 1),
-                vz: (batch_size, traj_size, 1),
-            }, message='Motion_R2B / velocity by automatic differentation')
-
         # Compute the acceleration a = d2q/dt2 = dv/dt with gt2
         ax = gt2.gradient(vx, t)
         ay = gt2.gradient(vy, t)
@@ -229,13 +231,6 @@ class Motion_R2B(keras.Model):
         a = keras.layers.concatenate(inputs=[ax, ay, az], name='a')
         del gt2
         
-        # Check shapes
-        tf.debugging.assert_shapes(shapes={
-            q: (batch_size, traj_size, 3),
-            v: (batch_size, traj_size, 3),
-            a: (batch_size, traj_size, 3),
-        }, message='Motion_R2B.call / outputs')
-
         return q, v, a
     
 # ********************************************************************************************************************* 
@@ -243,31 +238,22 @@ class Motion_R2B(keras.Model):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_physics_model_r2b(position_model: keras.Model, traj_size: int):
-    """Create a physics model for the restricted two body problem from a position model"""
+def make_physics_model_g2b(position_model: keras.Model, traj_size: int):
+    """Create a physics model for the general two body problem from a position model"""
     # Create input layers 
     t = keras.Input(shape=(traj_size,), name='t')
-    q0 = keras.Input(shape=(3,), name='q0')
-    v0 = keras.Input(shape=(3,), name='v0')
-    mu = keras.Input(shape=(1,), name='mu')
+    q0 = keras.Input(shape=(2, 3,), name='q0')
+    v0 = keras.Input(shape=(2, 3,), name='v0')
+    m = keras.Input(shape=(1, 2,), name='mu')
     
     # Wrap these up into one tuple of inputs for the model
-    inputs = (t, q0, v0, mu)
+    inputs = (t, q0, v0, m)
     
-    # Check sizes of inputs
-    batch_size = t.shape[0]
-    tf.debugging.assert_shapes(shapes={
-        t: (batch_size, traj_size),
-        q0: (batch_size, 3),
-        v0: (batch_size, 3),
-        mu: (batch_size, 1),
-    }, message='make_physics_model_r2b_math / inputs')
-        
     # Return row 0 of a position or velocity for q0_rec and v0_rec
     initial_row_func = lambda q : q[:, 0, :]
 
     # Compute the motion from the specified position layer; inputs are the same for position and physics model
-    q, v, a = Motion_R2B(position_model=position_model, name='motion')(inputs)
+    q, v, a = Motion_G2B(position_model=position_model, name='motion')(inputs)
     
     # Name the outputs of the motion
     # These each have shape (batch_size, traj_size, 3)
@@ -275,46 +261,26 @@ def make_physics_model_r2b(position_model: keras.Model, traj_size: int):
     v = Identity(name='v')(v)
     a = Identity(name='a')(a)
 
-    # Check sizes
-    tf.debugging.assert_shapes(shapes={
-        q: (batch_size, traj_size, 3),
-        v: (batch_size, traj_size, 3),
-        a: (batch_size, traj_size, 3),
-    }, message='make_physics_model_r2b / outputs q, v, a')
-        
     # Compute q0_rec and v0_rec
     # These each have shape (batch_size, 2)
     q0_rec = keras.layers.Lambda(initial_row_func, name='q0_rec')(q)
     v0_rec = keras.layers.Lambda(initial_row_func, name='v0_rec')(v)
 
-    # Check sizes
-    tf.debugging.assert_shapes(shapes={
-        q0_rec: (batch_size, 3),
-        v0_rec: (batch_size, 3),
-    }, message='make_physics_model_r2b / outputs q0_rec, v0_rec')
-
     # Compute kinetic energy T and potential energy U
-    T = KineticEnergy_R2B(name='T')(v)
-    U = PotentialEnergy_R2B(name='U')((q, mu))
+    T = KineticEnergy_G2B(name='T')([m, v])
+    U = PotentialEnergy_G2B(name='U')([m, q])
 
     # Compute the total energy H
     H = keras.layers.add(inputs=[T,U], name='H')
 
-    # Compute angular momentum L
-    # This has shape (batch_size, traj_size, 3)
-    L = AngularMomentum_R2B(name='L')([q, v])
-    
-    # Check sizes
-    tf.debugging.assert_shapes(shapes={
-        T: (batch_size, traj_size),
-        U: (batch_size, traj_size),
-        H: (batch_size, traj_size),
-        L: (batch_size, traj_size, 3),
-    }, message='make_physics_model_r2bc_math / outputs H, L')
+    # Compute momentum P and angular momentum L
+    # These have shape (batch_size, traj_size, 3)
+    P = Momentum_G2B(name='P')([m, v])
+    L = AngularMomentum_G2B(name='L')([m, q, v])
 
     # Wrap this up into a model
-    outputs = [q, v, a, q0_rec, v0_rec, H, L]
-    model_name = position_model.name.replace('model_r2b_position_', 'model_r2b_physics_')
+    outputs = [q, v, a, q0_rec, v0_rec, H, P, L]
+    model_name = position_model.name.replace('model_g2b_position_', 'model_g2b_physics_')
     model = keras.Model(inputs=inputs, outputs=outputs, name=model_name)
     return model
 
@@ -327,7 +293,7 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev
     # Compile the model
     model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
     model_name = model.name
-    filepath=f'../models/r2b/{model_name}.h5'
+    filepath=f'../models/g2b/{model_name}.h5'
 
     # Parameters for callbacks
     interval = 1
