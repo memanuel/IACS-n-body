@@ -66,7 +66,7 @@ class PotentialEnergy_G2B(keras.layers.Layer):
         # Gravitational field strength
         m1 = m[:, 0]
         m2 = m[:, 1]
-        mu = G * m1 * m2
+        k = G * m1 * m2
 
         # The displacement q_12
         q1 = q[:, :, 0, :]
@@ -78,10 +78,10 @@ class PotentialEnergy_G2B(keras.layers.Layer):
 
         # Reshape gravitational field constant to match r
         target_shape = [1] * (len(r.shape)-1)
-        mu = keras.layers.Reshape(target_shape, name='mu_vec')(mu)
+        k = keras.layers.Reshape(target_shape, name='k_vec')(k)
         
         # The gravitational potential is -G m0 m1 / r = - mu / r per unit mass m1 in restricted problem
-        U = tf.negative(tf.divide(mu, r))
+        U = tf.negative(tf.divide(k, r))
 
         return U
 
@@ -99,7 +99,8 @@ class Momentum_G2B(keras.layers.Layer):
         m, v = inputs
 
         # Reshape mass to (batch_size, 1, num_particles, 1)
-        target_shape = (1, 2, 1,)
+        num_particles=2
+        target_shape = (1, num_particles, 1,)
         m_vec = keras.layers.Reshape(target_shape)(m)
         
         # The momentum is m * v
@@ -123,7 +124,8 @@ class AngularMomentum_G2B(keras.layers.Layer):
         m, q, v = inputs
 
         # Reshape mass to (batch_size, 1, num_particles, 1)
-        target_shape = (1, 2, 1,)
+        num_particles=2
+        target_shape = (1, num_particles, 1,)
         m_vec = keras.layers.Reshape(target_shape)(m)
         
         # Compute the momentum of each particle, m * v
@@ -202,35 +204,63 @@ class Motion_G2B(keras.Model):
         # Reshape t to have shape (batch_size, traj_size, 1)
         t = keras.layers.Reshape(target_shape=time_shape, name='t')(t)
 
+        # Shape of trajectory (position or velocity) of one particle
+        particle_traj_shape = (-1, 1, 3)
+        particle_traj_shape_layer = keras.layers.Reshape(target_shape=particle_traj_shape, name='particle_traj_shape')
+
         # Evaluation of the position is under the scope of two gradient tapes
         # These are for velocity and acceleration
-        with tf.GradientTape(persistent=True) as gt2:
+        with tf.GradientTape(persistent=True, watch_accessed_variables=False) as gt2:
             gt2.watch(t)
 
-            with tf.GradientTape(persistent=True) as gt1:
+            with tf.GradientTape(persistent=True, watch_accessed_variables=False) as gt1:
                 gt1.watch(t)       
         
                 # Get the position using the input position layer
                 position_inputs = (t, q0, v0, m)
                 # The velocity from the position model assumes the orbital elements are not changing
                 # Here we only want to take the position output and do a full automatic differentiation
-                qx, qy, qz, vx_, vy_, vz_ = self.position_model(position_inputs)
-                q = keras.layers.concatenate(inputs=[qx, qy, qz], axis=2, name='q')
+                q, v_ = self.position_model(position_inputs)
+                # Unpack separate components of position; unable to get gt.jacobian or output_gradients to work
+                q1x, q1y, q1z = q[:, :, 0, 0], q[:, :, 0, 1], q[:, :, 0, 2]
+                q2x, q2y, q2z = q[:, :, 1, 0], q[:, :, 1, 1], q[:, :, 1, 2]
 
             # Compute the velocity v = dq/dt with gt1
-            vx = gt1.gradient(qx, t)
-            vy = gt1.gradient(qy, t)
-            vz = gt1.gradient(qz, t)
-            v = keras.layers.concatenate(inputs=[vx, vy, vz], axis=2, name='v')
+            v1x = gt1.gradient(q1x, t)
+            v1y = gt1.gradient(q1y, t)
+            v1z = gt1.gradient(q1z, t)
+            v2x = gt1.gradient(q2x, t)
+            v2y = gt1.gradient(q2y, t)
+            v2z = gt1.gradient(q2z, t)
+            # v1 = gt1.jacobian(q, t, parallel_iterations=None, experimental_use_pfor=False)
+            # Assemble the velocity components for each particle
+            v1 = keras.layers.concatenate(inputs=[v1x, v1y, v1z], axis=-1, name='v1')
+            v2 = keras.layers.concatenate(inputs=[v2x, v2y, v2z], axis=-1, name='v2')
+            # Reshape the single particle trajctories
+            v1 = particle_traj_shape_layer(v1)
+            v2 = particle_traj_shape_layer(v2)
+            # Combine the particle velocity vectors
+            v = keras.layers.concatenate(inputs=[v1, v2], axis=-2, name='v')
             del gt1
             
         # Compute the acceleration a = d2q/dt2 = dv/dt with gt2
-        ax = gt2.gradient(vx, t)
-        ay = gt2.gradient(vy, t)
-        az = gt2.gradient(vz, t)
-        a = keras.layers.concatenate(inputs=[ax, ay, az], name='a')
+        a1x = gt2.gradient(v1x, t)
+        a1y = gt2.gradient(v1y, t)
+        a1z = gt2.gradient(v1z, t)
+        a2x = gt2.gradient(v2x, t)
+        a2y = gt2.gradient(v2y, t)
+        a2z = gt2.gradient(v2z, t)
+        # Assemble the velocity components for each particle
+        a1 = keras.layers.concatenate(inputs=[a1x, a1y, a1z], axis=-1, name='a1')
+        a2 = keras.layers.concatenate(inputs=[a2x, a2y, a2z], axis=-1, name='a2')
+        # Reshape the single particle trajctories
+        a1 = particle_traj_shape_layer(a1)
+        a2 = particle_traj_shape_layer(a2)
+        # Combine the particle velocity vectors
+        a = keras.layers.concatenate(inputs=[a1, a2], axis=-2, name='v')
         del gt2
-        
+
+        a = q
         return q, v, a
     
 # ********************************************************************************************************************* 
@@ -240,15 +270,17 @@ class Motion_G2B(keras.Model):
 # ********************************************************************************************************************* 
 def make_physics_model_g2b(position_model: keras.Model, traj_size: int):
     """Create a physics model for the general two body problem from a position model"""
-    # Create input layers 
+    # Create input layers
+    num_particles = 2
+    space_dims = 3
     t = keras.Input(shape=(traj_size,), name='t')
-    q0 = keras.Input(shape=(2, 3,), name='q0')
-    v0 = keras.Input(shape=(2, 3,), name='v0')
-    m = keras.Input(shape=(1, 2,), name='mu')
+    q0 = keras.Input(shape=(num_particles, space_dims,), name='q0')
+    v0 = keras.Input(shape=(num_particles, space_dims,), name='v0')
+    m = keras.Input(shape=(num_particles,), name='m')
     
     # Wrap these up into one tuple of inputs for the model
     inputs = (t, q0, v0, m)
-    
+
     # Return row 0 of a position or velocity for q0_rec and v0_rec
     initial_row_func = lambda q : q[:, 0, :]
 

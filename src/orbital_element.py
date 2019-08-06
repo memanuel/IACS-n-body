@@ -364,8 +364,8 @@ def make_model_elt_to_cfg():
     qx, qy, qz, vx, vy, vz = OrbitalElementToConfig(name='orbital_element_to_config')(inputs)
     
     # Assemble the position and velocity vectors
-    q = keras.layers.concatenate(inputs=[qx, qy, qz], axis=1, name='q')
-    v = keras.layers.concatenate(inputs=[vx, vy, vz], axis=1, name='v')
+    q = keras.layers.concatenate(inputs=[qx, qy, qz], axis=-1, name='q')
+    v = keras.layers.concatenate(inputs=[vx, vy, vz], axis=-1, name='v')
 
     # Wrap up the outputs
     outputs = (q, v)
