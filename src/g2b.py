@@ -50,7 +50,7 @@ class KineticEnergy_G2B(keras.layers.Layer):
         return dict()
    
 # ********************************************************************************************************************* 
-class PotentialEnergy_R2B(keras.layers.Layer):
+class PotentialEnergy_G2B(keras.layers.Layer):
     """Compute the potential energy from position q and gravitational constant mu"""
 
     def call(self, inputs):
@@ -58,15 +58,9 @@ class PotentialEnergy_R2B(keras.layers.Layer):
         q, mu = inputs
 
         # Shape of q is (batch_size, traj_size, 3,)
-        # batch_size, traj_size = q.shape[0:2]
-        # tf.debugging.assert_shapes(shapes={
-        #    q: (batch_size, traj_size, 3),
-        #    mu: (batch_size,),
-        # }, message='PotentialEnergy_R2B / inputs')
 
-        # The gravitational constant
-        # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value        
-        # mu = tf.constant(-39.476924896240234)
+        # The gravitational constant; numerical value close to 4 pi^2; see rebound documentation for exact value        
+        G = tf.constant(39.476926421373)
                
         # Compute the norm of a 2D vector
         norm_func = lambda q : tf.norm(q, axis=-1, keepdims=False)
@@ -81,20 +75,14 @@ class PotentialEnergy_R2B(keras.layers.Layer):
         # The gravitational potential is -G m0 m1 / r = - mu / r per unit mass m1 in restricted problem
         U = tf.negative(tf.divide(mu, r))
 
-        # Check shapes
-        # tf.debugging.assert_shapes(shapes={
-        #    r: (batch_size, traj_size),
-        #    U: (batch_size, traj_size)
-        #}, message='PotentialEnergy_R2B / outputs')
-
         return U
 
     def get_config(self):
         return dict()
 
 # ********************************************************************************************************************* 
-class AngularMomentum_R2B(keras.layers.Layer):
-    """Compute the angular momentum from position and velocity in 2D"""
+class AngularMomentum_G2B(keras.layers.Layer):
+    """Compute the angular momentum from position and velocity"""
     def call(self, inputs):
         # Unpack inputs
         q, v = inputs

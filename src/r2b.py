@@ -93,7 +93,7 @@ class PotentialEnergy_R2B(keras.layers.Layer):
 
 # ********************************************************************************************************************* 
 class AngularMomentum_R2B(keras.layers.Layer):
-    """Compute the angular momentum from position and velocity in 2D"""
+    """Compute the angular momentum from position and velocity"""
     def call(self, inputs):
         # Unpack inputs
         q, v = inputs

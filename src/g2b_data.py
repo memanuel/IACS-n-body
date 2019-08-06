@@ -172,7 +172,8 @@ def make_traj_g2b(m1, m2, a, e, inc, Omega, omega, f, n_years):
 
 
 # ********************************************************************************************************************* 
-def make_data_g2b(n_traj: int, n_years: int, m_max: float=1.0, 
+def make_data_g2b(n_traj: int, n_years: int, 
+                  m_min: float=1.0E-9, m_max: float=1.0, 
                   a_min: float = 0.50, a_max: float = 32.0, 
                   e_max = 0.20, inc_max = 0.0, seed = 42):
     """
@@ -180,6 +181,7 @@ def make_data_g2b(n_traj: int, n_years: int, m_max: float=1.0,
     INPUTS:
     n_traj: the number of trajectories to sample
     n_years: the number of years for each trajectory, e.g. 2
+    m_min: minimum mass of the second (lighter) body in solar masses 
     m_max: maximum mass of the second (lighter) body in solar masses 
     a_min: minimum semi-major axis in AU, e.g. 0.50
     a_max: maximum semi-major axis in AU, e.g. 32.0
@@ -207,7 +209,9 @@ def make_data_g2b(n_traj: int, n_years: int, m_max: float=1.0,
 
     # Initialize masses; m1 always has mass 1.0, m2 has mass at most m_max
     m1 = np.ones(shape=n_traj, dtype=np.float32)
-    m2 = np.random.uniform(low=1.0E-9, high=m_max, size=n_traj).astype(np.float32)
+    # Draw m2 from a log uniform distribution
+    log_m2 = np.random.uniform(low=np.log(m_min), high=np.log(m_max), size=n_traj).astype(np.float32)
+    m2 = np.exp(log_m2)
 
     # Initialize orbital element by sampling according to the inputs
     orb_a = np.random.uniform(low=a_min, high=a_max, size=n_traj).astype(np.float32)
@@ -278,7 +282,7 @@ def make_data_g2b(n_traj: int, n_years: int, m_max: float=1.0,
     return (inputs, outputs)
 
 # ********************************************************************************************************************* 
-def make_filename_g2b(n_traj: int, vt_split: float, n_years: int, m_max: float,
+def make_filename_g2b(n_traj: int, vt_split: float, n_years: int, m_min: float, m_max: float,
                       a_min: float, a_max: float, e_max: float, inc_max: float, seed: int):
     """Make file name for serializing datasets for the restricted 2 body problem"""
     
@@ -287,6 +291,7 @@ def make_filename_g2b(n_traj: int, vt_split: float, n_years: int, m_max: float,
         'n_traj': n_traj,
         'vt_split': vt_split,
         'n_years': n_years,
+        'm_min': m_min,
         'm_max': m_max,
         'a_min': a_min,
         'a_max': a_max,
@@ -305,12 +310,12 @@ def make_filename_g2b(n_traj: int, vt_split: float, n_years: int, m_max: float,
     return f'../data/g2b/{hash_id}.pickle'
 
 # ********************************************************************************************************************* 
-def make_datasets_g2b(n_traj: int, vt_split: float, n_years: int, m_max: float,
+def make_datasets_g2b(n_traj: int, vt_split: float, n_years: int, m_min: float, m_max: float,
                       a_min: float, a_max: float, e_max: float, inc_max: float, seed: int, batch_size: int):
     """Make datasets for the restricted 2 body problem for train, val and test"""
     # Get the filename for these arguments
-    filename = make_filename_g2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, 
-                                 m_max=m_max, a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed)
+    filename = make_filename_g2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, m_min=m_min, m_max=m_max, 
+                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed)
     # Attempt to load the file
     try:
         with open(filename, 'rb') as fh:
@@ -337,11 +342,11 @@ def make_datasets_g2b(n_traj: int, vt_split: float, n_years: int, m_max: float,
         seed_tst = seed + 2
 
         # Generate inputs and outputs for orbits with input parameters
-        inputs_trn, outputs_trn = make_data_g2b(n_traj=n_traj_trn, n_years=n_years, m_max=m_max,
+        inputs_trn, outputs_trn = make_data_g2b(n_traj=n_traj_trn, n_years=n_years, m_min=m_min, m_max=m_max,
                                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed_trn)
-        inputs_val, outputs_val = make_data_g2b(n_traj=n_traj_val, n_years=n_years, m_max=m_max,
+        inputs_val, outputs_val = make_data_g2b(n_traj=n_traj_val, n_years=n_years, m_min=m_min, m_max=m_max,
                                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed_val)
-        inputs_tst, outputs_tst = make_data_g2b(n_traj=n_traj_tst, n_years=n_years, m_max=m_max,
+        inputs_tst, outputs_tst = make_data_g2b(n_traj=n_traj_tst, n_years=n_years, m_min=m_min, m_max=m_max,
                                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed_tst)
         
         # Save these to file
@@ -374,6 +379,7 @@ def make_datasets_g2b(n_traj: int, vt_split: float, n_years: int, m_max: float,
 def make_datasets_solar(n_traj=1000, vt_split=0.20, n_years=2, batch_size=64, seed=42):
     """Make 3 data sets for solar-system -like orbits with a range of a, e, and inclinations."""
     # Set the parameters for solar-system -like orbits
+    m_min = 1.0E-7
     m_max = 0.002
     a_min = 0.50
     a_max = 32.0
@@ -381,19 +387,60 @@ def make_datasets_solar(n_traj=1000, vt_split=0.20, n_years=2, batch_size=64, se
     inc_max = np.pi / 4.0
     
     # Delegate to make_datasets_g2b
-    return make_datasets_g2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, m_max=m_max,
+    return make_datasets_g2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, m_min=m_min, m_max=m_max,
                              a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed, batch_size=batch_size)
     
 # ********************************************************************************************************************* 
 def make_datasets_binary(n_traj=1000, vt_split=0.20, n_years=2, batch_size=64, seed=42):
     """Make 3 data sets for binary star -like orbits with a range of a, e, and inclinations."""
-    # Set the parameters for solar-system -like orbits
-    m_max = 1.0
+    # Set the parameters for binary star system -like orbits
+    m_min = 0.10
+    m_max = 1.00
     a_min = 0.50
     a_max = 32.0
     e_max = 0.20
     inc_max = np.pi / 4.0
     
     # Delegate to make_datasets_g2b
-    return make_datasets_g2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, m_max=m_max,
+    return make_datasets_g2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, m_min=m_min, m_max=m_max,
                              a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed, batch_size=batch_size)
+    
+# ********************************************************************************************************************* 
+def main():
+    """Main routine for making datasets"""
+    # Inputs for make_datasets_g2b
+    vt_split = 0.20
+    n_years = 2
+    batch_size = 64
+    seed = 42
+    
+    n_traj_small = 100
+    n_traj_medium = 10000
+    n_traj_large = 100000
+    
+    # Create DataSet objects for toy size problem - binary type orbits
+    print(f'Generating small data set for binary-type systems ({n_traj_small} orbits)...')
+    make_datasets_binary(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+
+    print(f'Generating small data set for solar-type systems ({n_traj_small} orbits)...')
+    make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+
+    # Create a medium data set with 10,000 binary type orbits
+    print(f'Generating small data set for binary-type systems ({n_traj_medium} orbits) ...')
+    make_datasets_binary(n_traj=n_traj_medium, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+    
+    # Create a medium data set with 10,000 solar type orbits
+    print(f'Generating small data set for solar-type systems ({n_traj_medium} orbits) ...')
+    make_datasets_solar(n_traj=n_traj_medium, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+        
+    # Create a large data set with 50,000 binary type orbits
+    print(f'Generating large data set for binary-type systems ({n_traj_large} orbits) ...')
+    make_datasets_solar(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+        
+    # Create a large data set with 50,000 solar type orbits
+    print(f'Generating small data set for solar-type systems ({n_traj_large} orbits) ...')
+    make_datasets_binary(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+
+# ********************************************************************************************************************* 
+if __name__ == '__main__':
+    main()
