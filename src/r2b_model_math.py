@@ -18,8 +18,6 @@ keras = tf.keras
 from orbital_element import make_model_cfg_to_elt
 from orbital_element import OrbitalElementToConfig, MeanToTrueAnomaly
 from r2b import make_physics_model_r2b
-# from tf_utils import Identity
-# from r2b import KineticEnergy_R2B, PotentialEnergy_R2B, AngularMomentum_R2B
 
 # ********************************************************************************************************************* 
 # Functional API Models
