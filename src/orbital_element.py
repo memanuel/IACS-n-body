@@ -16,6 +16,11 @@ import numpy as np
 from tf_utils import Identity
 
 # ********************************************************************************************************************* 
+# The gravitational constant in unit system (years, AU, Msun)
+# numerical value close to 4 pi^2; see rebound documentation for exact value        
+G_ = 39.476926421373
+
+# ********************************************************************************************************************* 
 # Data sets for testing orbital element conversions.
 # Simple approach, just wraps calls to rebound library
 # ********************************************************************************************************************* 

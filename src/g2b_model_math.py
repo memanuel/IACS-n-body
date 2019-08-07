@@ -16,7 +16,7 @@ keras = tf.keras
 
 # Local imports
 from orbital_element import make_model_cfg_to_elt, make_model_elt_to_cfg
-from orbital_element import OrbitalElementToConfig, MeanToTrueAnomaly
+from orbital_element import G_, MeanToTrueAnomaly
 from g2b import make_physics_model_g2b
 
 # ********************************************************************************************************************* 
@@ -41,7 +41,7 @@ def make_position_model_g2b_math(traj_size = 731):
     inputs = (t, q0, v0, m)
 
     # The gravitational constant; numerical value close to 4 pi^2; see rebound documentation for exact value        
-    G = tf.constant(39.476926421373)
+    G = tf.constant(G_)
 
     # Gravitational field strength; shape (batch_size,)
     m1 = m[:, 0]

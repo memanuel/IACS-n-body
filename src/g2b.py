@@ -15,6 +15,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.keras import backend as K
 from tf_utils import Identity, EpochLoss, TimeHistory
+from orbital_element import G_
 
 # ********************************************************************************************************************* 
 # Custom Layers
@@ -62,7 +63,7 @@ class PotentialEnergy_G2B(keras.layers.Layer):
         m, q = inputs
 
         # The gravitational constant; numerical value close to 4 pi^2; see rebound documentation for exact value        
-        G = tf.constant(39.476926421373)
+        G = tf.constant(G_)
         # Gravitational field strength
         m1 = m[:, 0]
         m2 = m[:, 1]
@@ -129,7 +130,7 @@ class AngularMomentum_G2B(keras.layers.Layer):
         m_vec = keras.layers.Reshape(target_shape)(m)
         
         # Compute the momentum of each particle, m * v
-        P = 0.5 * m_vec * v
+        P = m_vec * v
         
         # Compute the angular momentum of each particle, q x (m*v)
         Li = tf.linalg.cross(a=q, b=P, name='Li')
@@ -260,7 +261,6 @@ class Motion_G2B(keras.Model):
         a = keras.layers.concatenate(inputs=[a1, a2], axis=-2, name='v')
         del gt2
 
-        a = q
         return q, v, a
     
 # ********************************************************************************************************************* 
@@ -288,17 +288,18 @@ def make_physics_model_g2b(position_model: keras.Model, traj_size: int):
     q, v, a = Motion_G2B(position_model=position_model, name='motion')(inputs)
     
     # Name the outputs of the motion
-    # These each have shape (batch_size, traj_size, 3)
+    # These each have shape (batch_size, num_particles, traj_size, 3)
     q = Identity(name='q')(q)
     v = Identity(name='v')(v)
     a = Identity(name='a')(a)
 
     # Compute q0_rec and v0_rec
-    # These each have shape (batch_size, 2)
+    # These each have shape (batch_size, num_particles, 3)
     q0_rec = keras.layers.Lambda(initial_row_func, name='q0_rec')(q)
     v0_rec = keras.layers.Lambda(initial_row_func, name='v0_rec')(v)
 
     # Compute kinetic energy T and potential energy U
+    # These have shape (batch_size, traj_size)
     T = KineticEnergy_G2B(name='T')([m, v])
     U = PotentialEnergy_G2B(name='U')([m, q])
 

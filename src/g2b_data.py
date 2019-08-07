@@ -125,16 +125,13 @@ def make_traj_g2b(m1, m2, a, e, inc, Omega, omega, f, n_years):
         T[i] = T1 + T2
         
         # Potential energy
-        # r = np.linalg.norm(q2[i] - q1[i])
         r = np.linalg.norm(q2 - q1)
         U[i] = -k / r
 
         # The momentum vector; should be zero in the COM frame
-        # P[i] = m1 * v1[i] + m2 * v2[i]
         P[i] = m1 * v1 + m2 * v2
 
         # The angular momentum vector; should be constant by conservation of angular momentum
-        # L[i] = np.cross(q1[i], m1*v1[i]) + np.cross(q2[i], m2*v2[i])
         L[i] = np.cross(q1, m1*v1) + np.cross(q2, m2*v2)
 
     # The total energy is the sum of kinetic and potential; should be constant by conservation of energy
@@ -154,13 +151,14 @@ def make_traj_g2b(m1, m2, a, e, inc, Omega, omega, f, n_years):
 
     # Assemble the output dict
     outputs = {
+        # the trajectory
         'q': q,
         'v': v,
         'a': acc,
         # the initial conditions, which should be recovered
         'q0_rec': q0,
         'v0_rec': v0,
-        # the energy and angular momentum, which should be conserved
+        # the energy, momentum and angular momentum, which should be conserved
         'T': T,
         'U': U,
         'H': H,

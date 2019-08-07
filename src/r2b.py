@@ -63,10 +63,6 @@ class PotentialEnergy_R2B(keras.layers.Layer):
         #    mu: (batch_size,),
         # }, message='PotentialEnergy_R2B / inputs')
 
-        # The gravitational constant
-        # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value        
-        # mu = tf.constant(-39.476924896240234)
-               
         # Compute the norm of a 2D vector
         norm_func = lambda q : tf.norm(q, axis=-1, keepdims=False)
 

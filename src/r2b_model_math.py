@@ -41,10 +41,6 @@ def make_position_model_r2b_math(traj_size = 731):
     # Wrap these up into one tuple of inputs for the model
     inputs = (t, q0, v0, mu)
     
-    # The gravitational constant; give this shape (1,1) for compatibility with RepeatVector
-    # The numerical value mu0 is close to 4 pi^2; see rebound documentation for exact value
-    # mu0 = tf.constant([[39.476924896240234]])
-    
     # Reshape the gravitational field strength from (batch_size,) to (batch_size, 1,)
     mu0 = keras.layers.Reshape((1,))(mu)
 
