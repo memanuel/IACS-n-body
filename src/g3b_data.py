@@ -19,7 +19,7 @@ from tqdm.auto import tqdm
 keras = tf.keras
 
 # ********************************************************************************************************************* 
-def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years):
+def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrator='ias15'):
     """
     Make an array of training data points for the general 3 body problem.
     Creates one trajectory with the same initial configuration.
@@ -31,16 +31,17 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years):
     Omega: the longitude of the ascending node
     omega: the argument of pericenter
     f: the true anomaly at epoch    
-    n_years: the number of years of data to simulate
+    n_years: the number of years of data to simulate, e.g. 2
+    sample_freq: number of sample points per year, e.g. 365
+    integrator: the name of the rebound integrator.  one of 'ias15' or 'whfast'
+    NOTE:
     the orbital element inputs a, e, inc, Omega, omega, f are all arrays of size 3
     RETURNS:
     input_dict: a dictionary with the input fields t, q0, v0
     output_dict: a dictionary with the output fields q, v, a, q0_rec, v0_rec, T, H, H, L
     """
-    # The sample frequency is 365 per year (dt approximately = 1 day)
-    sample_freq = 365
     # Number of samples including both start and end
-    N = sample_freq*n_years + 1
+    N = n_years*sample_freq + 1
 
     # Create a simulation
     sim = rebound.Simulation()
@@ -48,50 +49,63 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years):
     # Set units
     sim.units = ('yr', 'AU', 'Msun')
 
-    # Set integrator to ias15; need acceleration output
-    sim.integrator = 'ias15'
+    # Set integrator.  if acceleration output required, must use ias15
+    sim.integrator = integrator
 
     # Set the simulation time step based on sample_freq
     sim.dt = 1.0 / sample_freq
 
     # Unpack masses of the 3 objects
-    m1, m2, m3 = m
+    m0, m1, m2 = m
     
     # Unpack the orbital elements
-    a2, a3 = a
-    e2, e3 = e
-    inc2, inc3 = inc
-    Omega2, Omega3 = Omega
-    omega2, omega3 = omega
-    f2, f3 = f
+    a1, a2 = a
+    e1, e2 = e
+    inc1, inc2 = inc
+    Omega1, Omega2 = Omega
+    omega1, omega2 = omega
+    f1, f2 = f
     
-    # Test if a2 and a3 are out of order; if so, flip them so a2 <= a3
-    if a2 > a3:
+    # Test if a1 and a2 are out of order; if so, flip them so a1 <= a2
+    if a1 > a2:
+        elts1 = (a1, e1, inc1, Omega1, omega1, f1)
         elts2 = (a2, e2, inc2, Omega2, omega2, f2)
-        elts3 = (a3, e3, inc3, Omega3, omega3, f3)
-        (elts2, elts3) = (elts3, elts2)
+        (elts1, elts2) = (elts2, elts1)
 
     # Add primary with specified mass at origin with 0 velocity
-    sim.add(m=m1)
+    sim.add(m=m0)
+
+    # Add body 1
+    sim.add(m=m1, a=a1, e=e1, inc=inc1, Omega=Omega1, omega=omega1, f=f1)
 
     # Add body 2
     sim.add(m=m2, a=a2, e=e2, inc=inc2, Omega=Omega2, omega=omega2, f=f2)
     
-    # Add body 3
-    sim.add(m=m3, a=a3, e=e3, inc=inc3, Omega=Omega3, omega=omega3, f=f3)
-
     # Move to the center-of-momentum coordinate system
     sim.move_to_com()
 
-    # Initialize cartesian entries to zero vectors
+    # Array shapes
     num_particles = 3
     space_dims = 3
     traj_shape = (N, num_particles, space_dims)
+    # the number of orbital elements is the number of particles minus 1; no elements for primary
+    elt_shape = (N, num_particles-1)
+    mom_shape = (N, 3)
+
+    # Initialize cartesian entries to zero vectors
     q = np.zeros(traj_shape, dtype=np.float32)
     v = np.zeros(traj_shape, dtype=np.float32)
     acc = np.zeros(traj_shape, dtype=np.float32)
+    
+    # Initialize orbital elements over time to zero vectors
+    orb_a = np.zeros(elt_shape, dtype=np.float32)
+    orb_e = np.zeros(elt_shape, dtype=np.float32)
+    orb_inc = np.zeros(elt_shape, dtype=np.float32)
+    orb_Omega = np.zeros(elt_shape, dtype=np.float32)
+    orb_omega = np.zeros(elt_shape, dtype=np.float32)
+    orb_f = np.zeros(elt_shape, dtype=np.float32)
 
-    # Mass vector
+    # Mass vector - convert to float32
     m = np.array(m, dtype=np.float32)
 
     # Initialize placeholders for kinetic and potential energy
@@ -99,22 +113,21 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years):
     U = np.zeros(N, dtype=np.float32)
 
     # Initialize momentum and angular momentum
-    mom_shape = (N, 3)
     P = np.zeros(mom_shape, dtype=np.float32)
     L = np.zeros(mom_shape, dtype=np.float32)
 
     # The coefficients for gravitational potential energy on particle pairs
+    k_01 = sim.G * m0 * m1
+    k_02 = sim.G * m0 * m2
     k_12 = sim.G * m1 * m2
-    k_13 = sim.G * m1 * m3
-    k_23 = sim.G * m2 * m3
 
     # Set the times for snapshots
     ts = np.linspace(0.0, n_years, N)
 
     # The particles for the 3 bodies
-    p1 = sim.particles[0]
-    p2 = sim.particles[1]
-    p3 = sim.particles[2]
+    p0 = sim.particles[0]
+    p1 = sim.particles[1]
+    p2 = sim.particles[2]
 
     # Simulate the orbits
     # Start by integrating backward, then forward for a small step
@@ -124,49 +137,62 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years):
     for i, t in enumerate(ts):
         # Integrate to the current time step with an exact finish time
         sim.integrate(t, exact_finish_time=1)
+
         # Save the position
-        q[i] = [[p1.x, p1.y, p1.z],
-                [p2.x, p2.y, p2.z],
-                [p3.x, p3.y, p3.z]]
+        q[i] = [[p0.x, p0.y, p0.z],
+                [p1.x, p1.y, p1.z],
+                [p2.x, p2.y, p2.z]]
         # Save the velocity
-        v[i] = [[p1.vx, p1.vy, p1.vz],
-                [p2.vx, p2.vy, p2.vz],
-                [p3.vx, p3.vy, p3.vz]]
+        v[i] = [[p0.vx, p0.vy, p0.vz],
+                [p1.vx, p1.vy, p1.vz],
+                [p2.vx, p2.vy, p2.vz]]
         # Save the acceleration
-        acc[i] = [[p1.ax, p1.ay, p1.az],
-                  [p2.ax, p2.ay, p2.az],
-                  [p3.ax, p3.ay, p3.az]]
+        acc[i] = [[p0.ax, p0.ay, p0.az],
+                  [p1.ax, p1.ay, p1.az],
+                  [p2.ax, p2.ay, p2.az]]
         
+        # Calculate the two orbits
+        orb1 = p1.calculate_orbit()
+        orb2 = p2.calculate_orbit()
+        
+        # Save the orbital elements
+        orb_a[i] = [orb1.a, orb2.a]
+        orb_e[i] = [orb1.e, orb2.e]
+        orb_inc[i] = [orb1.inc, orb2.inc]
+        orb_Omega[i] = [orb1.Omega, orb2.Omega]
+        orb_omega[i] = [orb1.omega, orb2.omega]
+        orb_f[i] = [orb1.f, orb2.f]
+
         # Extract the 3 positions 
-        q1 = q[i,0]
-        q2 = q[i,1]
-        q3 = q[i,2]
+        q0 = q[i,0]
+        q1 = q[i,1]
+        q2 = q[i,2]
 
         # Extract the 3 velocities
-        v1 = v[i,0]
-        v2 = v[i,1]
-        v3 = v[i,2]
+        v0 = v[i,0]
+        v1 = v[i,1]
+        v2 = v[i,2]
 
         # Kinetic energy
+        T0 = 0.5 * m0 * np.sum(np.square(v0))
         T1 = 0.5 * m1 * np.sum(np.square(v1))
         T2 = 0.5 * m2 * np.sum(np.square(v2))
-        T3 = 0.5 * m3 * np.sum(np.square(v3))
-        T[i] = T1 + T2 + T3
+        T[i] = T0 + T1 + T2
         
         # Potential energy; 3 pairs of interacting particles (3 choose 2)
+        r_01 = np.linalg.norm(q1 - q0)
+        r_02 = np.linalg.norm(q2 - q0)
         r_12 = np.linalg.norm(q2 - q1)
-        r_13 = np.linalg.norm(q3 - q1)
-        r_23 = np.linalg.norm(q3 - q2)
-        U[i] = -(k_12/r_12 + k_13/r_13 + k_23/r_23)
+        U[i] = -(k_01/r_01 + k_02/r_02 + k_12/r_12)
 
         # The momentum vector; should be zero in the COM frame
+        mv0 = m0 * v0
         mv1 = m1 * v1
         mv2 = m2 * v2
-        mv3 = m3 * v3
-        P[i] = mv1 + mv2 + mv3
+        P[i] = mv0 + mv1 + mv2
 
         # The angular momentum vector; should be constant by conservation of angular momentum
-        L[i] = np.cross(q1, mv1) + np.cross(q2, mv2) + np.cross(q3, mv3)
+        L[i] =  np.cross(q0, mv0) + np.cross(q1, mv1) + np.cross(q2, mv2)
 
     # The total energy is the sum of kinetic and potential; should be constant by conservation of energy
     H = T + U
@@ -189,9 +215,19 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years):
         'q': q,
         'v': v,
         'a': acc,
+
+        # the orbital elements over time
+        'orb_a': orb_a,
+        'orb_e': orb_e,
+        'orb_inc': orb_inc,
+        'orb_Omega': orb_Omega,
+        'orb_omega': orb_omega,
+        'orb_f': orb_f,
+        
         # the initial conditions, which should be recovered
         'q0_rec': q0,
         'v0_rec': v0,
+
         # the energy, momentum and angular momentum, which should be conserved
         'T': T,
         'U': U,
@@ -204,7 +240,7 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years):
 
 
 # ********************************************************************************************************************* 
-def make_data_g3b(n_traj: int, n_years: int, 
+def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
                   m_min: float=1.0E-9, m_max: float=1.0, 
                   a_min: float = 0.50, a_max: float = 32.0, 
                   e_max = 0.20, inc_max = 0.0, seed = 42):
@@ -213,6 +249,7 @@ def make_data_g3b(n_traj: int, n_years: int,
     INPUTS:
     n_traj: the number of trajectories to sample
     n_years: the number of years for each trajectory, e.g. 2
+    integrator: the integrator used.  'ias15' or 'whfast'
     m_min: minimum mass of the second (lighter) body in solar masses 
     m_max: maximum mass of the second (lighter) body in solar masses 
     a_min: minimum semi-major axis in AU, e.g. 0.50
@@ -220,10 +257,11 @@ def make_data_g3b(n_traj: int, n_years: int,
     e_max: maximum eccentricity, e.g. 0.20
     inc_max: maximum inclination, e.g. pi/4
     """
-    # The sample frequency is 365 per year (dt approximately = 1 day)
-    sample_freq = 365
     # Number of samples including both start and end in each trajectory
     traj_size = sample_freq*n_years + 1
+    
+    # The integrator to use
+    integrator = 'ias15'
 
     # Number of particles and spatial dimensions
     num_particles = 3
@@ -279,7 +317,8 @@ def make_data_g3b(n_traj: int, n_years: int,
     for i in tqdm(range(n_traj)):
         # Generate one trajectory
         inputs, outputs = make_traj_g3b(m=orb_m[i], a=orb_a[i], e=orb_e[i], inc=orb_inc[i], 
-                                        Omega=orb_Omega[i], omega=orb_omega[i], f=orb_f[i], n_years=n_years)
+                                        Omega=orb_Omega[i], omega=orb_omega[i], f=orb_f[i], 
+                                        n_years=n_years, sample_freq=sample_freq, integrator=integrator)
         
         # Copy results into main arrays
         t[i] = inputs['t']
@@ -320,8 +359,9 @@ def make_data_g3b(n_traj: int, n_years: int,
     return (inputs, outputs)
 
 # ********************************************************************************************************************* 
-def make_filename_g3b(n_traj: int, vt_split: float, n_years: int, m_min: float, m_max: float,
-                      a_min: float, a_max: float, e_max: float, inc_max: float, seed: int):
+def make_filename_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: int, 
+                      m_min: float, m_max: float, a_min: float, a_max: float, e_max: float, inc_max: float, 
+                      seed: int):
     """Make file name for serializing datasets for the restricted 2 body problem"""
     
     # Create dictionary with attributes
@@ -329,6 +369,7 @@ def make_filename_g3b(n_traj: int, vt_split: float, n_years: int, m_min: float, 
         'n_traj': n_traj,
         'vt_split': vt_split,
         'n_years': n_years,
+        'sample_freq': sample_freq,
         'm_min': m_min,
         'm_max': m_max,
         'a_min': a_min,
@@ -348,12 +389,13 @@ def make_filename_g3b(n_traj: int, vt_split: float, n_years: int, m_min: float, 
     return f'../data/g3b/{hash_id}.pickle'
 
 # ********************************************************************************************************************* 
-def make_datasets_g2b(n_traj: int, vt_split: float, n_years: int, m_min: float, m_max: float,
+def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: int, m_min: float, m_max: float,
                       a_min: float, a_max: float, e_max: float, inc_max: float, seed: int, batch_size: int):
     """Make datasets for the restricted 2 body problem for train, val and test"""
     # Get the filename for these arguments
-    filename = make_filename_g3b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, m_min=m_min, m_max=m_max, 
-                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed)
+    filename = make_filename_g3b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq, 
+                                 m_min=m_min, m_max=m_max, a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, 
+                                 seed=seed)
     # Attempt to load the file
     try:
         with open(filename, 'rb') as fh:
@@ -380,11 +422,14 @@ def make_datasets_g2b(n_traj: int, vt_split: float, n_years: int, m_min: float, 
         seed_tst = seed + 2
 
         # Generate inputs and outputs for orbits with input parameters
-        inputs_trn, outputs_trn = make_data_g3b(n_traj=n_traj_trn, n_years=n_years, m_min=m_min, m_max=m_max,
-                                                a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed_trn)
-        inputs_val, outputs_val = make_data_g3b(n_traj=n_traj_val, n_years=n_years, m_min=m_min, m_max=m_max,
+        inputs_trn, outputs_trn = make_data_g3b(n_traj=n_traj_trn, n_years=n_years, sample_freq=sample_freq,
+                                                m_min=m_min, m_max=m_max, a_min=a_min, a_max=a_max, 
+                                                e_max=e_max, inc_max=inc_max, seed=seed_trn)
+        inputs_val, outputs_val = make_data_g3b(n_traj=n_traj_val, n_years=n_years, sample_freq=sample_freq,
+                                                m_min=m_min, m_max=m_max,
                                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed_val)
-        inputs_tst, outputs_tst = make_data_g3b(n_traj=n_traj_tst, n_years=n_years, m_min=m_min, m_max=m_max,
+        inputs_tst, outputs_tst = make_data_g3b(n_traj=n_traj_tst, n_years=n_years, sample_freq=sample_freq,
+                                                m_min=m_min, m_max=m_max,
                                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed_tst)
         
         # Save these to file
@@ -414,18 +459,42 @@ def make_datasets_g2b(n_traj: int, vt_split: float, n_years: int, m_min: float, 
     return ds_trn, ds_val, ds_tst
 
 # ********************************************************************************************************************* 
-def make_datasets_solar(n_traj=1000, vt_split=0.20, n_years=2, batch_size=64, seed=42):
-    """Make 3 data sets for solar-system -like orbits with a range of a, e, and inclinations."""
+def make_datasets_solar(n_traj=1000, vt_split=0.20, n_years=100, sample_freq=10, batch_size=64, seed=42):
+    """Make 3 data sets for solar-type systems with a range of a, e, and inclinations."""
     # Set the parameters for solar-system -like orbits
-    m_min = 1.0E-7
-    m_max = 0.002
+    # https://en.wikipedia.org/wiki/Planetary_mass
+    # mass of Mercury is 1.7E-7 solar masses
+    # mass of Jupiter is 9.5E-4 solar masses 
+    m_min = 1.0E-7 
+    m_max = 2.0E-3 
+    # http://www.met.rdg.ac.uk/~ross/Astronomy/Planets.html
+    # a ranges from 0.39 for Mercury to 30.0 for Neptune
+    a_min = 0.50
+    a_max = 32.0
+    # Largest eccentricity is 0.206 for Mercury.  Heavier planets have eccentricities 0.007 to 0.054
+    e_max = 0.08
+    # largest inclination to the invariable plane is Mercury at 6 degrees = 0.10 radians
+    # the heavier planets have inclinations in the 0-2 degree range = 0.035 radians
+    inc_max = 0.04 
+
+    # Delegate to make_datasets_g2b
+    return make_datasets_g3b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq,
+                             m_min=m_min, m_max=m_max, a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, 
+                             seed=seed, batch_size=batch_size)
+    
+# ********************************************************************************************************************* 
+def make_datasets_hard(n_traj=1000, vt_split=0.20, n_years=100, sample_freq=10, batch_size=64, seed=42):
+    """Make 3 data sets for systems with more difficult parameter ranges."""
+    # Set the parameters for solar-system -like orbits
+    m_min = 1.0E-4 
+    m_max = 1.0E-1 
     a_min = 0.50
     a_max = 32.0
     e_max = 0.20
-    inc_max = np.pi / 4.0
-    
-    # Delegate to make_datasets_g2b
-    return make_datasets_g2b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, m_min=m_min, m_max=m_max,
+    inc_max = 0.10 
+
+    # Delegate to make_datasets_g3b
+    return make_datasets_g3b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, m_min=m_min, m_max=m_max,
                              a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed, batch_size=batch_size)
     
 # ********************************************************************************************************************* 
@@ -433,25 +502,27 @@ def main():
     """Main routine for making datasets"""
     # Inputs for make_datasets_g2b
     vt_split = 0.20
-    n_years = 2
+    n_years = 100
+    sample_freq = 10
     batch_size = 64
     seed = 42
     
     n_traj_small = 100
     n_traj_medium = 10000
-    n_traj_large = 100000
+    # n_traj_large = 50000
     
     # Create DataSet objects for toy size problem
     print(f'Generating small data set for solar-type systems ({n_traj_small} orbits)...')
-    make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+    make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq,
+                        batch_size=batch_size, seed=seed)
 
     # Create a medium data set with 10,000 solar type orbits
     print(f'Generating medium data set for solar-type systems ({n_traj_medium} orbits) ...')
     make_datasets_solar(n_traj=n_traj_medium, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
         
     # Create a large data set with 50,000 binary type orbits
-    print(f'Generating large data set for binary-type systems ({n_traj_large} orbits) ...')
-    make_datasets_solar(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+    # print(f'Generating large data set for binary-type systems ({n_traj_large} orbits) ...')
+    # make_datasets_solar(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
