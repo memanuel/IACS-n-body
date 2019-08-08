@@ -1,10 +1,10 @@
 """
 Harvard IACS Masters Thesis
-Restricted Two Body Problem
+General Three Body Problem
 Custom layers and reusable calculations
 
 Michael S. Emanuel
-Mon Aug 5 14:30:00 2019
+Thu Aug 8 11:43:00 2019
 """
 
 # Library imports
@@ -22,7 +22,7 @@ from orbital_element import G_
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-class KineticEnergy_G2B(keras.layers.Layer):
+class KineticEnergy_G3B(keras.layers.Layer):
     """Compute the kinetic energy from masses m and velocities v"""
 
     def call(self, inputs):
@@ -37,7 +37,7 @@ class KineticEnergy_G2B(keras.layers.Layer):
         target_shape = (1, -1)
         m_vec = keras.layers.Reshape(target_shape)(m)
         
-        # The KE is 1/2 m v^2
+        # The KE is 1/2 m v^2 = 1/2 v^2 per unit mass in restricted problem
         # First compute the K.E. for each particle
         Ti = 0.5 * m_vec * tf.reduce_sum(v2, axis=-1, keepdims=False)
         # Sum the K.E. for the whole system
@@ -49,10 +49,10 @@ class KineticEnergy_G2B(keras.layers.Layer):
         return dict()
 
 # ********************************************************************************************************************* 
-class PotentialEnergy_G2B(keras.layers.Layer):
+class PotentialEnergy_G3B(keras.layers.Layer):
     """Compute the potential energy from masses m and positions q"""
     def __init__(self, **kwargs):
-        super(PotentialEnergy_G2B, self).__init__(**kwargs)
+        super(PotentialEnergy_G3B, self).__init__(**kwargs)
         # Compute the norm of a 3D vector
         self.norm_func = lambda q : tf.norm(q, axis=-1, keepdims=False)
     
@@ -65,24 +65,37 @@ class PotentialEnergy_G2B(keras.layers.Layer):
         # The gravitational constant; numerical value close to 4 pi^2; see rebound documentation for exact value        
         G = tf.constant(G_)
         # Gravitational field strength
-        m1 = m[:, 0]
-        m2 = m[:, 1]
-        k = G * m1 * m2
+        m0 = m[:, 0]
+        m1 = m[:, 1]
+        m2 = m[:, 2]
+        k_01 = G * m0 * m1
+        k_02 = G * m0 * m2
+        k_12 = G * m1 * m2
 
         # The displacement q_12
-        q1 = q[:, :, 0, :]
-        q2 = q[:, :, 1, :]
+        q0 = q[:, :, 0, :]
+        q1 = q[:, :, 1, :]
+        q2 = q[:, :, 2, :]
+        q_01 = q1 - q0
+        q_02 = q2 - q0
         q_12 = q2 - q1
 
         # The distance r; shape (batch_size, num_particles, traj_size)
-        r = keras.layers.Activation(self.norm_func, name='r')(q_12)
+        r_01 = keras.layers.Activation(self.norm_func, name='r_01')(q_01)
+        r_02 = keras.layers.Activation(self.norm_func, name='r_02')(q_02)
+        r_12 = keras.layers.Activation(self.norm_func, name='r_12')(q_12)
 
         # Reshape gravitational field constant to match r
-        target_shape = [1] * (len(r.shape)-1)
-        k = keras.layers.Reshape(target_shape, name='k_vec')(k)
+        target_shape = [1] * (len(r_01.shape)-1)
+        k_01 = keras.layers.Reshape(target_shape, name='k_01_vec')(k_01)
+        k_02 = keras.layers.Reshape(target_shape, name='k_02_vec')(k_02)
+        k_12 = keras.layers.Reshape(target_shape, name='k_12_vec')(k_12)
         
-        # The gravitational potential is -G m0 m1 / r = -k / r
-        U = tf.negative(tf.divide(k, r))
+        # The gravitational potential is -G mi mj / r_1i = - k_ij / r_ij
+        U = tf.negative(tf.reduce_sum([tf.divide(k_01, r_01),
+                                       tf.divide(k_02, r_02),
+                                       tf.divide(k_12, r_12),],
+                                      axis=0, keepdims=False))
 
         return U
 
@@ -90,7 +103,7 @@ class PotentialEnergy_G2B(keras.layers.Layer):
         return dict()
 
 # ********************************************************************************************************************* 
-class Momentum_G2B(keras.layers.Layer):
+class Momentum_G3B(keras.layers.Layer):
     """Compute the momentum from masses m and velocities v"""
 
     def call(self, inputs):
@@ -100,7 +113,7 @@ class Momentum_G2B(keras.layers.Layer):
         m, v = inputs
 
         # Reshape mass to (batch_size, 1, num_particles, 1)
-        num_particles=2
+        num_particles=3
         target_shape = (1, num_particles, 1,)
         m_vec = keras.layers.Reshape(target_shape)(m)
         
@@ -116,7 +129,7 @@ class Momentum_G2B(keras.layers.Layer):
         return dict()
     
 # ********************************************************************************************************************* 
-class AngularMomentum_G2B(keras.layers.Layer):
+class AngularMomentum_G3B(keras.layers.Layer):
     """Compute the angular momentum from position and velocity"""
     def call(self, inputs):
         # Unpack inputs
@@ -125,7 +138,7 @@ class AngularMomentum_G2B(keras.layers.Layer):
         m, q, v = inputs
 
         # Reshape mass to (batch_size, 1, num_particles, 1)
-        num_particles=2
+        num_particles=3
         target_shape = (1, num_particles, 1,)
         m_vec = keras.layers.Reshape(target_shape)(m)
         
@@ -173,11 +186,11 @@ class EnergyError(keras.losses.Loss):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-class Motion_G2B(keras.Model):
-    """Motion for general two body problem generated from a position calculation model."""
+class Motion_G3B(keras.Model):
+    """Motion for general three body problem generated from a position calculation model."""
 
     def __init__(self, position_model, **kwargs):
-        super(Motion_G2B, self).__init__(**kwargs)
+        super(Motion_G3B, self).__init__(**kwargs)
         self.position_model = position_model
 
     def call(self, inputs):
@@ -187,13 +200,13 @@ class Motion_G2B(keras.Model):
         then uses automatic differentiation for velocity v and acceleration a.
         INPUTS:
             t: the times to report the orbit; shape (batch_size, traj_size)
-            q0: the initial position; shape (batch_size, 2, 3)
-            v0: the initial velocity; shape (batch_size, 2, 3)
-            m: the object masses; shape (batch_size, 2)
+            q0: the initial position; shape (batch_size, 3, 3)
+            v0: the initial velocity; shape (batch_size, 3, 3)
+            m: the object masses; shape (batch_size, 3)
         OUTPUTS:
-            q: the position at time t; shape (batch_size, traj_size, 2, 3)
-            v: the velocity at time t; shape (batch_size, traj_size, 2, 3)
-            a: the acceleration at time t; shape (batch_size, traj_size, 2, 3)
+            q: the position at time t; shape (batch_size, traj_size, 3, 3)
+            v: the velocity at time t; shape (batch_size, traj_size, 3, 3)
+            a: the acceleration at time t; shape (batch_size, traj_size, 3, 3)
         """
         # Unpack the inputs
         t, q0, v0, m = inputs
@@ -224,42 +237,54 @@ class Motion_G2B(keras.Model):
                 # Here we only want to take the position output and do a full automatic differentiation
                 q, v_ = self.position_model(position_inputs)
                 # Unpack separate components of position; unable to get gt.jacobian or output_gradients to work
-                q1x, q1y, q1z = q[:, :, 0, 0], q[:, :, 0, 1], q[:, :, 0, 2]
-                q2x, q2y, q2z = q[:, :, 1, 0], q[:, :, 1, 1], q[:, :, 1, 2]
+                q0x, q0y, q0z = q[:, :, 0, 0], q[:, :, 0, 1], q[:, :, 0, 2]
+                q1x, q1y, q1z = q[:, :, 1, 0], q[:, :, 1, 1], q[:, :, 1, 2]
+                q2x, q2y, q2z = q[:, :, 2, 0], q[:, :, 2, 1], q[:, :, 2, 2]
 
             # Compute the velocity v = dq/dt with gt1
+            v0x = gt1.gradient(q0x, t)
+            v0y = gt1.gradient(q0y, t)
+            v0z = gt1.gradient(q0z, t)
             v1x = gt1.gradient(q1x, t)
             v1y = gt1.gradient(q1y, t)
             v1z = gt1.gradient(q1z, t)
             v2x = gt1.gradient(q2x, t)
             v2y = gt1.gradient(q2y, t)
             v2z = gt1.gradient(q2z, t)
-            # v1 = gt1.jacobian(q, t, parallel_iterations=None, experimental_use_pfor=False)
+
             # Assemble the velocity components for each particle
+            v0 = keras.layers.concatenate(inputs=[v0x, v0y, v0z], axis=-1, name='v0')
             v1 = keras.layers.concatenate(inputs=[v1x, v1y, v1z], axis=-1, name='v1')
             v2 = keras.layers.concatenate(inputs=[v2x, v2y, v2z], axis=-1, name='v2')
-            # Reshape the single particle trajctories
+            # Reshape the single particle trajectories
+            v0 = particle_traj_shape_layer(v0)
             v1 = particle_traj_shape_layer(v1)
             v2 = particle_traj_shape_layer(v2)
             # Combine the particle velocity vectors
-            v = keras.layers.concatenate(inputs=[v1, v2], axis=-2, name='v')
+            v = keras.layers.concatenate(inputs=[v0, v1, v2], axis=-2, name='v')
             del gt1
             
         # Compute the acceleration a = d2q/dt2 = dv/dt with gt2
+        a0x = gt2.gradient(v0x, t)
+        a0y = gt2.gradient(v0y, t)
+        a0z = gt2.gradient(v0z, t)
         a1x = gt2.gradient(v1x, t)
         a1y = gt2.gradient(v1y, t)
         a1z = gt2.gradient(v1z, t)
         a2x = gt2.gradient(v2x, t)
         a2y = gt2.gradient(v2y, t)
         a2z = gt2.gradient(v2z, t)
+
         # Assemble the velocity components for each particle
+        a0 = keras.layers.concatenate(inputs=[a0x, a0y, a0z], axis=-1, name='a0')
         a1 = keras.layers.concatenate(inputs=[a1x, a1y, a1z], axis=-1, name='a1')
         a2 = keras.layers.concatenate(inputs=[a2x, a2y, a2z], axis=-1, name='a2')
         # Reshape the single particle trajectories
+        a0 = particle_traj_shape_layer(a0)
         a1 = particle_traj_shape_layer(a1)
         a2 = particle_traj_shape_layer(a2)
         # Combine the particle acceleration vectors
-        a = keras.layers.concatenate(inputs=[a1, a2], axis=-2, name='a')
+        a = keras.layers.concatenate(inputs=[a0, a1, a2], axis=-2, name='a')
         del gt2
 
         return q, v, a
@@ -269,10 +294,10 @@ class Motion_G2B(keras.Model):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_physics_model_g2b(position_model: keras.Model, traj_size: int):
+def make_physics_model_g3b(position_model: keras.Model, traj_size: int):
     """Create a physics model for the general two body problem from a position model"""
     # Create input layers
-    num_particles = 2
+    num_particles = 3
     space_dims = 3
     t = keras.Input(shape=(traj_size,), name='t')
     q0 = keras.Input(shape=(num_particles, space_dims,), name='q0')
@@ -286,7 +311,7 @@ def make_physics_model_g2b(position_model: keras.Model, traj_size: int):
     initial_row_func = lambda q : q[:, 0, :]
 
     # Compute the motion from the specified position layer; inputs are the same for position and physics model
-    q, v, a = Motion_G2B(position_model=position_model, name='motion')(inputs)
+    q, v, a = Motion_G3B(position_model=position_model, name='motion')(inputs)
     
     # Name the outputs of the motion
     # These each have shape (batch_size, num_particles, traj_size, 3)
@@ -301,20 +326,20 @@ def make_physics_model_g2b(position_model: keras.Model, traj_size: int):
 
     # Compute kinetic energy T and potential energy U
     # These have shape (batch_size, traj_size)
-    T = KineticEnergy_G2B(name='T')([m, v])
-    U = PotentialEnergy_G2B(name='U')([m, q])
+    T = KineticEnergy_G3B(name='T')([m, v])
+    U = PotentialEnergy_G3B(name='U')([m, q])
 
     # Compute the total energy H
     H = keras.layers.add(inputs=[T,U], name='H')
 
     # Compute momentum P and angular momentum L
     # These have shape (batch_size, traj_size, 3)
-    P = Momentum_G2B(name='P')([m, v])
-    L = AngularMomentum_G2B(name='L')([m, q, v])
+    P = Momentum_G3B(name='P')([m, v])
+    L = AngularMomentum_G3B(name='L')([m, q, v])
 
     # Wrap this up into a model
     outputs = [q, v, a, q0_rec, v0_rec, H, P, L]
-    model_name = position_model.name.replace('model_g2b_position_', 'model_g2b_physics_')
+    model_name = position_model.name.replace('model_g3b_position_', 'model_g3b_physics_')
     model = keras.Model(inputs=inputs, outputs=outputs, name=model_name)
     return model
 
@@ -327,11 +352,11 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev
     # Compile the model
     model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
     model_name = model.name
-    filepath=f'../models/g2b/{model_name}.h5'
+    filepath=f'../models/g3b/{model_name}.h5'
 
     # Parameters for callbacks
     interval = 1
-    patience = max(epochs // 10, 1)
+    # patience = max(epochs // 10, 1)
     
     # Create callbacks
     cb_log = EpochLoss(interval=interval, newline=True)
@@ -346,12 +371,12 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev
             monitor='loss',
             verbose=0)    
 
-    cb_early_stop = keras.callbacks.EarlyStopping(
-            monitor='loss',
-            min_delta=0.0,
-            patience=patience,
-            verbose=2,
-            restore_best_weights=True)    
+    # cb_early_stop = keras.callbacks.EarlyStopping(
+    #        monitor='loss',
+    #        min_delta=0.0,
+    #        patience=patience,
+    #        verbose=2,
+    #        restore_best_weights=True)    
 
     # All selected callbacks
     # callbacks = [cb_log, cb_time, cb_ckp, cb_early_stop]

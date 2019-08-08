@@ -362,7 +362,7 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
 def make_filename_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: int, 
                       m_min: float, m_max: float, a_min: float, a_max: float, e_max: float, inc_max: float, 
                       seed: int):
-    """Make file name for serializing datasets for the restricted 2 body problem"""
+    """Make file name for serializing datasets for the general 3 body problem"""
     
     # Create dictionary with attributes
     attributes = {
@@ -377,11 +377,9 @@ def make_filename_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
         'e_max': e_max,
         'inc_max': inc_max,
         'seed': seed,
-        # don't need to include batch_size because it doesn't affect data contents, only tf.data.Dataset
         }
     
     # Create a non-negative hash ID of the attributes
-    # hash_id = hash(frozenset(attributes.items())) & sys.maxsize
     attributes_bytes = bytes(str(attributes), 'utf-8')
     hash_id = zlib.crc32(attributes_bytes)
     
@@ -389,9 +387,9 @@ def make_filename_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
     return f'../data/g3b/{hash_id}.pickle'
 
 # ********************************************************************************************************************* 
-def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: int, m_min: float, m_max: float,
-                      a_min: float, a_max: float, e_max: float, inc_max: float, seed: int, batch_size: int):
-    """Make datasets for the restricted 2 body problem for train, val and test"""
+def load_data_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: int, m_min: float, m_max: float,
+                      a_min: float, a_max: float, e_max: float, inc_max: float, seed: int):
+    """Load data for the general 3 body problem for train, val and test"""
     # Get the filename for these arguments
     filename = make_filename_g3b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq, 
                                  m_min=m_min, m_max=m_max, a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, 
@@ -407,10 +405,30 @@ def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
             inputs_tst = vartbl['inputs_tst']
             outputs_tst = vartbl['outputs_tst']
             print(f'Loaded data from {filename}.')
+            data  = (inputs_trn, outputs_trn, inputs_val, outputs_val, inputs_tst, outputs_tst)
     # Generate the data and save it to the file
     except:
         # Status 
         print(f'Unable to load data from {filename}.')
+        data = None
+
+    # Return the data
+    return data
+    
+# ********************************************************************************************************************* 
+def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: int, m_min: float, m_max: float,
+                      a_min: float, a_max: float, e_max: float, inc_max: float, seed: int, batch_size: int):
+    """Make datasets for the general 3 body problem for train, val and test"""
+
+    # Attempt to load the data
+    data = load_data_g3b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq, 
+                         m_min=m_min, m_max=m_max, a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed)
+
+    # Unpack data if available
+    if data is not None:
+        inputs_trn, outputs_trn, inputs_val, outputs_val, inputs_tst, outputs_tst = data
+    # Otherwise generate the trajectories using make_data_g3b
+    else:
         # Set the number of trajectories for train, validation and test
         n_traj_trn = n_traj
         n_traj_val = int(n_traj * vt_split)
@@ -432,6 +450,10 @@ def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
                                                 m_min=m_min, m_max=m_max,
                                                 a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, seed=seed_tst)
         
+        # Get the filename for these arguments
+        filename = make_filename_g3b(n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq, 
+                                     m_min=m_min, m_max=m_max, a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, 
+                                     seed=seed)
         # Save these to file
         vartbl = dict()
         vartbl['inputs_trn'] = inputs_trn
