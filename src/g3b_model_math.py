@@ -19,6 +19,7 @@ keras = tf.keras
 # Local imports
 from orbital_element import make_model_cfg_to_elt, make_model_elt_to_cfg
 from orbital_element import MeanToTrueAnomaly, G_
+from jacobi import CartesianToJacobi, JacobiToCartesian
 from g3b import make_physics_model_g3b
 
 # ********************************************************************************************************************* 
@@ -26,7 +27,7 @@ from g3b import make_physics_model_g3b
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_position_model_g3b_math(traj_size = 731, batch_size=64):
+def make_position_model_g3b_math(traj_size=1001, batch_size=64):
     """
     Compute orbit positions for the general two body problem from 
     the initial orbital elements with a deterministic mathematical model.
@@ -42,63 +43,63 @@ def make_position_model_g3b_math(traj_size = 731, batch_size=64):
     # Wrap these up into one tuple of inputs for the model
     inputs = (t, q0, v0, m)
 
-    # The gravitational constant; numerical value close to 4 pi^2; see rebound documentation for exact value        
-    G = tf.constant(G_)
+    # Compute the Jacobi coordinates of the initial conditions
+    qj0, vj0, mu0 = CartesianToJacobi()([m, q0, v0])
+#    print(f'm.shape={m.shape}')
+#    print(f'q0.shape={q0.shape}')
+#    print(f'v0.shape={v0.shape}')
+#    print(f'qj0.shape={qj0.shape}')
+#    print(f'vj0.shape={vj0.shape}')
+#    print(f'mu0.shape={mu0.shape}')
 
-    # Unpack masses
-    m0 = m[:, 0]
-    m1 = m[:, 1]
-    m2 = m[:, 2]
-    # Calculate cumulative masses
-    M0 = m0
-    M1 = M0 + m1
-    M2 = M1 + m2
-
-    # Gravitational field strength; shape (batch_size,)
-    r1_mu = G * M1
-    r2_mu = G * M2
+    # Extract Jacobi coordinates of p1 and p2
+    qj0_1 = qj0[:, 1, :]
+    vj0_1 = vj0[:, 1, :]
+    qj0_2 = qj0[:, 2, :]
+    vj0_2 = vj0[:, 2, :]
     
-    # Reshape the gravitational field strength from (batch_size,) to (batch_size, 1,)
-    r1_mu = keras.layers.Reshape((1,))(r1_mu)
-    r2_mu = keras.layers.Reshape((1,))(r2_mu)
+    # Extract gravitational field strength for orbital element conversion of p1 and p2
+    mu0_1 = mu0[:, 1:2]
+    mu0_2 = mu0[:, 2:3]
 
-    # Extract the relative position and relative velocity in Jacobi coordinates of body 1
-    R0_q0 = q0[:, 0, :]
-    R0_v0 = v0[:, 0, :]
-    r1_q0 = q0[:, 1, :] - R0_q0
-    r1_v0 = v0[:, 1, :] - R0_v0
-
-    # Extract the relative position and relative velocity in Jacobi coordinates of body 2
-    R1_q0 = (m0 * q0[:, 0, :] + m1 * q0[:, 1, :]) / M1
-    R1_v0 = (m0 * v0[:, 0, :] + m1 * v0[:, 1, :]) / M1
-    r2_q0 = q0[:, 2, :] - R1_q0
-    r2_v0 = v0[:, 2, :] - R1_v0
-
+    # Manually set the shapes to work around documented bug on slices losing shape info
+    jacobi_shape = (batch_size, space_dims)
+    qj0_1.set_shape(jacobi_shape)
+    qj0_2.set_shape(jacobi_shape)
+    vj0_1.set_shape(jacobi_shape)
+    vj0_1.set_shape(jacobi_shape)
+    mu_shape = (batch_size, 1)
+    mu0_1.set_shape(mu_shape)
+    mu0_2.set_shape(mu_shape)
+    
     # Tuple of inputs for the model converting from configuration to orbital elements
-    r1_cfg = (r1_q0, r1_v0, r1_mu)
-    r2_cfg = (r2_q0, r2_v0, r2_mu)
+    cfg_1 = (qj0_1, vj0_1, mu0_1)
+    cfg_2 = (qj0_2, vj0_2, mu0_2)
 
     # Model mapping cartesian coordinates to orbital elements
     model_c2e = make_model_cfg_to_elt()
 
     # Extract the orbital elements of the initial conditions
-    a1_0, e1_0, inc1_0, Omega1_0, omega1_0, f1_0, M1_0, N1_0 = model_c2e(r1_cfg)
-    a2_0, e2_0, inc2_0, Omega2_0, omega2_0, f2_0, M2_0, N2_0 = model_c2e(r2_cfg)
+    a1_0, e1_0, inc1_0, Omega1_0, omega1_0, f1_0, M1_0, N1_0 = model_c2e(cfg_1)
+    a2_0, e2_0, inc2_0, Omega2_0, omega2_0, f2_0, M2_0, N2_0 = model_c2e(cfg_2)
 
-    # Alias ri_mu for naming consistency
-    mu1_0 = r1_mu
-    mu2_0 = r2_mu
-
+    # Alias mu0_i for naming consistency
+    mu1_0 = mu0_1
+    mu2_0 = mu0_2
+    
     # Reshape t to (batch_size, traj_size, 1)
     t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(t)
-
+    
+    # ******************************************************************
+    # Predict orbital elements for Jacobi coordinates of body 1
+    
     # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size)
-    a1 = keras.layers.RepeatVector(n=traj_size, name='a')(a1_0)
-    e1 = keras.layers.RepeatVector(n=traj_size, name='e')(e1_0)
-    inc1 = keras.layers.RepeatVector(n=traj_size, name='inc')(inc1_0)
-    Omega1 = keras.layers.RepeatVector(n=traj_size, name='Omega')(Omega1_0)
-    omega1 = keras.layers.RepeatVector(n=traj_size, name='omega')(omega1_0)
-    mu1 = keras.layers.RepeatVector(n=traj_size, name='mu')(mu1_0)
+    a1 = keras.layers.RepeatVector(n=traj_size, name='a1')(a1_0)
+    e1 = keras.layers.RepeatVector(n=traj_size, name='e1')(e1_0)
+    inc1 = keras.layers.RepeatVector(n=traj_size, name='inc1')(inc1_0)
+    Omega1 = keras.layers.RepeatVector(n=traj_size, name='Omega1')(Omega1_0)
+    omega1 = keras.layers.RepeatVector(n=traj_size, name='omega1')(omega1_0)
+    mu1 = keras.layers.RepeatVector(n=traj_size, name='mu1')(mu1_0)
 
     # Repeat initial mean anomaly M0 and mean motion N0 to match shape of outputs
     M1_0_vec = keras.layers.RepeatVector(n=traj_size, name='M1_0_vec')(M1_0)
@@ -108,41 +109,66 @@ def make_position_model_g3b_math(traj_size = 731, batch_size=64):
     M1 = keras.layers.add(inputs=[M1_0_vec, N1_t])
 
     # Compute the true anomaly from the mean anomly and eccentricity
-    f1 = MeanToTrueAnomaly(name='mean_to_true_anomaly')([M1, e1])
+    f1 = MeanToTrueAnomaly(name='mean_to_true_anomaly_f1')([M1, e1])
 
     # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
-    r1_elt = (a1, e1, inc1, Omega1, omega1, f1, mu1,)
+    elt1 = (a1, e1, inc1, Omega1, omega1, f1, mu1,)
 
+    # ******************************************************************
+    # Predict orbital elements for Jacobi coordinates of body 2 
+    # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size)
+    a2 = keras.layers.RepeatVector(n=traj_size, name='a2')(a2_0)
+    e2 = keras.layers.RepeatVector(n=traj_size, name='e2')(e2_0)
+    inc2 = keras.layers.RepeatVector(n=traj_size, name='inc2')(inc2_0)
+    Omega2 = keras.layers.RepeatVector(n=traj_size, name='Omega2')(Omega2_0)
+    omega2 = keras.layers.RepeatVector(n=traj_size, name='omega2')(omega2_0)
+    mu2 = keras.layers.RepeatVector(n=traj_size, name='mu2')(mu2_0)
+
+    # Repeat initial mean anomaly M0 and mean motion N0 to match shape of outputs
+    M2_0_vec = keras.layers.RepeatVector(n=traj_size, name='M2_0_vec')(M2_0)
+    N2_0_vec = keras.layers.RepeatVector(n=traj_size, name='N2_0_vec')(N2_0)
+    # Compute the mean anomaly M(t) as a function of time
+    N2_t = keras.layers.multiply(inputs=[N2_0_vec, t_vec])
+    M2 = keras.layers.add(inputs=[M2_0_vec, N2_t])
+
+    # Compute the true anomaly from the mean anomly and eccentricity
+    f2 = MeanToTrueAnomaly(name='mean_to_true_anomaly_f2')([M2, e2])
+
+    # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
+    elt2 = (a2, e2, inc2, Omega2, omega2, f2, mu2,)
+
+    # ******************************************************************
+    # Convert orbital elements to cartesian Jacobi coordinates 
+    
     # Model mapping orbital elements to cartesian coordinates
     model_e2c = make_model_elt_to_cfg()
 
+    # The position of Jacobi coordinate 0 over time comes from the average velocity
+    # We always use center of momentum coordinates, so this is zero
+    qjt_0 = keras.backend.zeros(shape=[batch_size, traj_size, space_dims])
+    vjt_0 = keras.backend.zeros(shape=[batch_size, traj_size, space_dims])
+    
     # Convert from orbital elements to cartesian coordinates
-    # This is the position and velocity of the Jacobi coordinate r2 = q2 - q1
-    r1_q, r1_v = model_e2c(r1_elt)
-
-#    # Reshape coefficients for q1 and q2 from r2
-#    coeff_shape = (1,1,)
-#    coeff_shape_layer = keras.layers.Reshape(target_shape=coeff_shape, name='coeff_shape')
-#    coeff1 = coeff_shape_layer(-m2 / M2)
-#    coeff2 = coeff_shape_layer( m1 / M2)
-
-    # Compute the position and velocity of the individual particles from the Jacobi coordinates
-    q0 = 0
-    q1 = 0
-    q2 = 0
-    v0 = 0
-    v1 = 0
-    v2 = 0
-
-    # Assemble the position and velocity
+    # This is the position and velocity of the Jacobi coordinate 
+    qjt_1, vjt_1 = model_e2c(elt1)
+    qjt_2, vjt_2 = model_e2c(elt2)
+    
+    # Reshape the Jacobi coordinates to include an axis for body number
     particle_traj_shape = (-1, 1, 3)
     particle_traj_shape_layer = keras.layers.Reshape(target_shape=particle_traj_shape, name='particle_traj_shape')
-    q1 = particle_traj_shape_layer(q1)
-    q2 = particle_traj_shape_layer(q2)
-    v1 = particle_traj_shape_layer(v1)
-    v2 = particle_traj_shape_layer(v2)
-    q = keras.layers.concatenate(inputs=[q1, q2], axis=-2)
-    v = keras.layers.concatenate(inputs=[v1, v2], axis=-2)
+    qjt_0 = particle_traj_shape_layer(qjt_0)
+    qjt_1 = particle_traj_shape_layer(qjt_1)
+    qjt_2 = particle_traj_shape_layer(qjt_2)
+    vjt_0 = particle_traj_shape_layer(vjt_0)
+    vjt_1 = particle_traj_shape_layer(vjt_1)
+    vjt_2 = particle_traj_shape_layer(vjt_2)
+
+    # Assemble the Jacobi coordinates over time
+    qj = keras.layers.concatenate(inputs=[qjt_0, qjt_1, qjt_2], axis=-2, name='qj')
+    vj = keras.layers.concatenate(inputs=[vjt_0, vjt_1, vjt_2], axis=-2, name='vj')
+
+    # Convert the Jacobi coordinates over time to Cartesian coordinates
+    q, v = JacobiToCartesian()([m, qj, vj])
 
     # Wrap up the outputs
     outputs = (q, v)
@@ -152,7 +178,7 @@ def make_position_model_g3b_math(traj_size = 731, batch_size=64):
     return model
 
 # ********************************************************************************************************************* 
-def make_model_g3b_math(traj_size: int = 731):
+def make_model_g3b_math(traj_size: int = 1001):
     """Create a math model for the restricted three body problem; wrapper for entire work flow"""
     # Build the position model
     position_model = make_position_model_g3b_math(traj_size=traj_size)

@@ -214,26 +214,46 @@ class JacobiToCartesian(keras.layers.Layer):
         m, qj, vj = inputs
 
         # Array shapes
-        batch_size, num_body, space_dims = qj.shape
-        A_shape = (batch_size, num_body, num_body)
+        tensor_rank = len(qj.shape)
+        if tensor_rank == 3:
+            batch_size, num_body, space_dims = qj.shape
+        elif tensor_rank == 4:
+            batch_size, traj_size, num_body, space_dims = qj.shape
+        else:
+            raise ValueError('tensor_rank of qj must be 3 or 4.')
         
         # Cumulative sum of mass
         M = tf.math.cumsum(m, axis=-1)
         M_tot = keras.layers.Reshape(target_shape=(1,))(M[:, num_body-1])
         
         # Assemble num_body x num_body square matrix converting from q to r
-        # Do the assembly as a numpy matrix
-        A_ = np.zeros(A_shape, dtype=np.float32)
-        A_[:, 0, :] = m / M_tot
+        A_rows = []
+        # The first row is for the center of mass; A[0, j] = m[j] / M_tot
+        A_rows.append(m/M_tot)
+        # The next N-1 rows are for the N-1 Jacobi coordinates
         for i in range(1, num_body):
-            A_[:, i, 0:i] = -m[:, 0:i] / M[:, i-1:i]
-            A_[:, i, i] = 1.0
+            # The first block of row i consists of i negative weights A[i, j] = -m[j] / M[i-1]
+            # These subtract out the center of mass of the first (i-1) bodies
+            block_1 = -m[:, 0:i] / M[:, i-1:i]
+            # The second block is a 1 on the main diagonal, A[i, i] = 1.0
+            block_2 = tf.ones(shape=(batch_size, 1))
+            # The third block is zeroes; the A matrix is lower triangular below the first row
+            block_3 = tf.zeros(shape=(batch_size, num_body-i-1))
+            # Assemble row i
+            current_row = keras.layers.concatenate([block_1, block_2, block_3], axis=-1, name=f'A_row_{i}')
+            A_rows.append(current_row)
+        # Combine the rows into a matrix; this will have shape (batch_size, num_body^2)
+        A = keras.layers.concatenate(A_rows, axis=-1, name='A_flat')
 
-        # Now convert A to a tensor
-        A = tf.Variable(A_)
+        # Reshape A to either (batch_size, num_body, num_body) or (batch_size, 1, num_body, num_body)
+        # Number of paddings (1,) entries is tensor_rank-3
+        target_shape = (tensor_rank-3)*(1,) + (num_body, num_body)
+        A = keras.layers.Reshape(target_shape=target_shape, name='A')(A)
+
         # Compute the matrix inverse of A
         B = tf.linalg.inv(A)
-        # Do the matrix multiplication in Tensorflow
+        
+        # Do the matrix multiplication
         q = tf.linalg.matmul(B, qj)
         v = tf.linalg.matmul(B, vj)
 
