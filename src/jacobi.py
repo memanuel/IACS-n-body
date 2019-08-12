@@ -177,12 +177,13 @@ class CartesianToJacobi(keras.layers.Layer):
             # These subtract out the center of mass of the first (i-1) bodies
             block_1 = -m[:, 0:i] / M[:, i-1:i]
             # The second block is a 1 on the main diagonal, A[i, i] = 1.0
-            block_2 = keras.backend.ones(shape=(batch_size, 1))
+            block_2 = tf.ones(shape=(batch_size, 1))
             # The third block is zeroes; the A matrix is lower triangular below the first row
-            block_3 = keras.backend.zeros(shape=(batch_size, num_body-i-1))
+            block_3 = tf.zeros(shape=(batch_size, num_body-i-1))
             # Assemble row i
-            row_inputs = [block_1, block_2, block_3] if i < num_body-1 else [block_1, block_2]
-            current_row = keras.layers.concatenate(row_inputs, axis=-1, name=f'A_row_{i}')
+            # row_inputs = [block_1, block_2, block_3] if i < num_body-1 else [block_1, block_2]
+            # row_inputs = [block_1, block_2, block_3]
+            current_row = keras.layers.concatenate([block_1, block_2, block_3], axis=-1, name=f'A_row_{i}')
             A_rows.append(current_row)
         # Combine the rows into a matrix; this will have shape (batch_size, num_body^2)
         A = keras.layers.concatenate(A_rows, axis=-1, name='A_flat')
