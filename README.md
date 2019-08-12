@@ -1,1 +1,1 @@
-# IACS Masters Thesis
+# N-Body Gravitational Problem with Neural Networks
