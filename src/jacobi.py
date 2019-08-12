@@ -8,12 +8,12 @@ Thu Aug  8 14:51:41 2019
 
 # Library imports
 import numpy as np
-import rebound
 import tensorflow as tf
 from tensorflow import keras
 
 # Local imports
-from orbital_element import make_data_orb_elt
+from tf_utils import Identity
+from orbital_element import make_data_orb_elt, G_
 
 # ********************************************************************************************************************* 
 # Data sets for testing Jacobi coordinate conversions.
@@ -75,12 +75,16 @@ def make_data_jacobi(N, num_body):
     qj = np.matmul(A, q)
     vj = np.matmul(A, v)
     
+    # Gravitational coefficient mu
+    mu = G_ * M
+    
     data = {
         'm': m,
         'q': q,
         'v': v,
         'qj': qj,
         'vj': vj,
+        'mu': mu
         }
     
     return data
@@ -97,10 +101,11 @@ def make_dataset_cart_to_jac(N, num_body, batch_size=64):
     v = data['v']
     qj = data['qj']
     vj = data['vj']
+    mu = data['mu']
     
     # Inputs and outputs
     inputs = {'m': m, 'q': q, 'v': v}
-    outputs = {'qj': qj, 'vj': vj}
+    outputs = {'qj': qj, 'vj': vj, 'mu': mu}
     
      # Wrap these into a Dataset object
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))
@@ -157,30 +162,46 @@ class CartesianToJacobi(keras.layers.Layer):
 
         # Array shapes
         batch_size, num_body, space_dims = q.shape
-        A_shape = (batch_size, num_body, num_body)
         
         # Cumulative sum of mass
         M = tf.math.cumsum(m, axis=-1)
         M_tot = keras.layers.Reshape(target_shape=(1,))(M[:, num_body-1])
         
         # Assemble num_body x num_body square matrix converting from q to r
-        # Do the assembly as a numpy matrix
-        A_ = np.zeros(A_shape, dtype=np.float32)
-        A_[:, 0, :] = m / M_tot
+        A_rows = []
+        # The first row is for the center of mass; A[0, j] = m[j] / M_tot
+        A_rows.append(m/M_tot)
+        # The next N-1 rows are for the N-1 Jacobi coordinates
         for i in range(1, num_body):
-            A_[:, i, 0:i] = -m[:, 0:i] / M[:, i-1:i]
-            A_[:, i, i] = 1.0
+            # The first block of row i consists of i negative weights A[i, j] = -m[j] / M[i-1]
+            # These subtract out the center of mass of the first (i-1) bodies
+            block_1 = -m[:, 0:i] / M[:, i-1:i]
+            # The second block is a 1 on the main diagonal, A[i, i] = 1.0
+            block_2 = keras.backend.ones(shape=(batch_size, 1))
+            # The third block is zeroes; the A matrix is lower triangular below the first row
+            block_3 = keras.backend.zeros(shape=(batch_size, num_body-i-1))
+            # Assemble row i
+            row_inputs = [block_1, block_2, block_3] if i < num_body-1 else [block_1, block_2]
+            current_row = keras.layers.concatenate(row_inputs, axis=-1, name=f'A_row_{i}')
+            A_rows.append(current_row)
+        # Combine the rows into a matrix; this will have shape (batch_size, num_body^2)
+        A = keras.layers.concatenate(A_rows, axis=-1, name='A_flat')
+        # Reshape A to (batch_size, )
+        A = keras.layers.Reshape(target_shape=(num_body,num_body,), name='A')(A)
 
-        # Now convert A to a tensor
-        A = tf.Variable(A_)
-        # Do the matrix multiplication in Tensorflow
+        # Do the matrix multiplication
         qj = tf.linalg.matmul(A, q)
         vj = tf.linalg.matmul(A, v)
 
-        return qj, vj
+        # Compute the gravitational field strength mu for each Jacobi coordinate
+        G = tf.constant(G_)
+        mu = G * M
+
+        return qj, vj, mu
 
     def get_config(self):
         return dict()
+    
 # ********************************************************************************************************************* 
 class JacobiToCartesian(keras.layers.Layer):
     def call(self, inputs):
@@ -237,10 +258,15 @@ def make_model_cart_to_jac(num_body: int, batch_size: int = 64):
     inputs = (m, q, v)
 
     # Calculations are in one layer that does all the work...
-    qj, vj = CartesianToJacobi(name='c2j')(inputs)
+    qj, vj, mu = CartesianToJacobi(name='c2j')(inputs)
+    
+    # Name outputs
+    qj = Identity(name='qj')(qj)
+    vj = Identity(name='vj')(vj)
+    mu = Identity(name='mu')(mu)
     
     # Wrap up the outputs
-    outputs = (qj, vj)
+    outputs = (qj, vj, mu)
 
     # Create a model from inputs to outputs
     model = keras.Model(inputs=inputs, outputs=outputs, name='cartesian_to_jacobi')
@@ -266,7 +292,7 @@ def make_model_jac_to_cart(num_body: int, batch_size: int = 64):
     qj, vj = JacobiToCartesian(name='j2c')(inputs)
     
     # Wrap up the outputs
-    outputs = (q, v)
+    outputs = (qj, vj)
 
     # Create a model from inputs to outputs
     model = keras.Model(inputs=inputs, outputs=outputs, name='jacobi_to_cartesian')

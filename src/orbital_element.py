@@ -348,19 +348,19 @@ class MeanToTrueAnomaly(keras.layers.Layer):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_model_elt_to_cfg():
+def make_model_elt_to_cfg(batch_size: int=64):
     """Model that transforms from orbital elements to cartesian coordinates"""
     # The shape shared by all the inputs
     input_shape = (1,)
 
     # Create input layers    
-    a = keras.Input(shape=input_shape, name='a')
-    e = keras.Input(shape=input_shape, name='e')
-    inc = keras.Input(shape=input_shape, name='inc')
-    Omega = keras.Input(shape=input_shape, name='Omega')
-    omega = keras.Input(shape=input_shape, name='omega')
-    f = keras.Input(shape=input_shape, name='f')
-    mu = keras.Input(shape=input_shape, name='mu')
+    a = keras.Input(shape=input_shape, batch_size=batch_size, name='a')
+    e = keras.Input(shape=input_shape, batch_size=batch_size, name='e')
+    inc = keras.Input(shape=input_shape, batch_size=batch_size, name='inc')
+    Omega = keras.Input(shape=input_shape, batch_size=batch_size, name='Omega')
+    omega = keras.Input(shape=input_shape, batch_size=batch_size, name='omega')
+    f = keras.Input(shape=input_shape, batch_size=batch_size, name='f')
+    mu = keras.Input(shape=input_shape, batch_size=batch_size, name='mu')
     
     # Wrap these up into one tuple of inputs
     inputs = (a, e, inc, Omega, omega, f, mu,)
@@ -380,12 +380,12 @@ def make_model_elt_to_cfg():
     return model
 
 # ********************************************************************************************************************* 
-def make_model_cfg_to_elt():
+def make_model_cfg_to_elt(batch_size: int=64):
     """Model that transforms from orbital elements to cartesian coordinates"""
     # Create input layers    
-    q = keras.Input(shape=(3,), name='q')
-    v = keras.Input(shape=(3,), name='v')
-    mu = keras.Input(shape=(1,), name='mu')
+    q = keras.Input(shape=(3,), batch_size=batch_size, name='q')
+    v = keras.Input(shape=(3,), batch_size=batch_size, name='v')
+    mu = keras.Input(shape=(1,), batch_size=batch_size, name='mu')
     
     # Wrap these up into one tuple of inputs for the model
     inputs_model = (q, v, mu,)
