@@ -294,15 +294,15 @@ class Motion_G3B(keras.Model):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_physics_model_g3b(position_model: keras.Model, traj_size: int):
+def make_physics_model_g3b(position_model: keras.Model, traj_size: int, batch_size: int=64):
     """Create a physics model for the general two body problem from a position model"""
     # Create input layers
     num_particles = 3
     space_dims = 3
-    t = keras.Input(shape=(traj_size,), name='t')
-    q0 = keras.Input(shape=(num_particles, space_dims,), name='q0')
-    v0 = keras.Input(shape=(num_particles, space_dims,), name='v0')
-    m = keras.Input(shape=(num_particles,), name='m')
+    t = keras.Input(shape=(traj_size,), batch_size=batch_size, name='t')
+    q0 = keras.Input(shape=(num_particles, space_dims,), batch_size=batch_size, name='q0')
+    v0 = keras.Input(shape=(num_particles, space_dims,), batch_size=batch_size, name='v0')
+    m = keras.Input(shape=(num_particles,), batch_size=batch_size, name='m')
     
     # Wrap these up into one tuple of inputs for the model
     inputs = (t, q0, v0, m)

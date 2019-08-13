@@ -45,12 +45,6 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
 
     # Compute the Jacobi coordinates of the initial conditions
     qj0, vj0, mu0 = CartesianToJacobi()([m, q0, v0])
-#    print(f'm.shape={m.shape}')
-#    print(f'q0.shape={q0.shape}')
-#    print(f'v0.shape={v0.shape}')
-#    print(f'qj0.shape={qj0.shape}')
-#    print(f'vj0.shape={vj0.shape}')
-#    print(f'mu0.shape={mu0.shape}')
 
     # Extract Jacobi coordinates of p1 and p2
     qj0_1 = qj0[:, 1, :]

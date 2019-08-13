@@ -474,9 +474,10 @@ def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
     buffer_size = batch_size * 256
 
     # Shuffle and batch data sets
-    ds_trn = ds_trn.shuffle(buffer_size=buffer_size).batch(batch_size)
-    ds_val = ds_val.shuffle(buffer_size=buffer_size).batch(batch_size)
-    ds_tst = ds_tst.shuffle(buffer_size=buffer_size).batch(batch_size)
+    drop_remainder = True
+    ds_trn = ds_trn.shuffle(buffer_size=buffer_size).batch(batch_size, drop_remainder=drop_remainder)
+    ds_val = ds_val.shuffle(buffer_size=buffer_size).batch(batch_size, drop_remainder=drop_remainder)
+    ds_tst = ds_tst.shuffle(buffer_size=buffer_size).batch(batch_size, drop_remainder=drop_remainder)
     
     return ds_trn, ds_val, ds_tst
 
