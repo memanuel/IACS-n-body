@@ -17,6 +17,7 @@ import tensorflow as tf
 keras = tf.keras
 
 # Local imports
+from tf_utils import Identity
 from orbital_element import make_model_cfg_to_elt, make_model_elt_to_cfg
 from orbital_element import MeanToTrueAnomaly, G_
 from jacobi import CartesianToJacobi, JacobiToCartesian
@@ -163,6 +164,10 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
 
     # Convert the Jacobi coordinates over time to Cartesian coordinates
     q, v = JacobiToCartesian()([m, qj, vj])
+    
+    # Name the outputs
+    q = Identity(name='q')(q)
+    v = Identity(name='v')(v)    
 
     # Wrap up the outputs
     outputs = (q, v)

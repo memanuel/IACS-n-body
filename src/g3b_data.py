@@ -68,9 +68,12 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     
     # Test if a1 and a2 are out of order; if so, flip them so a1 <= a2
     if a1 > a2:
-        elts1 = (a1, e1, inc1, Omega1, omega1, f1)
-        elts2 = (a2, e2, inc2, Omega2, omega2, f2)
-        (elts1, elts2) = (elts2, elts1)
+        # Copy original elements into tuples
+        elts1 = (a1, e1, inc1, Omega1, omega1, f1, m1)
+        elts2 = (a2, e2, inc2, Omega2, omega2, f2, m2)
+        # Swap all 6 elements plus mass
+        (a1, e1, inc1, Omega1, omega1, f1, m1) = elts2
+        (a2, e2, inc2, Omega2, omega2, f2, m2) = elts1
 
     # Add primary with specified mass at origin with 0 velocity
     sim.add(m=m0)
@@ -272,6 +275,7 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
     init_shape = (n_traj, num_particles, space_dims)
     mass_shape = (n_traj, num_particles)
     traj_shape = (n_traj, traj_size, num_particles, space_dims)
+    elt_shape = (n_traj, traj_size, num_particles-1)
     mom_shape = (n_traj, traj_size, space_dims)
     
     # Set random seed for reproducible results
@@ -285,17 +289,17 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
     # Draw m3 from a log uniform distribution
     log_m3 = np.random.uniform(low=np.log(m_min), high=np.log(m_max), size=n_traj).astype(np.float32)
     m3 = np.exp(log_m3)
-    # Assemble into m
-    orb_m = np.stack([m1, m2, m3], axis=1)
+    # Assemble into m0
+    m0 = np.stack([m1, m2, m3], axis=1)
 
     # Initialize orbital element by sampling according to the inputs
     elt_size = (n_traj, 2)
-    orb_a = np.random.uniform(low=a_min, high=a_max, size=elt_size).astype(np.float32)
-    orb_e = np.random.uniform(low=0.0, high=e_max, size=elt_size).astype(np.float32)
-    orb_inc = np.random.uniform(low=0.0, high=inc_max, size=elt_size).astype(np.float32)
-    orb_Omega = np.random.uniform(low=-np.pi, high=np.pi, size=elt_size).astype(np.float32)
-    orb_omega = np.random.uniform(low=-np.pi, high=np.pi, size=elt_size).astype(np.float32)
-    orb_f = np.random.uniform(low=-np.pi, high=np.pi, size=elt_size).astype(np.float32)
+    orb_a0 = np.random.uniform(low=a_min, high=a_max, size=elt_size).astype(np.float32)
+    orb_e0 = np.random.uniform(low=0.0, high=e_max, size=elt_size).astype(np.float32)
+    orb_inc0 = np.random.uniform(low=0.0, high=inc_max, size=elt_size).astype(np.float32)
+    orb_Omega0 = np.random.uniform(low=-np.pi, high=np.pi, size=elt_size).astype(np.float32)
+    orb_omega0 = np.random.uniform(low=-np.pi, high=np.pi, size=elt_size).astype(np.float32)
+    orb_f0 = np.random.uniform(low=-np.pi, high=np.pi, size=elt_size).astype(np.float32)
 
     # Initialize arrays for the data
     # Inputs
@@ -303,10 +307,18 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
     q0 = np.zeros(init_shape, dtype=np.float32)
     v0 = np.zeros(init_shape, dtype=np.float32)
     m = np.zeros(mass_shape, dtype=np.float32)
-    # Outputs
+    # Outputs - trajectory
     q = np.zeros(traj_shape, dtype=np.float32)
     v = np.zeros(traj_shape, dtype=np.float32)
-    acc = np.zeros(traj_shape, dtype=np.float32)
+    a = np.zeros(traj_shape, dtype=np.float32)
+    # Outputs - orbital elements
+    orb_a = np.zeros(elt_shape, dtype=np.float32)
+    orb_e = np.zeros(elt_shape, dtype=np.float32)
+    orb_inc = np.zeros(elt_shape, dtype=np.float32)
+    orb_Omega = np.zeros(elt_shape, dtype=np.float32)
+    orb_omega = np.zeros(elt_shape, dtype=np.float32)
+    orb_f = np.zeros(elt_shape, dtype=np.float32)
+    # Outputs- physics
     T = np.zeros(time_shape, dtype=np.float32)
     U = np.zeros(time_shape, dtype=np.float32)
     H = np.zeros(time_shape, dtype=np.float32)
@@ -316,18 +328,28 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
     # Sample the trajectories
     for i in tqdm(range(n_traj)):
         # Generate one trajectory
-        inputs, outputs = make_traj_g3b(m=orb_m[i], a=orb_a[i], e=orb_e[i], inc=orb_inc[i], 
-                                        Omega=orb_Omega[i], omega=orb_omega[i], f=orb_f[i], 
+        inputs, outputs = make_traj_g3b(m=m0[i], a=orb_a0[i], e=orb_e0[i], inc=orb_inc0[i], 
+                                        Omega=orb_Omega0[i], omega=orb_omega0[i], f=orb_f0[i], 
                                         n_years=n_years, sample_freq=sample_freq, integrator=integrator)
         
         # Copy results into main arrays
+        # Inputs
         t[i] = inputs['t']
         q0[i] = inputs['q0']
         v0[i] = inputs['v0']
         m[i] = inputs['m']
+        # Outputs - trajectory
         q[i] = outputs['q']
         v[i] = outputs['v']
-        acc[i] = outputs['a']
+        a[i] = outputs['a']
+        # Outputs - orbital elements
+        orb_a[i] = outputs['orb_a']
+        orb_e[i] = outputs['orb_e']
+        orb_inc[i] = outputs['orb_inc']
+        orb_Omega[i] = outputs['orb_Omega']
+        orb_omega[i] = outputs['orb_omega']
+        orb_f[i] = outputs['orb_f']
+        # Outputs - physics
         T[i] = outputs['T']
         U[i] = outputs['U']
         H[i] = outputs['H']
@@ -344,11 +366,21 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
 
     # Assemble the output dict
     outputs = {
+        # Trajectory
         'q': q,
         'v': v,
-        'a': acc,
+        'a': a,
+        # Orbital Elements
+        'orb_a': orb_a,
+        'orb_e': orb_e,
+        'orb_inc': orb_f,
+        'orb_Omega': orb_Omega,
+        'orb_omega': orb_omega,
+        'orb_f': orb_f,
+        # Recovered initial configuration        
         'q0_rec': q0,
         'v0_rec': v0,
+        # Physics quantities
         'T': T,
         'U': U,
         'H': H,
@@ -530,18 +562,18 @@ def main():
     batch_size = 64
     seed = 42
     
-    n_traj_small = 100
-    n_traj_medium = 10000
+    n_traj_tiny = 100
+    n_traj_small = 10000
     # n_traj_large = 50000
     
-    # Create DataSet objects for toy size problem
-    print(f'Generating small data set for solar-type systems ({n_traj_small} orbits)...')
-    make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq,
+    # Create a tiny data set with 10,000 solar type orbits
+    print(f'Generating tiny data set for solar-type systems ({n_traj_tiny} orbits)...')
+    make_datasets_solar(n_traj=n_traj_tiny, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq,
                         batch_size=batch_size, seed=seed)
 
-    # Create a medium data set with 10,000 solar type orbits
-    print(f'Generating medium data set for solar-type systems ({n_traj_medium} orbits) ...')
-    make_datasets_solar(n_traj=n_traj_medium, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+    # Create a small data set with 10,000 solar type orbits
+    print(f'Generating small data set for solar-type systems ({n_traj_small} orbits) ...')
+    make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
         
     # Create a large data set with 50,000 binary type orbits
     # print(f'Generating large data set for binary-type systems ({n_traj_large} orbits) ...')
