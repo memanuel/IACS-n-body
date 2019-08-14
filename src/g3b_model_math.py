@@ -49,8 +49,8 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
 
     # Extract Jacobi coordinates of p1 and p2
     qj0_1 = qj0[:, 1, :]
-    vj0_1 = vj0[:, 1, :]
     qj0_2 = qj0[:, 2, :]
+    vj0_1 = vj0[:, 1, :]
     vj0_2 = vj0[:, 2, :]
     
     # Extract gravitational field strength for orbital element conversion of p1 and p2

@@ -7,6 +7,7 @@ Thu Aug  8 14:51:41 2019
 """
 
 # Library imports
+import rebound
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -20,7 +21,7 @@ from orbital_element import make_data_orb_elt, G_
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_data_jacobi(N, num_body):
+def make_data_jacobi_old(N, num_body):
     """Data set mapping between Jacobi and Cartesian coordinates"""
     # Array shapes
     space_dims = 3
@@ -78,6 +79,153 @@ def make_data_jacobi(N, num_body):
     # Gravitational coefficient mu
     mu = G_ * M
     
+    data = {
+        'm': m,
+        'q': q,
+        'v': v,
+        'qj': qj,
+        'vj': vj,
+        'mu': mu
+        }
+    
+    return data
+
+# ********************************************************************************************************************* 
+def make_data_jacobi_one(m, a, e, inc, Omega, omega, f):
+    """
+    Make one data point mapping between Cartesian and Jacobi coordinates
+    """
+    # The number of bodies
+    num_body = m.shape[0]
+
+    # Array shapes
+    space_dims = 3
+    pos_shape = (num_body, space_dims)
+    mu_shape = (num_body,)
+    
+    # Initialize Cartesian position and velocity to zero
+    q = np.zeros(pos_shape, dtype=np.float32)
+    v = np.zeros(pos_shape, dtype=np.float32)
+    # Initialize Jacobi position and velocity to zero
+    qj = np.zeros(pos_shape, dtype=np.float32)
+    vj = np.zeros(pos_shape, dtype=np.float32)
+    # Initialize gravitational field strength 
+    mu = np.zeros(mu_shape, dtype=np.float32)
+    
+    # Convert m to single
+    m = m.astype(np.float32)
+    
+    # Create a simulation
+    sim = rebound.Simulation()
+    
+    # Set units
+    sim.units = ('yr', 'AU', 'Msun')
+    
+    # Add primary with 1 solar mass at origin with 0 velocity
+    sim.add(m=m[0])
+    p0 = sim.particles[0]
+    
+    # Body with the current center of mass
+    com = p0
+    mu[0] = sim.G * com.m
+    
+    # Add bodies 2 through num_body
+    for i in range(num_body-1):
+        # Add body i+1 with Jacobi coordinates indexed by i and mass i+1
+        sim.add(m=m[i+1], a=a[i], e=e[i], inc=inc[i], Omega=Omega[i], omega=omega[i], f=f[i])
+        # The body that was just added
+        p = sim.particles[i+1]
+        # Jacobi coordinates of this body are its coordinates less the cumulative center of mass
+        qj[i+1, :] = [p.x -  com.x,  p.y - com.y,   p.z  - com.z]    
+        vj[i+1, :] = [p.vx - com.vx, p.vy - com.vy, p.vz - com.vz]    
+        # Update the center of mass
+        com = com + p
+        # Gravitational field strength
+        mu[i+1] = sim.G * com.m
+    
+    # Move to center of mass
+    sim.move_to_com()
+    
+    # The first Jacobi coordinate in row 0 is the position and velocity of the COM
+    # This has been set to zero above, so don't need to change it from initialization.
+    
+    # Save the Cartesian coordinates in the COM frame
+    for i in range(num_body):
+        pi = sim.particles[i]
+        q[i, :] = [pi.x, pi.y, pi.z]
+        v[i, :] = [pi.vx, pi.vy, pi.vz]
+        
+    # Create data dictionary
+    data = {
+        'm': m,
+        'q': q,
+        'v': v,
+        'qj': qj,
+        'vj': vj,
+        'mu': mu
+    }
+
+    return data
+
+# ********************************************************************************************************************* 
+def make_data_jacobi(N, num_body):
+    """Data set mapping between Jacobi and Cartesian coordinates"""
+    # Array shapes
+    space_dims = 3
+    mass_shape = (N, num_body)
+    pos_shape = (N, num_body, space_dims)
+    elt_shape = (N, num_body-1)
+    
+    # Set random seed for reproducible results
+    np.random.seed(seed=42)
+
+    # Initialize masses
+    np.random
+    m_min = 1.0E-4
+    m_max = 1.0E-2
+    log_m = np.random.uniform(low=np.log(m_min), high=np.log(m_max), size=mass_shape).astype(np.float32)
+    log_m[:, 0] = 0.0
+    m_ = np.exp(log_m)
+    
+    # Initialize Cartesian position and velocity to zero   
+    q = np.zeros(pos_shape, dtype=np.float32)
+    v = np.zeros(pos_shape, dtype=np.float32)
+    # Initialize Jacobi position and velocity to zero
+    qj = np.zeros(pos_shape, dtype=np.float32)
+    vj = np.zeros(pos_shape, dtype=np.float32)
+    # Initialize mass and mu to zero
+    m = np.zeros(mass_shape, dtype=np.float32)
+    mu = np.zeros(mass_shape, dtype=np.float32)
+
+    # Use make_data_orb_elt to populate q for each particle
+    a_min = 0.5
+    a_max = 32.0
+    e_max = 0.20
+    inc_max = 0.20
+    seed = 42
+
+    # Set random seed
+    np.random.seed(seed=seed)
+
+    # Initialize orbital element by sampling according to the inputs    
+    a = np.random.uniform(low=a_min, high=a_max, size=elt_shape).astype(np.float32)
+    e = np.random.uniform(low=0.0, high=e_max, size=elt_shape).astype(np.float32)
+    inc = np.random.uniform(low=0.0, high=inc_max, size=elt_shape).astype(np.float32)
+    Omega = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
+    omega = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
+    f = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
+    
+    # Generate mappings one draw at a time
+    for i in range(N):
+        data_i = make_data_jacobi_one(m=m_[i], a=a[i], e=e[i], inc=inc[i], 
+                                      Omega=Omega[i], omega=omega[i], f=f[i])
+        m[i] = data_i['m']
+        q[i] = data_i['q']
+        v[i] = data_i['v']
+        qj[i] = data_i['qj']
+        vj[i] = data_i['vj']
+        mu[i] = data_i['mu']
+
     data = {
         'm': m,
         'q': q,

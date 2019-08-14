@@ -339,7 +339,7 @@ class ConfigToOrbitalElement(keras.layers.Layer):
 # ********************************************************************************************************************* 
 class MeanToEccentricAnomaly(keras.layers.Layer):
     """
-    Convert the mean anomaly M to the eccentric anomly E given the eccentricity E.
+    Convert the mean anomaly M to the eccentric anomaly E given the eccentricity e.
     """
     def call(self, inputs):
         # Unpack inputs
@@ -367,7 +367,7 @@ class MeanToEccentricAnomaly(keras.layers.Layer):
 # ********************************************************************************************************************* 
 class MeanToTrueAnomaly(keras.layers.Layer):
     """
-    Convert the mean anomaly M to the true anomly f given the eccentricity E.
+    Convert the mean anomaly M to the true anomaly f given the eccentricity e.
     """
     def call(self, inputs):
         # Unpack inputs
@@ -378,6 +378,23 @@ class MeanToTrueAnomaly(keras.layers.Layer):
         
         # Compute the true anomaly from E
         return 2.0*tf.math.atan(tf.sqrt((1.0+e)/(1.0-e))*tf.math.tan(0.5*E))
+        
+    def get_config(self):
+        return dict()
+
+# ********************************************************************************************************************* 
+class EccentricToMeanAnomaly(keras.layers.Layer):
+    """
+    Convert the eccentric anomaly E to the true anomaly M given the eccentricity e.
+    """
+    def call(self, inputs):
+        # Unpack inputs
+        E, e = inputs
+        
+        # Compute the mean anomaly from E using Kepler's Equation
+        # M = E - e sin(E)
+        M = E - e * tf.sin(E)
+        return M
         
     def get_config(self):
         return dict()

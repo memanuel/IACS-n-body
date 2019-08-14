@@ -125,7 +125,7 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     k_12 = sim.G * m1 * m2
 
     # Set the times for snapshots
-    ts = np.linspace(0.0, n_years, N)
+    ts = np.linspace(0.0, n_years, N, dtype=np.float32)
 
     # The particles for the 3 bodies
     p0 = sim.particles[0]
@@ -241,6 +241,24 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     # Return the dicts
     return (inputs, outputs)
 
+
+# ********************************************************************************************************************* 
+def repeat_array(x, batch_size: int):
+    """Repeat an array into a batch of copies"""
+    return np.broadcast_to(x, (batch_size,) + x.shape)
+
+# ********************************************************************************************************************* 
+def traj_to_batch(inputs, outputs, batch_size: int):
+    """Repeat arrays in one example trajectory into a full batch of identical trajectories."""
+    batch_in = dict()
+    for field in inputs:
+        batch_in[field] = repeat_array(inputs[field], batch_size)
+        
+    batch_out = dict()
+    for field in outputs:
+        batch_out[field] = repeat_array(outputs[field], batch_size)
+        
+    return batch_in, batch_out
 
 # ********************************************************************************************************************* 
 def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
