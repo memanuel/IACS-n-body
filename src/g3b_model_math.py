@@ -177,11 +177,11 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
     return model
 
 # ********************************************************************************************************************* 
-def make_model_g3b_math(traj_size: int = 1001):
+def make_model_g3b_math(traj_size: int = 1001, batch_size:int = 64):
     """Create a math model for the restricted three body problem; wrapper for entire work flow"""
     # Build the position model
-    position_model = make_position_model_g3b_math(traj_size=traj_size)
+    position_model = make_position_model_g3b_math(traj_size=traj_size, batch_size=batch_size)
     
     # Build the model with this position layer and the input trajectory size
-    return make_physics_model_g3b(position_model=position_model, traj_size=traj_size)
+    return make_physics_model_g3b(position_model=position_model, traj_size=traj_size, batch_size=batch_size)
 

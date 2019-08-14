@@ -217,62 +217,92 @@ class ConfigToOrbitalElement(keras.layers.Layer):
         """Compute orbital elements (a, e, inc, Omega, omega, f) from configuration (qx, qy, qz, vx, vy, vz, mu)"""
         # Unpack inputs
         qx, qy, qz, vx, vy, vz, mu = inputs
+        
+        # Promote inputs to double precision to minimize roundoff problems
+        qx = tf.dtypes.cast(qx, dtype=tf.float64, name='qx')
+        qy = tf.dtypes.cast(qy, dtype=tf.float64, name='qy')
+        qz = tf.dtypes.cast(qz, dtype=tf.float64, name='qz')
+        vx = tf.dtypes.cast(vx, dtype=tf.float64, name='vx')
+        vy = tf.dtypes.cast(vy, dtype=tf.float64, name='vx')
+        vz = tf.dtypes.cast(vz, dtype=tf.float64, name='vx')
+        mu = tf.dtypes.cast(mu, dtype=tf.float64, name='mu')
 
         # See rebound library tools.c, reb_tools_particle_to_orbit_err
         
         # The distance from the primary
-        r = tf.sqrt(tf.square(qx) + tf.square(qy) + tf.square(qz))
+        # r = tf.sqrt(tf.square(qx) + tf.square(qy) + tf.square(qz))
+        r = tf.sqrt(tf.math.add_n(
+                [tf.square(qx) + tf.square(qy) + tf.square(qz)]), 
+                name='r')
         
         # The speed and its square
-        v2 = tf.square(vx) + tf.square(vy) + tf.square(vz)
+        # v2 = tf.square(vx) + tf.square(vy) + tf.square(vz)
+        v2 = tf.math.add_n(
+                [tf.square(vx) + tf.square(vy) + tf.square(vz)], 
+                name='v2')
         # v = tf.sqrt(v2)
         
         # The speed squared of a circular orbit
         v2_circ = mu / r
         
         # The semi-major axis
-        a = -mu / (v2 - tf.constant(2.0) * v2_circ)
+        two = tf.constant(2.0, dtype=tf.float64)
+        a = -mu / (v2 - two * v2_circ)
         
         # The specific angular momentum vector and its magnitude
-        hx = qy*vz - qz*vy
-        hy = qz*vx - qx*vz
-        hz = qx*vy - qy*vx
-        h = tf.sqrt(tf.square(hx) + tf.square(hy) + tf.square(hz))
+        # hx = qy*vz - qz*vy
+        # hy = qz*vx - qx*vz
+        # hz = qx*vy - qy*vx
+        # h = tf.sqrt(tf.square(hx) + tf.square(hy) + tf.square(hz))
+        hx = tf.subtract(qy*vz, qz*vy, name='hx')
+        hy = tf.subtract(qz*vx, qx*vz, name='hy')
+        hz = tf.subtract(qx*vy, qy*vx, name='hz')
+        h = tf.sqrt(tf.math.add_n(
+                [tf.square(hx) + tf.square(hy) + tf.square(hz)]), 
+                name='h')
         
         # The excess squared speed vs. a circular orbit
-        v2_diff = v2 - v2_circ
+        # v2_diff = v2 - v2_circ
+        v2_diff = tf.subtract(v2, v2_circ, name='v2_diff')
         
         # The dot product of v and r; same as r times the radial speed vr
-        rvr = (qx * vx + qy*vy + qz*vz)
+        # rvr = (qx * vx + qy*vy + qz*vz)
+        rvr = tf.add_n([qx*vx, qy*vy, qz*vz], name='rvr')
         # The radial speed
-        vr = rvr / r
+        # vr = rvr / r
+        vr = tf.divide(rvr, r, name='vr')
         # Inverse of mu
-        mu_inv = tf.constant(1.0) / mu
+        one = tf.constant(1.0, dtype=tf.float64)
+        mu_inv = one / mu
         
         # Eccentricity vector
         ex = mu_inv * (v2_diff * qx - rvr * vx)
         ey = mu_inv * (v2_diff * qy - rvr * vy)
         ez = mu_inv * (v2_diff * qz - rvr * vz)
         # The eccentricity is the magnitude of this vector
-        e = tf.sqrt(tf.square(ex) + tf.square(ey) + tf.square(ez))
+        # e = tf.sqrt(tf.square(ex) + tf.square(ey) + tf.square(ez))
+        e = tf.sqrt(tf.math.add_n(
+                [tf.square(ex) + tf.square(ey) + tf.square(ez)]),
+                name='e')
         
         # The mean motion
-        N = tf.sqrt(tf.abs(mu / (a*a*a)))
+        N = tf.sqrt(tf.abs(mu / (a*a*a)), name='N')
         
         # The inclination; zero when h points along z axis, i.e. hz = h
-        inc = tf.acos(hz / h)
+        # inc = tf.acos(hz / h, name='inc')
+        inc = ArcCos2(name='inc_fp64')((hz, h, one))
 
         # Vector pointing along the ascending node = zhat cross h
         nx = -hy
         ny = hx
-        n = tf.sqrt(tf.square(nx) + tf.square(ny))
+        n = tf.sqrt(tf.square(nx) + tf.square(ny), name='n')
         
         # Longitude of ascending node
         # Omega = tf.acos(nx / n) * tf.math.sign(ny)
-        Omega = ArcCos2(name='Omega')((nx, n, ny))
+        Omega = ArcCos2(name='Omega_fp64')((nx, n, ny))
         
         # Compute the eccentric anomaly for elliptical orbits (e < 1)
-        ea = ArcCos2(name='eccentric_anomaly')((tf.constant(1.0) - r / a, e, vr))
+        ea = ArcCos2(name='eccentric_anomaly')((one - r / a, e, vr))
         
         # Compute the mean anomaly from the eccentric anomaly using Kepler's equation
         M = ea - e * tf.sin(ea)
@@ -281,15 +311,25 @@ class ConfigToOrbitalElement(keras.layers.Layer):
         omega_f = ArcCos2(name='omega_plus_f')((nx*qx + ny*qy, n*r, qz))
 
         # The argument of pericenter
-        omega = ArcCos2(name='omega')((nx*ex + ny*ey, n*e, ez))
+        omega = ArcCos2(name='omega_fp64')((nx*ex + ny*ey, n*e, ez))
                 
         # The true anomaly; may be larger than pi
         f = omega_f - omega
         
         # Shift f to the interval [-pi, +pi]
-        pi = tf.constant(np.pi)
-        two_pi = tf.constant(2.0 * np.pi)
+        pi = tf.constant(np.pi, dtype=tf.float64)
+        two_pi = tf.constant(2.0 * np.pi, dtype=tf.float64)
         f = tf.math.floormod(f+pi, two_pi) - pi
+        
+        # Convert the outputs to single precision
+        a = tf.dtypes.cast(a, dtype=tf.float32, name='a')
+        e = tf.dtypes.cast(e, dtype=tf.float32, name='e')
+        inc = tf.dtypes.cast(inc, dtype=tf.float32, name='inc')
+        Omega = tf.dtypes.cast(Omega, dtype=tf.float32, name='Omega')
+        omega = tf.dtypes.cast(omega, dtype=tf.float32, name='omega')
+        f = tf.dtypes.cast(f, dtype=tf.float32, name='f')
+        M = tf.dtypes.cast(M, dtype=tf.float32, name='M')
+        N = tf.dtypes.cast(N, dtype=tf.float32, name='N')
         
         return a, e, inc, Omega, omega, f, M, N
 
