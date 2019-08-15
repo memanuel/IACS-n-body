@@ -55,37 +55,69 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     # Set the simulation time step based on sample_freq
     sim.dt = 1.0 / sample_freq
 
-    # Unpack masses of the 3 objects
-    m0, m1, m2 = m
+#    # Unpack masses of the 3 objects
+#    m0, m1, m2 = m
+#    
+#    # Unpack the orbital elements
+#    a1, a2 = a
+#    e1, e2 = e
+#    inc1, inc2 = inc
+#    Omega1, Omega2 = Omega
+#    omega1, omega2 = omega
+#    f1, f2 = f
     
-    # Unpack the orbital elements
-    a1, a2 = a
-    e1, e2 = e
-    inc1, inc2 = inc
-    Omega1, Omega2 = Omega
-    omega1, omega2 = omega
-    f1, f2 = f
+#    # Test if a1 and a2 are out of order; if so, flip them so a1 <= a2
+#    if a1 > a2:
+#        # Copy original elements into tuples
+#        elts1 = (a1, e1, inc1, Omega1, omega1, f1, m1)
+#        elts2 = (a2, e2, inc2, Omega2, omega2, f2, m2)
+#        # Swap all 6 elements plus mass
+#        (a1, e1, inc1, Omega1, omega1, f1, m1) = elts2
+#        (a2, e2, inc2, Omega2, omega2, f2, m2) = elts1
+
+    # Add primary with specified mass at origin with 0 velocity
+    # sim.add(m=m0)
     
-    # Test if a1 and a2 are out of order; if so, flip them so a1 <= a2
-    if a1 > a2:
-        # Copy original elements into tuples
-        elts1 = (a1, e1, inc1, Omega1, omega1, f1, m1)
-        elts2 = (a2, e2, inc2, Omega2, omega2, f2, m2)
-        # Swap all 6 elements plus mass
-        (a1, e1, inc1, Omega1, omega1, f1, m1) = elts2
-        (a2, e2, inc2, Omega2, omega2, f2, m2) = elts1
+    # Add body 1
+    # sim.add(m=m1, a=a1, e=e1, inc=inc1, Omega=Omega1, omega=omega1, f=f1)
+    # Add body 2
+    # sim.add(m=m2, a=a2, e=e2, inc=inc2, Omega=Omega2, omega=omega2, f=f2)
+    
+    # Get sorted list of indices for adding bodies so a is in ascending order
+    js = np.argsort(a)
+    
+    # Unpack the masses
+    m0 = m[0]
+    m1 = m[js[0]]
+    m2 = m[js[1]]
+    
+    # Mass output - must sort along with a! Also convert to float32 type.
+    m_ = np.array([m0] + [m[j+1] for j in js], dtype=np.float32)
 
     # Add primary with specified mass at origin with 0 velocity
     sim.add(m=m0)
 
-    # Add body 1
-    sim.add(m=m1, a=a1, e=e1, inc=inc1, Omega=Omega1, omega=omega1, f=f1)
+    # Debug print
+    debug_print = np.abs(m1-1.47983252E-3) < 1E-7
+    # Add the bodies in ascending order of a
+    # j is the index position of the body that is the ith from the center
+    # The mass is m[j+1] because the mass vector has one extra entry for the primary at the beginning
+    for j in js:
+        sim.add(m=m[j+1], a=a[j], e=e[j], inc=inc[j], Omega=Omega[j], omega=omega[j], f=f[j])
 
-    # Add body 2
-    sim.add(m=m2, a=a2, e=e2, inc=inc2, Omega=Omega2, omega=omega2, f=f2)
-    
+        if debug_print:
+            print(f'particle {j}, m={m[j+1]}, a={a[j]}, e={e[j]}, inc={inc[j]}, Omega={Omega[j]}, omega={omega[j]}, f={f[j]}')
+            
+    if debug_print:
+        print(f'Status before shift to COM:')
+        print(sim.status())
+
     # Move to the center-of-momentum coordinate system
     sim.move_to_com()
+
+    if debug_print:
+        print(f'Status after shift to COM:')
+        print(sim.status())
 
     # Array shapes
     num_particles = 3
@@ -107,9 +139,6 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     orb_Omega = np.zeros(elt_shape, dtype=np.float32)
     orb_omega = np.zeros(elt_shape, dtype=np.float32)
     orb_f = np.zeros(elt_shape, dtype=np.float32)
-
-    # Mass vector - convert to float32
-    m = np.array(m, dtype=np.float32)
 
     # Initialize placeholders for kinetic and potential energy
     T = np.zeros(N, dtype=np.float32)
@@ -209,7 +238,7 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
         't': ts,
         'q0': q0,
         'v0': v0,
-        'm': m
+        'm': m_
         }
 
     # Assemble the output dict
@@ -375,10 +404,35 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
         L[i] = outputs_traj['L']
         
         # Debug - check COM
-        if i < 64:
+        if i == 50:
+            # Inputs to make_traj_g3b
+            print(f'i={i}')
+            print('inputs to make_traj_g3b:')
+            print('m= ', m0[i])
+            print('a= ', orb_a0[i])
+            print('e= ', orb_e0[i])
+            print('inc= ', orb_inc0[i])
+            print('Omega= ', orb_Omega0[i])
+            print('omega= ', orb_omega0[i])
+            print('f=', orb_f0[i])
+            print('n_years= ', n_years)
+            print('integator= ', integrator)
+
+            # inputs_traj
+            print('inputs_traj=')
+            for field in inputs_traj:
+                print(f'{field}')
+                print(inputs_traj[field])
+            
+            # outputs_traj
+            # print('outputs_traj=')
+            # for field in outputs_traj:
+            #     print(f'{field}')
+            #    print(outputs_traj[field])
+            
+            # The center of mass
             mq = np.diag(m[i]) @ q0[i]
             com = np.sum(mq, axis=0) / np.sum(m[i])
-            print(f'i={i}')
             print('m= ', m[i])
             print('q0=\n', q0[i])
             print(f'mq=\n', mq)
@@ -535,9 +589,9 @@ def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
 
     # Shuffle and batch data sets
     drop_remainder = True
-    ds_trn = ds_trn.shuffle(buffer_size=buffer_size).batch(batch_size, drop_remainder=drop_remainder)
-    ds_val = ds_val.shuffle(buffer_size=buffer_size).batch(batch_size, drop_remainder=drop_remainder)
-    ds_tst = ds_tst.shuffle(buffer_size=buffer_size).batch(batch_size, drop_remainder=drop_remainder)
+    ds_trn = ds_trn.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
+    ds_val = ds_val.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
+    ds_tst = ds_tst.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
     
     return ds_trn, ds_val, ds_tst
 
