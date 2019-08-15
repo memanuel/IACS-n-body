@@ -72,11 +72,13 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
     cfg_2 = (qj0_2, vj0_2, mu0_2)
 
     # Model mapping cartesian coordinates to orbital elements
-    model_c2e = make_model_cfg_to_elt()
+    # model_c2e = make_model_cfg_to_elt()
+    model_c2e_1 = make_model_cfg_to_elt(name='orbital_element_1')
+    model_c2e_2 = make_model_cfg_to_elt(name='orbital_element_2')
 
     # Extract the orbital elements of the initial conditions
-    a1_0, e1_0, inc1_0, Omega1_0, omega1_0, f1_0, M1_0, N1_0 = model_c2e(cfg_1)
-    a2_0, e2_0, inc2_0, Omega2_0, omega2_0, f2_0, M2_0, N2_0 = model_c2e(cfg_2)
+    a1_0, e1_0, inc1_0, Omega1_0, omega1_0, f1_0, M1_0, N1_0 = model_c2e_1(cfg_1)
+    a2_0, e2_0, inc2_0, Omega2_0, omega2_0, f2_0, M2_0, N2_0 = model_c2e_2(cfg_2)
 
     # Alias mu0_i for naming consistency
     mu1_0 = mu0_1

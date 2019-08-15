@@ -405,7 +405,7 @@ class EccentricToMeanAnomaly(keras.layers.Layer):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_model_elt_to_cfg(batch_size: int=64):
+def make_model_elt_to_cfg(batch_size: int=64, name=None):
     """Model that transforms from orbital elements to cartesian coordinates"""
     # The shape shared by all the inputs
     input_shape = (1,)
@@ -433,11 +433,12 @@ def make_model_elt_to_cfg(batch_size: int=64):
     outputs = (q, v)
 
     # Create a model from inputs to outputs
-    model = keras.Model(inputs=inputs, outputs=outputs, name='orbital_element_to_cartesian')
+    name = name or 'orbital_element_to_cartesian'
+    model = keras.Model(inputs=inputs, outputs=outputs, name=name)
     return model
 
 # ********************************************************************************************************************* 
-def make_model_cfg_to_elt(batch_size: int=64):
+def make_model_cfg_to_elt(batch_size: int=64, name=None):
     """Model that transforms from orbital elements to cartesian coordinates"""
     # Create input layers    
     q = keras.Input(shape=(3,), batch_size=batch_size, name='q')
@@ -476,6 +477,7 @@ def make_model_cfg_to_elt(batch_size: int=64):
     outputs = (a, e, inc, Omega, omega, f, M, N)
 
     # Create a model from inputs to outputs
-    model = keras.Model(inputs=inputs_model, outputs=outputs, name='config_to_orbital_element')
+    name = name or 'config_to_orbital_element'
+    model = keras.Model(inputs=inputs_model, outputs=outputs, name=name)
     return model
 

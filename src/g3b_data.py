@@ -391,7 +391,7 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
         # Orbital Elements
         'orb_a': orb_a,
         'orb_e': orb_e,
-        'orb_inc': orb_f,
+        'orb_inc': orb_inc,
         'orb_Omega': orb_Omega,
         'orb_omega': orb_omega,
         'orb_f': orb_f,
@@ -582,7 +582,7 @@ def main():
     
     n_traj_tiny = 100
     n_traj_small = 10000
-    # n_traj_large = 50000
+    n_traj_large = 50000
     
     # Create a tiny data set with 10,000 solar type orbits
     print(f'Generating tiny data set for solar-type systems ({n_traj_tiny} orbits)...')
@@ -594,8 +594,8 @@ def main():
     make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
         
     # Create a large data set with 50,000 binary type orbits
-    # print(f'Generating large data set for binary-type systems ({n_traj_large} orbits) ...')
-    # make_datasets_solar(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+    print(f'Generating large data set for binary-type systems ({n_traj_large} orbits) ...')
+    make_datasets_solar(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
