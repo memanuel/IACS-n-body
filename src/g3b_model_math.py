@@ -175,7 +175,7 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
     outputs = (q, v)
 
     # Wrap this into a model
-    model = keras.Model(inputs=inputs, outputs=outputs, name='model_g2b_position_math')
+    model = keras.Model(inputs=inputs, outputs=outputs, name='model_g3b_position_math')
     return model
 
 # ********************************************************************************************************************* 

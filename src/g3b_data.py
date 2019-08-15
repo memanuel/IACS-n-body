@@ -346,33 +346,33 @@ def make_data_g3b(n_traj: int, n_years: int, sample_freq: int,
     # Sample the trajectories
     for i in tqdm(range(n_traj)):
         # Generate one trajectory
-        inputs, outputs = make_traj_g3b(m=m0[i], a=orb_a0[i], e=orb_e0[i], inc=orb_inc0[i], 
+        inputs_traj, outputs_traj = make_traj_g3b(m=m0[i], a=orb_a0[i], e=orb_e0[i], inc=orb_inc0[i], 
                                         Omega=orb_Omega0[i], omega=orb_omega0[i], f=orb_f0[i], 
                                         n_years=n_years, sample_freq=sample_freq, integrator=integrator)
         
         # Copy results into main arrays
         # Inputs
-        t[i] = inputs['t']
-        q0[i] = inputs['q0']
-        v0[i] = inputs['v0']
-        m[i] = inputs['m']
+        t[i] = inputs_traj['t']
+        q0[i] = inputs_traj['q0']
+        v0[i] = inputs_traj['v0']
+        m[i] = inputs_traj['m']
         # Outputs - trajectory
-        q[i] = outputs['q']
-        v[i] = outputs['v']
-        a[i] = outputs['a']
+        q[i] = outputs_traj['q']
+        v[i] = outputs_traj['v']
+        a[i] = outputs_traj['a']
         # Outputs - orbital elements
-        orb_a[i] = outputs['orb_a']
-        orb_e[i] = outputs['orb_e']
-        orb_inc[i] = outputs['orb_inc']
-        orb_Omega[i] = outputs['orb_Omega']
-        orb_omega[i] = outputs['orb_omega']
-        orb_f[i] = outputs['orb_f']
+        orb_a[i] = outputs_traj['orb_a']
+        orb_e[i] = outputs_traj['orb_e']
+        orb_inc[i] = outputs_traj['orb_inc']
+        orb_Omega[i] = outputs_traj['orb_Omega']
+        orb_omega[i] = outputs_traj['orb_omega']
+        orb_f[i] = outputs_traj['orb_f']
         # Outputs - physics
-        T[i] = outputs['T']
-        U[i] = outputs['U']
-        H[i] = outputs['H']
-        P[i] = outputs['P']
-        L[i] = outputs['L']
+        T[i] = outputs_traj['T']
+        U[i] = outputs_traj['U']
+        H[i] = outputs_traj['H']
+        P[i] = outputs_traj['P']
+        L[i] = outputs_traj['L']
 
     # Assemble the input dict
     inputs = {
@@ -584,18 +584,20 @@ def main():
     n_traj_small = 10000
     n_traj_large = 50000
     
-    # Create a tiny data set with 10,000 solar type orbits
+    # Create a tiny data set with 100 solar type orbits
     print(f'Generating tiny data set for solar-type systems ({n_traj_tiny} orbits)...')
     make_datasets_solar(n_traj=n_traj_tiny, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq,
                         batch_size=batch_size, seed=seed)
 
     # Create a small data set with 10,000 solar type orbits
     print(f'Generating small data set for solar-type systems ({n_traj_small} orbits) ...')
-    make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+    make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, 
+                        batch_size=batch_size, seed=seed)
         
     # Create a large data set with 50,000 binary type orbits
     print(f'Generating large data set for binary-type systems ({n_traj_large} orbits) ...')
-    make_datasets_solar(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, batch_size=batch_size, seed=seed)
+    make_datasets_solar(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, 
+                        batch_size=batch_size, seed=seed)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
