@@ -21,79 +21,14 @@ from orbital_element import make_data_orb_elt, G_
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_data_jacobi_old(N, num_body):
-    """Data set mapping between Jacobi and Cartesian coordinates"""
-    # Array shapes
-    space_dims = 3
-    mass_shape = (N, num_body)
-    pos_shape = (N, num_body, space_dims)
-    # matrix transforming Cartesian to Jacobi for each draw
-    A_shape = (N, num_body, num_body)
-    
-    # Set random seed for reproducible results
-    np.random.seed(seed=42)
-
-    # Initialize masses
-    np.random
-    m_min = 1.0E-4
-    m_max = 1.0E-2
-    log_m = np.random.uniform(low=np.log(m_min), high=np.log(m_max), size=mass_shape).astype(np.float32)
-    log_m[:, 0] = 0.0
-    m = np.exp(log_m)
-    
-    # Initialize Cartesian position and velocity to zero
-    q = np.zeros(pos_shape, dtype=np.float32)
-    v = np.zeros(pos_shape, dtype=np.float32)
-    # Initialize Jacobi position and velocity to zero
-    qj = np.zeros(pos_shape, dtype=np.float32)
-    vj = np.zeros(pos_shape, dtype=np.float32)
-    
-    # Use make_data_orb_elt to populate q for each particle
-    a_min = 0.5
-    a_max = 32.0
-    e_max = 0.20
-    inc_max = 0.20
-    seed = 42
-    # Cartesian coordinates of body j
-    for j in range(num_body):
-        elts, cart = make_data_orb_elt(N, a_min, a_max, e_max, inc_max, seed+j)
-        q[:, j, :] = cart['q']
-        v[:, j, :] = cart['v']
-    
-    # Cumulative mass
-    M = np.cumsum(m, axis=-1)
-    
-    # Assemble num_body x num_body square matrix converting from q to r
-    A = np.zeros(A_shape, dtype=np.float32)
-    for n in range(N):
-        A[n, 0, :] = m[n] / M[n, num_body-1]
-        for i in range(1, num_body):
-            for j in range(i):
-                A[n, i, j] = -m[n, j] / M[n, i-1]
-            A[n, i, i] = 1.0
-    
-    # Compute position and velocity in Jacobi coordinates
-    qj = np.matmul(A, q)
-    vj = np.matmul(A, v)
-    
-    # Gravitational coefficient mu
-    mu = G_ * M
-    
-    data = {
-        'm': m,
-        'q': q,
-        'v': v,
-        'qj': qj,
-        'vj': vj,
-        'mu': mu
-        }
-    
-    return data
-
-# ********************************************************************************************************************* 
 def make_data_jacobi_one(m, a, e, inc, Omega, omega, f):
     """
     Make one data point mapping between Cartesian and Jacobi coordinates
+    INPUTS:
+        m: array of num_body masses
+        a, e, inc, Omega, omega, f:
+            arrays of six standard orbital elements.
+            num_body objects have (num_body-1) orbital elements
     """
     # The number of bodies
     num_body = m.shape[0]
@@ -121,12 +56,11 @@ def make_data_jacobi_one(m, a, e, inc, Omega, omega, f):
     # Set units
     sim.units = ('yr', 'AU', 'Msun')
     
-    # Add primary with 1 solar mass at origin with 0 velocity
+    # Add primary with specified mass at origin with 0 velocity
     sim.add(m=m[0])
-    p0 = sim.particles[0]
     
-    # Body with the current center of mass
-    com = p0
+    # The current center of mass
+    com = sim.calculate_com()
     mu[0] = sim.G * com.m
     
     # Add bodies 2 through num_body
@@ -139,8 +73,8 @@ def make_data_jacobi_one(m, a, e, inc, Omega, omega, f):
         qj[i+1, :] = [p.x -  com.x,  p.y - com.y,   p.z  - com.z]    
         vj[i+1, :] = [p.vx - com.vx, p.vy - com.vy, p.vz - com.vz]    
         # Update the center of mass
-        com = com + p
-        # Gravitational field strength
+        com = sim.calculate_com()
+        # Gravitational field strength; mass includes the newly added point
         mu[i+1] = sim.G * com.m
     
     # Move to center of mass
@@ -169,7 +103,7 @@ def make_data_jacobi_one(m, a, e, inc, Omega, omega, f):
 
 # ********************************************************************************************************************* 
 def make_data_jacobi(N, num_body):
-    """Data set mapping between Jacobi and Cartesian coordinates"""
+    """Make a data set mapping between Jacobi and Cartesian coordinates"""
     # Array shapes
     space_dims = 3
     mass_shape = (N, num_body)
@@ -177,7 +111,8 @@ def make_data_jacobi(N, num_body):
     elt_shape = (N, num_body-1)
     
     # Set random seed for reproducible results
-    np.random.seed(seed=42)
+    seed = 42
+    np.random.seed(seed=seed)
 
     # Initialize masses
     np.random
@@ -186,6 +121,20 @@ def make_data_jacobi(N, num_body):
     log_m = np.random.uniform(low=np.log(m_min), high=np.log(m_max), size=mass_shape).astype(np.float32)
     log_m[:, 0] = 0.0
     m_ = np.exp(log_m)
+    
+    # Parameters for sampling orbital elements in testing
+    a_min = 0.5
+    a_max = 32.0
+    e_max = 0.20
+    inc_max = 0.20
+    
+    # Initialize orbital element by sampling according to the inputs    
+    a = np.random.uniform(low=a_min, high=a_max, size=elt_shape).astype(np.float32)
+    e = np.random.uniform(low=0.0, high=e_max, size=elt_shape).astype(np.float32)
+    inc = np.random.uniform(low=0.0, high=inc_max, size=elt_shape).astype(np.float32)
+    Omega = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
+    omega = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
+    f = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
     
     # Initialize Cartesian position and velocity to zero   
     q = np.zeros(pos_shape, dtype=np.float32)
@@ -197,28 +146,12 @@ def make_data_jacobi(N, num_body):
     m = np.zeros(mass_shape, dtype=np.float32)
     mu = np.zeros(mass_shape, dtype=np.float32)
 
-    # Use make_data_orb_elt to populate q for each particle
-    a_min = 0.5
-    a_max = 32.0
-    e_max = 0.20
-    inc_max = 0.20
-    seed = 42
-
-    # Set random seed
-    np.random.seed(seed=seed)
-
-    # Initialize orbital element by sampling according to the inputs    
-    a = np.random.uniform(low=a_min, high=a_max, size=elt_shape).astype(np.float32)
-    e = np.random.uniform(low=0.0, high=e_max, size=elt_shape).astype(np.float32)
-    inc = np.random.uniform(low=0.0, high=inc_max, size=elt_shape).astype(np.float32)
-    Omega = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
-    omega = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
-    f = np.random.uniform(low=-np.pi, high=np.pi, size=elt_shape).astype(np.float32)
-    
     # Generate mappings one draw at a time
     for i in range(N):
+        # Generate one data set with row i of the mass and orbital elements drawn
         data_i = make_data_jacobi_one(m=m_[i], a=a[i], e=e[i], inc=inc[i], 
                                       Omega=Omega[i], omega=omega[i], f=f[i])
+        # Unpack this draw to row i of the data arrays
         m[i] = data_i['m']
         q[i] = data_i['q']
         v[i] = data_i['v']
@@ -226,6 +159,7 @@ def make_data_jacobi(N, num_body):
         vj[i] = data_i['vj']
         mu[i] = data_i['mu']
 
+    # Wrap the data into a dict
     data = {
         'm': m,
         'q': q,
@@ -282,6 +216,32 @@ def make_dataset_jac_to_cart(N, num_body, batch_size=64):
     # Inputs and outputs
     inputs = {'m': m, 'qj': qj, 'vj': vj}
     outputs = {'q': q, 'v': v}
+
+     # Wrap these into a Dataset object
+    ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))
+
+    # Set shuffle buffer size
+    buffer_size = batch_size * 256
+
+    # Shuffle and batch data sets
+    ds = ds.shuffle(buffer_size=buffer_size).batch(batch_size)
+    
+    return ds
+
+# ********************************************************************************************************************* 
+def make_dataset_cart_to_cart(N, num_body, batch_size=64):
+    """Dataset with mapping from Cartesian to Cartesian coordinates"""
+    # Delegate to make_data_jacobi
+    data = make_data_jacobi(N, num_body)
+
+    # Unpack the data
+    m = data['m']
+    q = data['q']
+    v = data['v']
+    
+    # Inputs and outputs
+    inputs = {'m': m, 'q': q, 'v': v}
+    outputs = {'q_calc': q, 'v_calc': v}
 
      # Wrap these into a Dataset object
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))
@@ -458,11 +418,60 @@ def make_model_jac_to_cart(num_body: int, batch_size: int = 64):
     inputs = (m, qj, vj)
 
     # Calculations are in one layer that does all the work...
-    qj, vj = JacobiToCartesian(name='j2c')(inputs)
+    q, v = JacobiToCartesian(name='j2c')(inputs)
     
+    # Name outputs
+    q = Identity(name='q')(q)
+    v = Identity(name='v')(v)
+
     # Wrap up the outputs
-    outputs = (qj, vj)
+    outputs = (q, v)
 
     # Create a model from inputs to outputs
     model = keras.Model(inputs=inputs, outputs=outputs, name='jacobi_to_cartesian')
     return model
+
+# ********************************************************************************************************************* 
+def make_model_cart_to_cart(num_body: int, batch_size: int = 64):
+    """Model that transforms from cartesian to cartesian coordinates"""
+    # The shape shared by all the inputs
+    space_dims = 3
+    shape_m = (num_body,)
+    shape_q = (num_body, space_dims,)
+
+    # Create input layers    
+    m = keras.Input(shape=shape_m, batch_size=batch_size, name='m')
+    q = keras.Input(shape=shape_q, batch_size=batch_size, name='q')
+    v = keras.Input(shape=shape_q, batch_size=batch_size, name='v')
+    
+    # Wrap these up into inputs
+    inputs = (m, q, v)
+
+    # Wrap these up into one tuple of inputs for c2j mapping
+    inputs_c2j = inputs
+
+    # Convert from Cartesian to Jacobi coordinates in step 1
+    qj, vj, mu = CartesianToJacobi(name='c2j')(inputs_c2j)
+    
+    # Name Jacobi coordinates
+    qj = Identity(name='qj')(qj)
+    vj = Identity(name='vj')(vj)
+    mu = Identity(name='mu')(mu)
+    
+    # Wrap these up into one tuple of inputs for j2c mapping
+    inputs_j2c = (m, qj, vj)
+
+    # Calculations are in one layer that does all the work...
+    q_calc, v_calc = JacobiToCartesian(name='j2c')(inputs_j2c)
+    
+    # Name outputs
+    q_calc = Identity(name='q_calc')(q_calc)
+    v_calc = Identity(name='v_calc')(v_calc)
+
+    # Wrap up the outputs
+    outputs = (q_calc, v_calc)
+
+    # Create a model from inputs to outputs
+    model = keras.Model(inputs=inputs, outputs=outputs, name='cartesian_to_cartesian')
+    return model
+
