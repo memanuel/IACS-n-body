@@ -19,7 +19,7 @@ keras = tf.keras
 # Local imports
 from tf_utils import Identity
 from orbital_element import make_model_cfg_to_elt, make_model_elt_to_cfg
-from orbital_element import MeanToTrueAnomaly, G_
+from orbital_element import MeanToTrueAnomaly
 from jacobi import CartesianToJacobi, JacobiToCartesian
 from g3b import make_physics_model_g3b
 

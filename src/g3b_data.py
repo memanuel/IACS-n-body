@@ -583,7 +583,7 @@ def main():
     
     # Create a tiny data set with 100 solar type orbits
     print(f'Generating tiny data set for solar-type systems ({n_traj_tiny} orbits)...')
-    make_datasets_solar(n_traj=n_traj_tiny, vt_split=0.0, n_years=n_years, sample_freq=sample_freq,
+    make_datasets_solar(n_traj=n_traj_tiny, vt_split=1.0, n_years=n_years, sample_freq=sample_freq,
                         batch_size=batch_size, seed=seed)
 
     # Create a small data set with 10,000 solar type orbits
