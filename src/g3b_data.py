@@ -575,7 +575,12 @@ def main():
     n_years = 100
     sample_freq = 10
     batch_size = 64
-    seed = 42
+    # Set seeds; for sizes up to large use the same seed for convenience
+    seed_tiny = 42
+    seed_small = 42
+    seed_large = 42
+    # Number of small data sets
+    small_data_sets = 50
     
     n_traj_tiny = 64
     n_traj_small = 10000
@@ -584,17 +589,25 @@ def main():
     # Create a tiny data set with 100 solar type orbits
     print(f'Generating tiny data set for solar-type systems ({n_traj_tiny} orbits)...')
     make_datasets_solar(n_traj=n_traj_tiny, vt_split=1.0, n_years=n_years, sample_freq=sample_freq,
-                        batch_size=batch_size, seed=seed)
+                        batch_size=batch_size, seed=seed_tiny)
 
     # Create a small data set with 10,000 solar type orbits
     print(f'Generating small data set for solar-type systems ({n_traj_small} orbits) ...')
     make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, 
-                        batch_size=batch_size, seed=seed)
+                        batch_size=batch_size, seed=seed_small)
         
     # Create a large data set with 50,000 binary type orbits
     print(f'Generating large data set for binary-type systems ({n_traj_large} orbits) ...')
     make_datasets_solar(n_traj=n_traj_large, vt_split=vt_split, n_years=n_years, 
-                        batch_size=batch_size, seed=seed)
+                        batch_size=batch_size, seed=seed_large)
+    
+    # Create a whole batch of small data sets with different seeds
+    seeds = seed_small + 3*(np.arange(small_data_sets) + 1)
+    print(f'Creating a batch of small data sets for solar-type systems with {n_traj_small} orbits')
+    for i, seed in enumerate(seeds):
+        print(f'Generating small data {i} with seed {seed}...')
+        make_datasets_solar(n_traj=n_traj_small, vt_split=vt_split, n_years=n_years, 
+                            batch_size=batch_size, seed=seed)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
