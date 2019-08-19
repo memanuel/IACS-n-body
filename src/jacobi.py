@@ -260,13 +260,20 @@ def make_dataset_cart_to_cart(N, num_body, batch_size=64):
 
 # ********************************************************************************************************************* 
 class CartesianToJacobi(keras.layers.Layer):
+    def __init__(self, include_accel:bool = False, **kwargs):
+        super(CartesianToJacobi, self).__init__(**kwargs)
+        self.include_accel = include_accel
+
     def call(self, inputs):
         """Compute Cartesian coordinate q from masses and Jacobi coordinates m, r"""
         # Unpack inputs
         # m: masses; shape (num_body)
         # q: Cartesian position coordinate; shape (num_body, 3)
         # v: Cartesian velocity coordinate; shape (num_body, 3)
-        m, q, v = inputs
+        if self.include_accel:
+            m, q, v, a = inputs
+        else:
+            m, q, v = inputs
 
         # Array shapes
         batch_size, num_body, space_dims = q.shape
@@ -301,25 +308,36 @@ class CartesianToJacobi(keras.layers.Layer):
         # Do the matrix multiplication
         qj = tf.linalg.matmul(A, q)
         vj = tf.linalg.matmul(A, v)
+        aj = tf.linalg.matmul(A, a) if self.include_accel else None
 
         # Compute the gravitational field strength mu for each Jacobi coordinate
         G = tf.constant(G_)
         mu = G * M
+        
+        # Assemble the outputs
+        outputs = (qj, vj, aj, mu) if self.include_accel else (qj, vj, mu)
 
-        return qj, vj, mu
+        return outputs
 
     def get_config(self):
         return dict()
     
 # ********************************************************************************************************************* 
 class JacobiToCartesian(keras.layers.Layer):
+    def __init__(self, include_accel:bool = False, **kwargs):
+        super(JacobiToCartesian, self).__init__(**kwargs)
+        self.include_accel = include_accel
+
     def call(self, inputs):
         """Compute Cartesian coordinate q from masses and Jacobi coordinates m, r"""
         # Unpack inputs
         # m: masses; shape (num_body)
         # qj: Jacobi position coordinate; shape (num_body, 3)
         # vj: Jacobi velocity coordinate; shape (num_body, 3)
-        m, qj, vj = inputs
+        if self.include_accel:
+            m, qj, vj, aj = inputs
+        else:
+            m, qj, vj = inputs
 
         # Array shapes
         tensor_rank = len(qj.shape)
@@ -364,8 +382,12 @@ class JacobiToCartesian(keras.layers.Layer):
         # Do the matrix multiplication
         q = tf.linalg.matmul(B, qj)
         v = tf.linalg.matmul(B, vj)
+        a = tf.linalg.matmul(B, aj) if self.include_accel else None
 
-        return q, v
+        # Assemble the outputs
+        outputs = (q, v, a) if self.include_accel else (q, v)
+
+        return outputs
 
     def get_config(self):
         return dict()

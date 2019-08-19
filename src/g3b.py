@@ -235,7 +235,7 @@ class Motion_G3B(keras.Model):
                 position_inputs = (t, q0, v0, m)
                 # The velocity from the position model assumes the orbital elements are not changing
                 # Here we only want to take the position output and do a full automatic differentiation
-                q, v_ = self.position_model(position_inputs)
+                q, v_, a_ = self.position_model(position_inputs)
                 # Unpack separate components of position; unable to get gt.jacobian or output_gradients to work
                 q0x, q0y, q0z = q[:, :, 0, 0], q[:, :, 0, 1], q[:, :, 0, 2]
                 q1x, q1y, q1z = q[:, :, 1, 0], q[:, :, 1, 1], q[:, :, 1, 2]
@@ -294,7 +294,10 @@ class Motion_G3B(keras.Model):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_physics_model_g3b(position_model: keras.Model, traj_size: int, batch_size: int=64):
+def make_physics_model_g3b(position_model: keras.Model, 
+                           use_autodiff: bool,
+                           traj_size: int, 
+                           batch_size: int=64):
     """Create a physics model for the general two body problem from a position model"""
     # Create input layers
     num_particles = 3
@@ -311,7 +314,10 @@ def make_physics_model_g3b(position_model: keras.Model, traj_size: int, batch_si
     initial_row_func = lambda q : q[:, 0, :]
 
     # Compute the motion from the specified position layer; inputs are the same for position and physics model
-    q, v, a = Motion_G3B(position_model=position_model, name='motion')(inputs)
+    if use_autodiff:
+        q, v, a = Motion_G3B(position_model=position_model, name='motion')(inputs)
+    else:
+        q, v, a = position_model(inputs)
     
     # Name the outputs of the motion
     # These each have shape (batch_size, num_particles, traj_size, 3)
@@ -339,7 +345,7 @@ def make_physics_model_g3b(position_model: keras.Model, traj_size: int, batch_si
 
     # Wrap this up into a model
     outputs = [q, v, a, q0_rec, v0_rec, H, P, L]
-    model_name = position_model.name.replace('model_g3b_position_', 'model_g3b_physics_')
+    model_name = position_model.name.replace('model_g3b_position_', 'model_g3b_')
     model = keras.Model(inputs=inputs, outputs=outputs, name=model_name)
     return model
 
@@ -348,7 +354,8 @@ def make_physics_model_g3b(position_model: keras.Model, traj_size: int, batch_si
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev_history=None):
+def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, 
+                    save_freq, prev_history=None, batch_num=None):
     # Compile the model
     model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
     model_name = model.name
@@ -366,7 +373,8 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, save_freq, prev
     cb_ckp = keras.callbacks.ModelCheckpoint(
             filepath=filepath, 
             save_freq=save_freq,
-            save_best_only=True,
+            # save_best_only=True,
+            save_best_only=False,
             save_weights_only=True,
             monitor='loss',
             verbose=0)    

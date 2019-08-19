@@ -46,6 +46,9 @@ def make_data_orb_elt(n, a_min, a_max, e_max, inc_max, seed=42):
     vx = np.zeros(n, dtype=np.float32)
     vy = np.zeros(n, dtype=np.float32)
     vz = np.zeros(n, dtype=np.float32)
+    accx = np.zeros(n, dtype=np.float32)
+    accy = np.zeros(n, dtype=np.float32)
+    accz = np.zeros(n, dtype=np.float32)
     
     # Create a simulation
     sim = rebound.Simulation()
@@ -70,10 +73,12 @@ def make_data_orb_elt(n, a_min, a_max, e_max, inc_max, seed=42):
         # Save coordinates of new particle
         qx[i], qy[i], qz[i] = p.x, p.y, p.z
         vx[i], vy[i], vz[i] = p.vx, p.vy, p.vz
+        accx[i], accy[i], accz[i] = p.ax, p.ay, p.az
     
     # Stack the position and velocity vectors
     q = np.stack([qx, qy, qz], axis=1)
     v = np.stack([vx, vy, vz], axis=1)
+    acc = np.stack([accx, accy, accz], axis=1)
     
     # Dictionaries with elements and cartesian coordinates
     elts = {
@@ -89,6 +94,7 @@ def make_data_orb_elt(n, a_min, a_max, e_max, inc_max, seed=42):
     cart = {
         'q': q,
         'v': v,
+        'acc': acc,
         'mu': mu,
     }
     
@@ -152,6 +158,10 @@ class ArcCos2(keras.layers.Layer):
     
 # ********************************************************************************************************************* 
 class OrbitalElementToConfig(keras.layers.Layer):
+    def __init__(self, include_accel:bool = False, **kwargs):
+        super(OrbitalElementToConfig, self).__init__(**kwargs)
+        self.include_accel = include_accel
+
     def call(self, inputs):
         """Compute configuration (q, v) from orbital elements (a, e, inc, Omega, omega, f)"""
         # Unpack inputs
@@ -206,7 +216,18 @@ class OrbitalElementToConfig(keras.layers.Layer):
         vy = v0*(epcf*(ci*co*cO - sO*so)  - sf*(co*sO + ci*so*cO))
         vz = v0*(epcf*co*si - sf*si*so)
         
-        return qx, qy, qz, vx, vy, vz
+        # Acceleration - Compute this only if it was requested
+        # Magnitude is mu / R2
+        # Components are ax = -mu / R3 * qx, etc.
+        if self.include_accel:
+            mu_over_r3 = -mu / (r*r*r)
+            ax = mu_over_r3 * qx
+            ay = mu_over_r3 * qy
+            az = mu_over_r3 * qz
+            
+            return qx, qy, qz, vx, vy, vz, ax, ay, az
+        else:
+            return qx, qy, qz, vx, vy, vz
 
     def get_config(self):
         return dict()
@@ -405,7 +426,7 @@ class EccentricToMeanAnomaly(keras.layers.Layer):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_model_elt_to_cfg(batch_size: int=64, name=None):
+def make_model_elt_to_cfg(include_accel: bool = False, batch_size: int=64, name=None):
     """Model that transforms from orbital elements to cartesian coordinates"""
     # The shape shared by all the inputs
     input_shape = (1,)
@@ -423,14 +444,22 @@ def make_model_elt_to_cfg(batch_size: int=64, name=None):
     inputs = (a, e, inc, Omega, omega, f, mu,)
     
     # Calculations are in one layer that does all the work...
-    qx, qy, qz, vx, vy, vz = OrbitalElementToConfig(name='orbital_element_to_config')(inputs)
+    outputs = OrbitalElementToConfig(include_accel=include_accel, name='orbital_element_to_config')(inputs)
+    
+    if include_accel:
+        qx, qy, qz, vx, vy, vz, ax, ay, az = outputs
+    else:
+        qx, qy, qz, vx, vy, vz = outputs
     
     # Assemble the position and velocity vectors
     q = keras.layers.concatenate(inputs=[qx, qy, qz], axis=-1, name='q')
     v = keras.layers.concatenate(inputs=[vx, vy, vz], axis=-1, name='v')
+    # Assemble the acceleration vector if it was requested
+    if include_accel:
+        acc = keras.layers.concatenate(inputs=[ax, ay, az], axis=-1, name='acc')
 
     # Wrap up the outputs
-    outputs = (q, v)
+    outputs = (q, v, acc) if include_accel else (q, v)
 
     # Create a model from inputs to outputs
     name = name or 'orbital_element_to_cartesian'

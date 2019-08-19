@@ -15,11 +15,14 @@ import datetime
 
 # *************************************************************************************************
 def gpu_grow_memory():
-	"""Set TensorFlow to grow memory of GPUs rather than grabbing it all at once."""
-	gpus = tf.config.experimental.list_physical_devices('GPU')
-	for gpu in gpus:
-		tf.config.experimental.set_memory_growth(gpu, True)
-        
+    pass
+    """Set TensorFlow to grow memory of GPUs rather than grabbing it all at once."""
+    # Get available GPUs
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    # Set all selected GPUs to 
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
+
 # ********************************************************************************************************************* 
 def plot_loss_hist(hist,  model_name):
     """Plot loss vs. wall time"""

@@ -259,16 +259,19 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     # Convert the Jacobi coordinates over time to Cartesian coordinates
     q, v = JacobiToCartesian()([m, qj, vj])
     
+    # Dummy acceleration output
+    a = tf.zeros_like(v, name='a')
+
     # Name the outputs
     q = Identity(name='q')(q)
     v = Identity(name='v')(v)    
 
     # Wrap up the outputs
-    outputs = (q, v)
+    outputs = (q, v, a)
 
     # Wrap this into a model
     suffix = '_'.join(str(sz) for sz in hidden_sizes)
-    model_name = f'model_g3b_nn_{suffix}'
+    model_name = f'model_g3b_position_nn_{suffix}'
     model = keras.Model(inputs=inputs, outputs=outputs, name=model_name)
     return model
 
