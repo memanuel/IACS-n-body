@@ -73,6 +73,13 @@ def make_data_orb_elt(n, a_min, a_max, e_max, inc_max, seed=42):
         # Save coordinates of new particle
         qx[i], qy[i], qz[i] = p.x, p.y, p.z
         vx[i], vy[i], vz[i] = p.vx, p.vy, p.vz
+    
+    # Integrate forward, then backwards; this will get the acceleration primed
+    sim.integrate(-1E-6, exact_finish_time=1)
+    sim.integrate(1E-6, exact_finish_time=1)
+
+    for i in range(n):
+        p = sim.particles[i+1]
         accx[i], accy[i], accz[i] = p.ax, p.ay, p.az
     
     # Stack the position and velocity vectors

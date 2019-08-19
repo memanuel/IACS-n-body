@@ -177,9 +177,6 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
     v = Identity(name='v')(v)
     a = Identity(name='a')(a)
     
-    # Dummy acceleration output
-    # a = tf.zeros_like(v, name='a')
-
     # Wrap up the outputs
     outputs = (q, v, a)
 

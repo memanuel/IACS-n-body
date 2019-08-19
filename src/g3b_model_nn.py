@@ -198,28 +198,36 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
         units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_f2')(phi_n)    
 
     # Apply adjustments to Kepler-Jacobi orbital elements
-    a1 = keras.layers.add(inputs=[a1, delta_a1], name='a1')
-    a2 = keras.layers.add(inputs=[a2, delta_a2], name='a2')
-    # Limit a to be non-negative
-    a1 = keras.layers.ReLU(name='a1_relu')(a1)
-    a2 = keras.layers.ReLU(name='a2_relu')(a2)
+    a1 = keras.layers.add(inputs=[a1, delta_a1], name='a1_raw')
+    a2 = keras.layers.add(inputs=[a2, delta_a2], name='a2_raw')
     
-    e1 = keras.layers.add(inputs=[e1, delta_e1], name='e1')
-    e2 = keras.layers.add(inputs=[e2, delta_e2], name='e2')
+    e1 = keras.layers.add(inputs=[e1, delta_e1], name='e1_raw')
+    e2 = keras.layers.add(inputs=[e2, delta_e2], name='e2_raw')
+
+    inc1 = keras.layers.add(inputs=[inc1, delta_inc1], name='inc1')
+    inc2 = keras.layers.add(inputs=[inc2, delta_inc2], name='inc2')
+
+    Omega1 = keras.layers.add(inputs=[Omega1, delta_Omega1], name='Omega1')
+    Omega2 = keras.layers.add(inputs=[Omega2, delta_Omega2], name='Omega2')
+
+    omega1 = keras.layers.add(inputs=[omega1, delta_omega1], name='omega1')
+    omega2 = keras.layers.add(inputs=[omega2, delta_omega2], name='omega2')
+
+    f1 = keras.layers.add(inputs=[f1, delta_f1], name='f1')
+    f2 = keras.layers.add(inputs=[f2, delta_f2], name='f2')    
+
+    # Limit a to be non-negative
+    a1 = keras.layers.ReLU(name='a1')(a1)
+    a2 = keras.layers.ReLU(name='a2')(a2)
+
     # Limit e to be in interval [0.0, 1.0]
-    clip_func = lambda x : tf.clip_by_value(x, 0.0, 1.0)
+    ecc_min = 0.0000
+    ecc_max = 0.9900
+    clip_func = lambda x : tf.clip_by_value(x, ecc_min, ecc_max)
     e1 = keras.layers.Activation(activation=clip_func, name='e1_clip')(e1)
     e2 = keras.layers.Activation(activation=clip_func, name='e2_clip')(e2)
 
     # The remaining elements can take any value; angles can wrap around past 2pi
-    inc1 = keras.layers.add(inputs=[inc1, delta_inc1], name='inc1')
-    inc2 = keras.layers.add(inputs=[inc2, delta_inc2], name='inc2')
-    Omega1 = keras.layers.add(inputs=[Omega1, delta_Omega1], name='Omega1')
-    Omega2 = keras.layers.add(inputs=[Omega2, delta_Omega2], name='Omega2')
-    omega1 = keras.layers.add(inputs=[omega1, delta_omega1], name='omega1')
-    omega2 = keras.layers.add(inputs=[omega2, delta_omega2], name='omega2')
-    f1 = keras.layers.add(inputs=[f1, delta_f1], name='f1')
-    f2 = keras.layers.add(inputs=[f2, delta_f2], name='f2')    
 
     # ******************************************************************
     # Convert orbital elements to cartesian Jacobi coordinates 
@@ -229,9 +237,11 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     # We always use center of momentum coordinates, so this is zero
     qjt_0 = keras.backend.zeros(shape=[batch_size, traj_size, space_dims])
     vjt_0 = keras.backend.zeros(shape=[batch_size, traj_size, space_dims])
+    ajt_0 = keras.backend.zeros(shape=[batch_size, traj_size, space_dims])
     
     # Model mapping orbital elements to cartesian coordinates
-    model_e2c = make_model_elt_to_cfg()
+    model_e2c_1 = make_model_elt_to_cfg(include_accel=True, batch_size=batch_size, name='elt_to_jac_1')
+    model_e2c_2 = make_model_elt_to_cfg(include_accel=True, batch_size=batch_size, name='elt_to_jac_2')
 
     # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
     elt1 = (a1, e1, inc1, Omega1, omega1, f1, mu1,)
@@ -239,8 +249,8 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
 
     # Convert from orbital elements to cartesian coordinates
     # This is the position and velocity of the Jacobi coordinate 
-    qjt_1, vjt_1 = model_e2c(elt1)
-    qjt_2, vjt_2 = model_e2c(elt2)
+    qjt_1, vjt_1, ajt_1 = model_e2c_1(elt1)
+    qjt_2, vjt_2, ajt_2 = model_e2c_2(elt2)
     
     # Reshape the Jacobi coordinates to include an axis for body number
     particle_traj_shape = (-1, 1, 3)
@@ -251,23 +261,28 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     vjt_0 = particle_traj_shape_layer(vjt_0)
     vjt_1 = particle_traj_shape_layer(vjt_1)
     vjt_2 = particle_traj_shape_layer(vjt_2)
+    ajt_0 = particle_traj_shape_layer(ajt_0)
+    ajt_1 = particle_traj_shape_layer(ajt_1)
+    ajt_2 = particle_traj_shape_layer(ajt_2)
 
     # Assemble the Jacobi coordinates over time
     qj = keras.layers.concatenate(inputs=[qjt_0, qjt_1, qjt_2], axis=-2, name='qj')
     vj = keras.layers.concatenate(inputs=[vjt_0, vjt_1, vjt_2], axis=-2, name='vj')
+    aj = keras.layers.concatenate(inputs=[ajt_0, ajt_1, ajt_2], axis=-2, name='aj')
 
     # Convert the Jacobi coordinates over time to Cartesian coordinates
-    q, v = JacobiToCartesian()([m, qj, vj])
+    q, v, a = JacobiToCartesian(include_accel=True, batch_size=batch_size)([m, qj, vj, aj])
     
-    # Dummy acceleration output
-    a = tf.zeros_like(v, name='a')
-
     # Name the outputs
     q = Identity(name='q')(q)
-    v = Identity(name='v')(v)    
-
+    v = Identity(name='v')(v)
+    a = Identity(name='a')(a)
+    
     # Wrap up the outputs
     outputs = (q, v, a)
+
+    # Diagnostic - include computed orbital elements with the output
+    # outputs = outputs + elt1 + elt2
 
     # Wrap this into a model
     suffix = '_'.join(str(sz) for sz in hidden_sizes)
@@ -276,12 +291,14 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     return model
 
 # ********************************************************************************************************************* 
-def make_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001):
+def make_model_g3b_nn(hidden_sizes, skip_layers=True, use_autodiff: bool = False,
+                      traj_size = 1001, batch_size = 64):
     """Create a NN model for the general three body problem; wrapper for entire work flow"""
     # Build the position model
-    position_model = make_position_model_g3b_nn(hidden_sizes=hidden_sizes, 
-                                                skip_layers=skip_layers, traj_size=traj_size)
+    position_model = make_position_model_g3b_nn(hidden_sizes=hidden_sizes, skip_layers=skip_layers, 
+                                                traj_size=traj_size, batch_size=batch_size)
     
     # Build the model with this position layer and the input trajectory size
-    return make_physics_model_g3b(position_model=position_model, traj_size=traj_size)
+    return make_physics_model_g3b(position_model=position_model, use_autodiff=use_autodiff,
+                                  traj_size=traj_size, batch_size=batch_size)
 

@@ -14,6 +14,7 @@ import numpy as np
 import zlib
 import pickle
 from tqdm.auto import tqdm
+from typing import List
 
 # Aliases
 keras = tf.keras
@@ -526,6 +527,40 @@ def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
     ds_val = ds_val.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
     ds_tst = ds_tst.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
     
+    return ds_trn, ds_val, ds_tst
+
+# ********************************************************************************************************************* 
+def combine_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: int, m_min: float, m_max: float,
+                      a_min: float, a_max: float, e_max: float, inc_max: float, seeds: List[int], batch_size: int):
+    """Make datasets for the general 3 body problem for train, val and test"""
+    
+    # First dataset
+    seed = seeds[0]
+    ds_trn, ds_val, ds_tst = make_datasets_g3b(
+           n_traj=n_traj, vt_split=vt_split, 
+           n_years=n_years, sample_freq=sample_freq,
+           m_min=m_min, m_max=m_max,
+           a_min=a_min, a_max=a_max,
+           e_max=e_max, inc_max=inc_max,
+           seed=seed,
+           batch_size=batch_size)
+    # Concatenate remaining datasets
+    for seed in seeds[1:]:
+        # The new batch of datasets
+        ds_trn_new, ds_val_new, ds_tst_new = make_datasets_g3b(
+               n_traj=n_traj, vt_split=vt_split, 
+               n_years=n_years, sample_freq=sample_freq,
+               m_min=m_min, m_max=m_max,
+               a_min=a_min, a_max=a_max,
+               e_max=e_max, inc_max=inc_max,
+               seed=seed,
+               batch_size=batch_size)
+        # Concatenate the new datasets
+        ds_trn = ds_trn.concatenate(ds_trn_new)
+        ds_val = ds_val.concatenate(ds_val_new)
+        ds_tst = ds_tst.concatenate(ds_tst_new)
+        
+    # Return the three large concatenated datasets
     return ds_trn, ds_val, ds_tst
 
 # ********************************************************************************************************************* 

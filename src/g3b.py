@@ -354,12 +354,11 @@ def make_physics_model_g3b(position_model: keras.Model,
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def compile_and_fit(model, ds, epochs, loss, optimizer, metrics, 
-                    save_freq, prev_history=None, batch_num=None):
-    # Compile the model
-    model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
+def fit_model(model, ds, epochs, loss, optimizer, metrics, 
+                    save_freq, prev_history=None, batch_num=0):
+    # Name for model data
     model_name = model.name
-    filepath=f'../models/g3b/{model_name}.h5'
+    filepath=f'../models/g3b/{model_name}_batch_{batch_num:03}.h5'
 
     # Parameters for callbacks
     interval = 1
@@ -373,18 +372,10 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics,
     cb_ckp = keras.callbacks.ModelCheckpoint(
             filepath=filepath, 
             save_freq=save_freq,
-            # save_best_only=True,
-            save_best_only=False,
+            save_best_only=True,
             save_weights_only=True,
             monitor='loss',
             verbose=0)    
-
-    # cb_early_stop = keras.callbacks.EarlyStopping(
-    #        monitor='loss',
-    #        min_delta=0.0,
-    #        patience=patience,
-    #        verbose=2,
-    #        restore_best_weights=True)    
 
     # All selected callbacks
     # callbacks = [cb_log, cb_time, cb_ckp, cb_early_stop]
@@ -399,6 +390,9 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics,
     # Convert from lists to numpy arrays 
     for key in history.keys():
         history[key] = np.array(history[key])
+        
+    # Add the batch num to history
+    history['batch_num'] = batch_num
 
     # Merge the previous history if provided
     if prev_history is not None:
@@ -414,5 +408,6 @@ def compile_and_fit(model, ds, epochs, loss, optimizer, metrics,
     
     # Restore the model to the best weights
     model.load_weights(filepath)
-
+    
+    # Return the history
     return history
