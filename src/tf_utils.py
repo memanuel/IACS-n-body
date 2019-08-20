@@ -24,20 +24,23 @@ def gpu_grow_memory():
         tf.config.experimental.set_memory_growth(gpu, True)
 
 # ********************************************************************************************************************* 
-def plot_loss_hist(hist,  model_name):
+def plot_loss_hist(hist,  model_name, key='loss', baseline=None):
     """Plot loss vs. wall time"""
     # Extract loss and wall time arrays
-    loss = hist['loss']
+    loss = hist[key]
     time = hist['time']
     
     # Plot loss vs. wall time
     fig, ax = plt.subplots(figsize=[16,9])
     ax.set_title(f'Loss vs. Wall Time for {model_name}')
     ax.set_xlabel('Wall Time (Seconds)')
-    ax.set_ylabel('Loss')
-    ax.plot(time, loss, color='blue')
-    ax.set_yscale('log')    
+    ax.set_ylabel(f'{key}')
+    ax.plot(time, loss, color='blue', label=key)
+    if baseline is not None:
+        ax.axhline(baseline, color='red', label='baseline')
+    ax.set_yscale('log')
     ax.grid()
+    ax.legend()
 
     return fig, ax
 

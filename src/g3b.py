@@ -389,10 +389,10 @@ def fit_model(model, ds, epochs, loss, optimizer, metrics,
     
     # Convert from lists to numpy arrays 
     for key in history.keys():
-        history[key] = np.array(history[key])
+        history[key] = np.array(history[key], dtype=np.float32)
         
     # Add the batch num to history
-    history['batch_num'] = np.array([batch_num])
+    history['batch_num'] = np.array([batch_num], dtype=np.float32)
 
     # Merge the previous history if provided
     if prev_history is not None:
@@ -404,7 +404,7 @@ def fit_model(model, ds, epochs, loss, optimizer, metrics,
         new_times = np.array(cb_time.times) + time_offset
         history['time'] = np.concatenate([prev_times, new_times])
     else:
-        history['time'] = np.array(cb_time.times)
+        history['time'] = np.array(cb_time.times, dtype=np.float32)
     
     # Restore the model to the best weights
     model.load_weights(filepath)
