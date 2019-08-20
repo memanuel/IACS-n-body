@@ -392,7 +392,7 @@ def fit_model(model, ds, epochs, loss, optimizer, metrics,
         history[key] = np.array(history[key])
         
     # Add the batch num to history
-    history['batch_num'] = batch_num
+    history['batch_num'] = np.array([batch_num])
 
     # Merge the previous history if provided
     if prev_history is not None:

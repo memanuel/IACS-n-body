@@ -536,6 +536,7 @@ def combine_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq
     
     # First dataset
     seed = seeds[0]
+    print(f'i=1 , seed={seed:3} ', end=None)
     ds_trn, ds_val, ds_tst = make_datasets_g3b(
            n_traj=n_traj, vt_split=vt_split, 
            n_years=n_years, sample_freq=sample_freq,
@@ -545,7 +546,9 @@ def combine_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq
            seed=seed,
            batch_size=batch_size)
     # Concatenate remaining datasets
-    for seed in seeds[1:]:
+    for i, seed in enumerate(seeds[1:]):
+        # Status update
+        print(f'i={i+1:2}, seed={seed:3} ', end=None)
         # The new batch of datasets
         ds_trn_new, ds_val_new, ds_tst_new = make_datasets_g3b(
                n_traj=n_traj, vt_split=vt_split, 
@@ -558,7 +561,7 @@ def combine_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq
         # Concatenate the new datasets
         ds_trn = ds_trn.concatenate(ds_trn_new)
         ds_val = ds_val.concatenate(ds_val_new)
-        ds_tst = ds_tst.concatenate(ds_tst_new)
+        ds_tst = ds_tst.concatenate(ds_tst_new)        
         
     # Return the three large concatenated datasets
     return ds_trn, ds_val, ds_tst

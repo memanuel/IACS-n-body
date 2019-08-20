@@ -28,7 +28,7 @@ from g3b import make_physics_model_g3b
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_position_model_g3b_math(traj_size=1001, batch_size=64):
+def make_position_model_g3b_math(traj_size:int =1001, batch_size:int =64, num_gpus:int = 1):
     """
     Compute orbit positions for the general two body problem from 
     the initial orbital elements with a deterministic mathematical model.
@@ -36,10 +36,11 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
     """
     num_particles = 3
     space_dims = 3
-    t = keras.Input(shape=(traj_size,), batch_size=batch_size, name='t')
-    q0 = keras.Input(shape=(num_particles, space_dims,), batch_size=batch_size, name='q0')
-    v0 = keras.Input(shape=(num_particles, space_dims,), batch_size=batch_size, name='v0')
-    m = keras.Input(shape=(num_particles,), batch_size=batch_size, name='m')
+    full_batch_size=batch_size*num_gpus
+    t = keras.Input(shape=(traj_size,), batch_size=full_batch_size, name='t')
+    q0 = keras.Input(shape=(num_particles, space_dims,), batch_size=full_batch_size, name='q0')
+    v0 = keras.Input(shape=(num_particles, space_dims,), batch_size=full_batch_size, name='v0')
+    m = keras.Input(shape=(num_particles,), batch_size=full_batch_size, name='m')
 
     # Wrap these up into one tuple of inputs for the model
     inputs = (t, q0, v0, m)
@@ -185,10 +186,11 @@ def make_position_model_g3b_math(traj_size=1001, batch_size=64):
     return model
 
 # ********************************************************************************************************************* 
-def make_model_g3b_math(traj_size: int = 1001, batch_size:int = 64):
+def make_model_g3b_math(traj_size: int = 1001, batch_size:int = 64, num_gpus:int=1):
     """Create a math model for the restricted three body problem; wrapper for entire work flow"""
     # Build the position model
-    position_model = make_position_model_g3b_math(traj_size=traj_size, batch_size=batch_size)
+    position_model = make_position_model_g3b_math(traj_size=traj_size, 
+                                                  batch_size=batch_size, num_gpus=num_gpus)
     
     # Set use_autodiff to false because in the math model, there the kepler velocity and accelartion are exact
     use_autodiff=False
