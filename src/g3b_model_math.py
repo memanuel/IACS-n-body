@@ -73,7 +73,6 @@ def make_position_model_g3b_math(traj_size:int =1001, batch_size:int =64, num_gp
     cfg_2 = (qj0_2, vj0_2, mu0_2)
 
     # Model mapping cartesian coordinates to orbital elements
-    # model_c2e = make_model_cfg_to_elt()
     model_c2e_1 = make_model_cfg_to_elt(name='orbital_element_1')
     model_c2e_2 = make_model_cfg_to_elt(name='orbital_element_2')
 

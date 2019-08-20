@@ -26,7 +26,8 @@ from g3b import make_physics_model_g3b
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, activity_reg=1.0E-6,
+def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, 
+                               kernel_reg=1.0E-6, activity_reg=1.0E-6, 
                                traj_size = 1001, batch_size=64):
     """
     Compute orbit positions for the general three body problem using a neural
@@ -127,8 +128,21 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, activity_reg=1.0E
     f2 = MeanToTrueAnomaly(name='mean_to_true_anomaly_f2')([M2, e2])
 
     # ******************************************************************
-    # Neural network: feature layers
+    # Feature extraction: preliminary Jacobi coordinates & masses
     # ******************************************************************
+
+    # Model mapping orbital elements to cartesian coordinates
+    model_e2c_1 = make_model_elt_to_cfg(include_accel=False, batch_size=batch_size, name='prelim_elt_to_jac_1')
+    model_e2c_2 = make_model_elt_to_cfg(include_accel=False, batch_size=batch_size, name='prelim_elt_to_jac_2')
+
+    # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
+    elt1 = (a1, e1, inc1, Omega1, omega1, f1, mu1,)
+    elt2 = (a2, e2, inc2, Omega2, omega2, f2, mu2,)
+
+    # Convert from orbital elements to cartesian coordinates
+    # This is the position and velocity of the Jacobi coordinate 
+    qjt_1, vjt_1 = model_e2c_1(elt1)
+    qjt_2, vjt_2 = model_e2c_2(elt2)
 
     # Extract masses of p1 and p2
     m1 = m[:, 1:2]
@@ -142,12 +156,16 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, activity_reg=1.0E
     # skip mass of body 0 because it as a constant = 1.0 solar mass
     m1 =  keras.layers.RepeatVector(n=traj_size, name='m1')(m1)
     m2 =  keras.layers.RepeatVector(n=traj_size, name='m2')(m2)
+
+    # ******************************************************************
+    # Neural network: feature layers
+    # ******************************************************************
     
     # Create an initial array of features: the time, mass and orbital elements
     phi_0 = keras.layers.concatenate(
         inputs=[t_vec, 
-                m1, a1, e1, inc1, Omega1, omega1, f1, M1,
-                m2, a2, e2, inc2, Omega2, omega2, f2, M2], 
+                m1, a1, e1, inc1, Omega1, omega1, qjt_1, vjt_1,
+                m2, a2, e2, inc2, Omega2, omega2, qjt_2, vjt_2], 
         name='phi_0')
 
     # Hidden layers as specified in hidden_sizes
@@ -177,55 +195,79 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, activity_reg=1.0E
     
     # Set type of regularizer
     # Set strength of activity regularizer using activity_reg input
-    reg_type = keras.regularizers.l1    
+    reg_type = keras.regularizers.l1
     
     # Semimajor axis
     delta_a1 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_a1')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_a1')(phi_n)
     delta_a2 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_a2')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_a2')(phi_n)
 
     # Eccentricity
     delta_e1 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_e1')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_e1')(phi_n)
     delta_e2 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_e2')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_e2')(phi_n)
 
     # Inclination
     delta_inc1 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_inc1')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_inc1')(phi_n)
     delta_inc2 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_inc2')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_inc2')(phi_n)
     
     # Longitude of ascending node
     delta_Omega1 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_Omega1')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_Omega1')(phi_n)
     delta_Omega2 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_Omega2')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_Omega2')(phi_n)
     
     # Argument of periapsis
     delta_omega1 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_omega1')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_omega1')(phi_n)
     delta_omega2 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_omega2')(phi_n)
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_omega2')(phi_n)
 
     # True anomaly
     delta_f1 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_f1')(phi_n)    
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=keras.regularizers.l1(activity_reg), 
+        name='delta_f1')(phi_n)    
     delta_f2 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', use_bias=False, 
-        activity_regularizer=reg_type(activity_reg), name='delta_f2')(phi_n)    
+        kernel_regularizer=reg_type(kernel_reg),
+        activity_regularizer=reg_type(activity_reg), 
+        name='delta_f2')(phi_n)    
 
     # Apply adjustments to Kepler-Jacobi orbital elements
     a1 = keras.layers.add(inputs=[a1, delta_a1], name='a1_raw')
@@ -267,7 +309,7 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, activity_reg=1.0E
     # The remaining elements can take any value; angles can wrap around past 2pi
 
     # ******************************************************************
-    # Convert orbital elements to cartesian Jacobi coordinates 
+    # Convert orbital elements to cartesian Jacobi coordinates and then to Cartesian body coordinates
     # ******************************************************************
     
     # The position of Jacobi coordinate 0 over time comes from the average velocity
@@ -329,10 +371,12 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, activity_reg=1.0E
 
 # ********************************************************************************************************************* 
 def make_model_g3b_nn(hidden_sizes, skip_layers=True, use_autodiff: bool = False,
+                      kernel_reg=1.0E-6, activity_reg=1.0E-6, 
                       traj_size = 1001, batch_size = 64):
     """Create a NN model for the general three body problem; wrapper for entire work flow"""
     # Build the position model
     position_model = make_position_model_g3b_nn(hidden_sizes=hidden_sizes, skip_layers=skip_layers, 
+                                                kernel_reg=kernel_reg, activity_reg=activity_reg,
                                                 traj_size=traj_size, batch_size=batch_size)
     
     # Build the model with this position layer and the input trajectory size

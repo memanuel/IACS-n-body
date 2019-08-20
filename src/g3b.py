@@ -354,8 +354,7 @@ def make_physics_model_g3b(position_model: keras.Model,
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def fit_model(model, ds, epochs, loss, optimizer, metrics, 
-                    save_freq, prev_history=None, batch_num=0):
+def fit_model(model, ds, epochs, save_freq, prev_history=None, batch_num=0):
     # Name for model data
     model_name = model.name
     filepath=f'../models/g3b/{model_name}_batch_{batch_num:03}.h5'
