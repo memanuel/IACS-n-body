@@ -219,19 +219,31 @@ class OrbitalElementToConfig(keras.layers.Layer):
         # vz = v0*((e+cf)*co*si - sf*si*so)
         # The term e+cf appears three times
         epcf = e + cf
-        vx = v0*(epcf*(-ci*co*sO - cO*so) - sf*(co*cO - ci*so*sO))
-        vy = v0*(epcf*(ci*co*cO - sO*so)  - sf*(co*sO + ci*so*cO))
+        # vx = v0*(epcf*(-ci*co*sO - cO*so) - sf*(co*cO - ci*so*sO))
+        # vy = v0*(epcf*(ci*co*cO - sO*so)  - sf*(co*sO + ci*so*cO))
+        # vz = v0*(epcf*co*si - sf*si*so)
+        # The term cocO appears twice
+        cocO = co * cO
+        # The term cosO appears twice
+        cosO = co * sO
+        # The term so*sO appears twice
+        sosO = so * sO
+        # The terms socO appears twice
+        socO = so*cO
+
+        # Simplified expression for velocity with substitutions
+        vx = v0*(epcf*(-ci*cosO - socO) - sf*(cocO - ci*sosO))
+        vy = v0*(epcf*(ci*cocO - sosO)  - sf*(cosO + ci*socO))
         vz = v0*(epcf*co*si - sf*si*so)
         
         # Acceleration - Compute this only if it was requested
-        # Magnitude is mu / R2
-        # Components are ax = -mu / R3 * qx, etc.
+        # Magnitude is mu / r^2
+        # Components are ax = -mu / r^3 * qx, etc.
         if self.include_accel:
             mu_over_r3 = -mu / (r*r*r)
             ax = mu_over_r3 * qx
             ay = mu_over_r3 * qy
-            az = mu_over_r3 * qz
-            
+            az = mu_over_r3 * qz            
             return qx, qy, qz, vx, vy, vz, ax, ay, az
         else:
             return qx, qy, qz, vx, vy, vz

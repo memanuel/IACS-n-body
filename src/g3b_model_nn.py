@@ -9,6 +9,7 @@ Fri Aug 16 16:11:28 2019
 
 # Library imports
 import tensorflow as tf
+import numpy as np
 
 # Aliases
 keras = tf.keras
@@ -25,7 +26,8 @@ from g3b import make_physics_model_g3b
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001, batch_size=64):
+def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, activity_reg=1.0E-6,
+                               traj_size = 1001, batch_size=64):
     """
     Compute orbit positions for the general three body problem using a neural
     network that computes adjustments to orbital elements.
@@ -69,7 +71,6 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     cfg_2 = (qj0_2, vj0_2, mu0_2)
 
     # Model mapping cartesian coordinates to orbital elements
-    # model_c2e = make_model_cfg_to_elt()
     model_c2e_1 = make_model_cfg_to_elt(name='orbital_element_1')
     model_c2e_2 = make_model_cfg_to_elt(name='orbital_element_2')
 
@@ -102,7 +103,7 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     N1_t = keras.layers.multiply(inputs=[N1_0_vec, t_vec])
     M1 = keras.layers.add(inputs=[M1_0_vec, N1_t])
 
-    # Compute the true anomaly from the mean anomly and eccentricity
+    # Compute the true anomaly from the mean anomaly and eccentricity
     f1 = MeanToTrueAnomaly(name='mean_to_true_anomaly_f1')([M1, e1])
 
     # ******************************************************************
@@ -122,18 +123,31 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     N2_t = keras.layers.multiply(inputs=[N2_0_vec, t_vec])
     M2 = keras.layers.add(inputs=[M2_0_vec, N2_t])
 
-    # Compute the true anomaly from the mean anomly and eccentricity
+    # Compute the true anomaly from the mean anomaly and eccentricity
     f2 = MeanToTrueAnomaly(name='mean_to_true_anomaly_f2')([M2, e2])
 
     # ******************************************************************
     # Neural network: feature layers
     # ******************************************************************
 
-    # Create an initial array of features: the time and orbital elements
+    # Extract masses of p1 and p2
+    m1 = m[:, 1:2]
+    m2 = m[:, 2:3]
+    # Manually set the shapes to work around documented bug on slices losing shape info
+    mass_shape = (batch_size, 1)
+    m1.set_shape(mass_shape)
+    m2.set_shape(mass_shape)
+
+    # Repeat the masses to shape (batch_size, traj_size, num_body-1)
+    # skip mass of body 0 because it as a constant = 1.0 solar mass
+    m1_vec =  keras.layers.RepeatVector(n=traj_size, name='m1_vec')(m1)
+    m2_vec =  keras.layers.RepeatVector(n=traj_size, name='m2_vec')(m2)
+    
+    # Create an initial array of features: the time, mass and orbital elements
     phi_0 = keras.layers.concatenate(
-        inputs=[t_vec,
-                a1, e1, inc1, Omega1, omega1, f1, mu1, M1, N1_0_vec,
-                a2, e2, inc2, Omega2, omega2, f2, mu2, M2, N2_0_vec,], 
+        inputs=[t_vec, 
+                m1_vec, a1, e1, inc1, Omega1, omega1, f1, M1,
+                m2_vec, a2, e2, inc2, Omega2, omega2, f2, M2], 
         name='phi_0')
 
     # Hidden layers as specified in hidden_sizes
@@ -161,41 +175,55 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     # Neural network: layers with adjustment to orbital elements
     # ******************************************************************
     
+    # Set strength of activity regularizer using activity_reg input
+    
     # Semimajor axis
     delta_a1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_a1')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_a1')(phi_n)
     delta_a2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_a2')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_a2')(phi_n)
 
     # Eccentricity
     delta_e1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_e1')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_e1')(phi_n)
     delta_e2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_e2')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_e2')(phi_n)
 
     # Inclination
     delta_inc1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_inc1')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_inc1')(phi_n)
     delta_inc2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_inc2')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_inc2')(phi_n)
     
     # Longitude of ascending node
     delta_Omega1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_Omega1')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_Omega1')(phi_n)
     delta_Omega2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_Omega2')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_Omega2')(phi_n)
     
     # Argument of periapsis
     delta_omega1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_omega1')(phi_n)
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_omega1')(phi_n)
     delta_omega2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_omega2')(phi_n)
-    
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_omega2')(phi_n)
+
     # True anomaly
     delta_f1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_f1')(phi_n)    
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_f1')(phi_n)    
     delta_f2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', bias_initializer='zeros', name='delta_f2')(phi_n)    
+        units=1, kernel_initializer='zeros', use_bias=False, 
+        activity_regularizer=keras.regularizers.l1(activity_reg), name='delta_f2')(phi_n)    
 
     # Apply adjustments to Kepler-Jacobi orbital elements
     a1 = keras.layers.add(inputs=[a1, delta_a1], name='a1_raw')
@@ -204,8 +232,8 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     e1 = keras.layers.add(inputs=[e1, delta_e1], name='e1_raw')
     e2 = keras.layers.add(inputs=[e2, delta_e2], name='e2_raw')
 
-    inc1 = keras.layers.add(inputs=[inc1, delta_inc1], name='inc1')
-    inc2 = keras.layers.add(inputs=[inc2, delta_inc2], name='inc2')
+    inc1 = keras.layers.add(inputs=[inc1, delta_inc1], name='inc1_raw')
+    inc2 = keras.layers.add(inputs=[inc2, delta_inc2], name='inc2_raw')
 
     Omega1 = keras.layers.add(inputs=[Omega1, delta_Omega1], name='Omega1')
     Omega2 = keras.layers.add(inputs=[Omega2, delta_Omega2], name='Omega2')
@@ -220,13 +248,20 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, traj_size = 1001,
     a1 = keras.layers.ReLU(name='a1')(a1)
     a2 = keras.layers.ReLU(name='a2')(a2)
 
-    # Limit e to be in interval [0.0, 1.0]
+    # Limit e to be in interval [0.0, 0.9999]
     ecc_min = 0.0000
     ecc_max = 0.9900
-    clip_func = lambda x : tf.clip_by_value(x, ecc_min, ecc_max)
-    e1 = keras.layers.Activation(activation=clip_func, name='e1_clip')(e1)
-    e2 = keras.layers.Activation(activation=clip_func, name='e2_clip')(e2)
-
+    clip_func_e = lambda x : tf.clip_by_value(x, ecc_min, ecc_max)
+    e1 = keras.layers.Activation(activation=clip_func_e, name='e1')(e1)
+    e2 = keras.layers.Activation(activation=clip_func_e, name='e2')(e2)
+    
+    # Limit inc to be in interval [0.0, pi]
+    inc_min = 0.0
+    inc_max = np.pi
+    clip_func_inc = lambda x : tf.clip_by_value(x, inc_min, inc_max)
+    inc1 = keras.layers.Activation(activation=clip_func_inc, name='inc1')(inc1)
+    inc2 = keras.layers.Activation(activation=clip_func_inc, name='inc2')(inc2)
+    
     # The remaining elements can take any value; angles can wrap around past 2pi
 
     # ******************************************************************

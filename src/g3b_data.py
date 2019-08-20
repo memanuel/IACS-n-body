@@ -536,7 +536,7 @@ def combine_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq
     
     # First dataset
     seed = seeds[0]
-    print(f'i=1 , seed={seed:3} ', end=None)
+    # print(f'i=1 , seed={seed:3} ', end=None)
     ds_trn, ds_val, ds_tst = make_datasets_g3b(
            n_traj=n_traj, vt_split=vt_split, 
            n_years=n_years, sample_freq=sample_freq,
@@ -546,9 +546,9 @@ def combine_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq
            seed=seed,
            batch_size=batch_size)
     # Concatenate remaining datasets
-    for i, seed in enumerate(seeds[1:]):
+    for seed in tqdm(list(seeds[1:])):
         # Status update
-        print(f'i={i+1:2}, seed={seed:3} ', end=None)
+        # print(f'i={i+1:2}, seed={seed:3} ', end=None)
         # The new batch of datasets
         ds_trn_new, ds_val_new, ds_tst_new = make_datasets_g3b(
                n_traj=n_traj, vt_split=vt_split, 
@@ -590,6 +590,37 @@ def make_datasets_solar(n_traj=1000, vt_split=0.20, n_years=100, sample_freq=10,
                              m_min=m_min, m_max=m_max, a_min=a_min, a_max=a_max, e_max=e_max, inc_max=inc_max, 
                              seed=seed, batch_size=batch_size)
     
+# ********************************************************************************************************************* 
+def combine_datasets_solar(num_data_sets: int, batch_size: int =64, seed0: int =42):
+    """Make 3 data sets for solar-type systems with a range of a, e, and inclinations."""
+
+    # Number of trajectories in each constituent batch
+    n_traj = 10000
+    vt_split = 0.20
+
+    # Time parameters
+    n_years=100
+    sample_freq=10
+
+    # Configuration of system
+    m_min = 1.0E-7 
+    m_max = 2.0E-3 
+    a_min = 0.50
+    a_max = 32.0
+    e_max = 0.08
+    inc_max = 0.04
+    
+    # List of random seeds
+    seeds = list(range(seed0, seed0+3*num_data_sets, 3))
+    
+    # Delegate to conbine_datasets_g3b
+    ds_trn, ds_val, ds_tst = combine_datasets_g3b(
+        n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq,
+        m_min=m_min, m_max=m_max, a_min=a_min, a_max=a_max,
+        e_max=e_max, inc_max=inc_max, seeds=seeds, batch_size=batch_size)
+    
+    return ds_trn, ds_val, ds_tst
+
 # ********************************************************************************************************************* 
 def make_datasets_hard(n_traj=1000, vt_split=0.20, n_years=100, sample_freq=10, batch_size=64, seed=42):
     """Make 3 data sets for systems with more difficult parameter ranges."""
