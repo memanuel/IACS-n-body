@@ -406,11 +406,11 @@ def make_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: i
     return ds_trn, ds_val, ds_tst
 
 # ********************************************************************************************************************* 
-def combine_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int, 
-                         sd_log_a: float, sd_log_e: float, sd_log_inc: float,
-                         sd_Omega: float, sd_omega: float, sd_f: float,
-                         seeds: List[int], batch_size: int):
-    """Make datasets for the general 3 body problem for train, val and test"""
+def combine_datasets_sej_impl(n_traj: int, vt_split: float, n_years: int, sample_freq: int, 
+                              sd_log_a: float, sd_log_e: float, sd_log_inc: float,
+                              sd_Omega: float, sd_omega: float, sd_f: float,
+                              seeds: List[int], batch_size: int):
+    """Combine a collection of SEJ data sets into one large data set."""
     
     # First dataset
     seed = seeds[0]
@@ -442,6 +442,42 @@ def combine_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq
     # Return the three large concatenated datasets
     return ds_trn, ds_val, ds_tst
 
+# ********************************************************************************************************************* 
+def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int):
+    """Combine a collection of SEJ data sets into one large data set."""
+    # Number of trajectories in each constituent batch
+    n_traj = 10000
+    vt_split = 0.20
+
+    # Time parameters
+    n_years=100
+    sample_freq=10
+
+    # Orbital perturbation scales
+    sej_sigma = {
+    'sd_log_a' : 0.01,
+    'sd_log_e' : 0.10,
+    'sd_log_inc' : 0.10,
+    'sd_Omega' : np.pi * 0.02,
+    'sd_omega' : np.pi * 0.02,
+    'sd_f' : np.pi * 0.02,
+    }
+    
+    # List of random seeds
+    seeds = list(range(seed0, seed0+3*num_data_sets, 3))
+    
+    # Status update
+    # print(f'Loading {num_data_sets} SEJ data sets with:\n', sej_sigma)
+    
+    # Delegate to conbine_datasets_g3b
+    ds_trn, ds_val, ds_tst = combine_datasets_sej_impl(
+        n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq,
+        **sej_sigma,
+        seeds=seeds, batch_size=batch_size)
+    
+    return ds_trn, ds_val, ds_tst
+
+    
 # ********************************************************************************************************************* 
 def main():
     """Main routine for making SEJ data sets"""

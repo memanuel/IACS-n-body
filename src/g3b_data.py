@@ -535,7 +535,7 @@ def make_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
 # ********************************************************************************************************************* 
 def combine_datasets_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: int, m_min: float, m_max: float,
                       a_min: float, a_max: float, e_max: float, inc_max: float, seeds: List[int], batch_size: int):
-    """Make datasets for the general 3 body problem for train, val and test"""
+    """Combine a collection of g3b data sets into one large data set."""
     
     # First dataset
     seed = seeds[0]
@@ -595,7 +595,7 @@ def make_datasets_solar(n_traj=1000, vt_split=0.20, n_years=100, sample_freq=10,
     
 # ********************************************************************************************************************* 
 def combine_datasets_solar(num_data_sets: int, batch_size: int =64, seed0: int =42):
-    """Make 3 data sets for solar-type systems with a range of a, e, and inclinations."""
+    """Combine a collection of solar data sets into one large data set."""
 
     # Number of trajectories in each constituent batch
     n_traj = 10000
