@@ -17,7 +17,7 @@ import warnings
 from typing import List
 
 # Local imports
-from g3b_data import make_traj_g3b
+from g3b_data import make_traj_from_sim
 from utils import hash_id_crc32
 
 # Aliases
@@ -25,6 +25,80 @@ keras = tf.keras
 
 # Suppress the annoying and verbose tensorflow warnings
 warnings.simplefilter("ignore")
+
+# ********************************************************************************************************************* 
+def make_sim_cart(m, q0, v0, sample_freq, integrator, debug_print):
+    """
+    Make a Rebound simulation for the 3 body problem using Cartesian position and velocity.
+    INPUTS:
+    m: masses of of 3 bodies in solar units; array of size 3
+    q0: the starting positions of the 3 bodies in AU; array of size (3, 3,) = (num_body, space_dims)
+    v0: the starting velocities of the 3 bodies in AU/yr; array of size (3, 3,)
+    sample_freq: number of sample points per year, e.g. 365
+    integrator: the name of the rebound integrator.  one of 'ias15' or 'whfast'
+    RETURNS:
+    sim: an instance of the simulator that is ready to integrate
+    """
+    # Unpack the position components
+    qx = q0[:, 0]
+    qy = q0[:, 1]
+    qz = q0[:, 2]
+    
+    # Unpack the velocity components
+    vx = v0[:, 0]
+    vy = v0[:, 1]
+    vz = v0[:, 2]
+    
+    # Create a simulation
+    sim = rebound.Simulation()
+
+    # Set units
+    sim.units = ('yr', 'AU', 'Msun')
+
+    # Set integrator.  if acceleration output required, must use ias15
+    sim.integrator = integrator
+
+    # Set the simulation time step based on sample_freq
+    sim.dt = 1.0 / sample_freq
+
+    # Add the 3 bodies in the provided order
+    for i in range(3):
+        sim.add(m=m[i], x=qx[i], y=qy[i], z=qz[i], vx=vx[i], vy=vy[i], vz=vz[i])
+        if debug_print:
+            print(f'particle {i}, m={m[i]}, x={qx[i]}, y={qy[i]}, z={qz[i]}, '
+                  f'vx={vx[i]}, vy={vy[i]}, vz={vz[i]}, ')
+    
+    # Move to the center-of-momentum coordinate system
+    sim.move_to_com()
+    
+    return sim   
+            
+# ********************************************************************************************************************* 
+def make_traj_cart(m, q0, v0, n_years, sample_freq, integrator='ias15', debug_print = False):
+    """
+    Make an array of training data points from an initial configuration in Cartesian coordinates
+    Creates one trajectory with the same initial configuration.
+    INPUTS:
+    m: masses of of 3 bodies in solar units; array of size 3
+    q0: the starting positions of the 3 bodies in AU; array of size (3, 3,) = (num_body, space_dims)
+    v0: the starting velocities of the 3 bodies in AU/yr; array of size (3, 3,)
+    sample_freq: number of sample points per year, e.g. 365
+    integrator: the name of the rebound integrator.  one of 'ias15' or 'whfast'
+    NOTE:
+    the orbital element inputs a, e, inc, Omega, omega, f are all arrays of size 3
+    RETURNS:
+    input_dict: a dictionary with the input fields t, q0, v0
+    output_dict: a dictionary with the output fields q, v, a, q0_rec, v0_rec, T, H, H, L
+    """
+    # Build the simulation from the orbital elements
+    sim = make_sim_cart(m=m, q0=q0, v0=v0,
+                        sample_freq=sample_freq, integrator=integrator, debug_print=debug_print)
+    
+    # Create the trajectory from this simulation
+    inputs, outputs = make_traj_from_sim(sim=sim, n_years=n_years, sample_freq=sample_freq, debug_print=debug_print)
+    
+    # Return the dicts
+    return (inputs, outputs)
 
 # ********************************************************************************************************************* 
 def make_sim_horizons(object_names: List[str], horizon_date: str):
@@ -96,21 +170,15 @@ def make_sa_sej(n_years: int, sample_freq:int ):
 
 # ********************************************************************************************************************* 
 def make_data_sej(n_traj: int, n_years: int, sample_freq: int,
-                  sd_log_a: float, sd_log_e: float, sd_log_inc: float,
-                  sd_Omega: float, sd_omega: float, sd_f: float,
-                  seed: int):
+                  sd_q: np.array, sd_v: np.array, seed: int):
     """
     Build a data set of perturbed instances of the sun-earth-jupiter system.
     INPUTS:
         n_traj: the number of trajectories to simulate
         n_years: the number of years in each trajectory
         sample_freq: the number of sample points per year
-        sd_a: the standard deviation of log(a)
-        sd_log_e: the standard deviation of log(e)
-        sd_log_inc: the standard deviation of log(inc)
-        sd_Omega: the standard deviation of Omega
-        sd_omega: the standard deviation of omega
-        sd_f: the standard deviation of f
+        sd_q: the standard deviation of perturbations applied to position qx, qy, and qz; array of shape (2,)
+        sd_v: the standard deviation of perturbations applied to velocity vx, vy, and vz; array of shape (2,)
         seed: the random seed
     OUTPUTS:
         inputs: a dictionary of numpy arrays with inputs to the model
@@ -123,52 +191,59 @@ def make_data_sej(n_traj: int, n_years: int, sample_freq: int,
     
     # Simulation archive for unperperturbed system
     sa = make_sa_sej(n_years, sample_freq)
-    # Start of the simulation
-    sim = sa[0]
+    # Start of the unperturbed simulation
+    sim0 = sa[0]
     # Extract particles for sun, earth and jupiter
-    ps = sim.particles
+    ps = sim0.particles
     p0, p1, p2 = ps
     
     # Unpack the masses
-    m0 = np.array([p0.m, p1.m, p2.m], dtype=np.float32)
+    mu = np.array([p0.m, p1.m, p2.m], dtype=np.float32)
     
-    # Unpack the unperturbed orbital elements
-    a0 = np.array([p1.a, p2.a], dtype=np.float32)
-    e0 = np.array([p1.e, p2.e], dtype=np.float32)
-    inc0 = np.array([p1.inc, p2.inc], dtype=np.float32)
-    Omega0 = np.array([p1.Omega, p2.Omega], dtype=np.float32)
-    omega0 = np.array([p1.omega, p2.omega], dtype=np.float32)
-    f0 = np.array([p1.f, p2.f], dtype=np.float32)
+    # Unpack the unperturbed position
+    qu_0 = np.array([p0.x, p0.y, p0.z], dtype=np.float32)
+    qu_1 = np.array([p1.x, p1.y, p1.z], dtype=np.float32)
+    qu_2 = np.array([p2.x, p2.y, p2.z], dtype=np.float32)
+    qu = np.array([qu_0, qu_1, qu_2])
+
+    # Unpack the unperturbed velocity
+    vu_0 = np.array([p0.vx, p0.vy, p0.vz], dtype=np.float32)
+    vu_1 = np.array([p1.vx, p1.vy, p1.vz], dtype=np.float32)
+    vu_2 = np.array([p2.vx, p2.vy, p2.vz], dtype=np.float32)
+    vu = np.array([vu_0, vu_1, vu_2])
 
     # Set random seed for reproducible results
     np.random.seed(seed=seed)
 
-    # Initialize the shift to orbital element by sampling according to the inputs
-    elt_size = (n_traj, 2)
-    delta_log_a = np.random.normal(loc=0.0, scale=sd_log_a, size=elt_size).astype(np.float32)
-    delta_log_e = np.random.normal(loc=0.0, scale=sd_log_e, size=elt_size).astype(np.float32)
-    delta_log_inc = np.random.normal(loc=0.0, scale=sd_log_inc, size=elt_size).astype(np.float32)
-    delta_Omega = np.random.normal(loc=0.0, scale=sd_Omega, size=elt_size).astype(np.float32)
-    delta_omega = np.random.normal(loc=0.0, scale=sd_omega, size=elt_size).astype(np.float32)
-    delta_f = np.random.normal(loc=0.0, scale=sd_f, size=elt_size).astype(np.float32)
+    # Number of particles and spatial dimensions
+    num_particles = 3
+    space_dims = 3
 
-    # Compute perturbed orbital elements
-    orb_a0 = a0 * np.exp(delta_log_a)
-    orb_e0 = e0 * np.exp(delta_log_e)
-    orb_inc0 = inc0 * np.exp(delta_log_inc)
-    orb_Omega0 = Omega0 + delta_Omega
-    orb_omega0 = omega0 + delta_omega
-    orb_f0 = f0 + delta_f
+    # If sd_q and sd_v were passed as scalars, convert to arrays of size 3
+    if type(sd_q) is float:
+        sd_q = np.repeat(sd_q, 3)
+    if type(sd_v) is float:
+        sd_v = np.repeat(sd_v, 3)        
+
+    # Initialize the shift to initial position and velocity by sampling according to the inputs
+    shift_size = (n_traj, num_particles, space_dims)
+    shift_comp_size = (n_traj, space_dims)
+    delta_q = np.zeros(shape=shift_size, dtype=np.float32)
+    delta_v = np.zeros(shape=shift_size, dtype=np.float32) 
+    # Iterate over particle j to be shifted; indices are (traj_num, particle_num, space_dim)
+    for j in range(3):
+        delta_q[:, j, :] = np.random.normal(loc=0.0, scale=sd_q[j], size=shift_comp_size).astype(np.float32)
+        delta_v[:, j, :] = np.random.normal(loc=0.0, scale=sd_v[j], size=shift_comp_size).astype(np.float32)
+
+    # Compute perturbed position and velocity
+    qp = qu + delta_q
+    vp = vu + delta_v
 
     # Number of samples including both start and end in each trajectory
     traj_size = sample_freq*n_years + 1
     
     # The integrator to use
     integrator = 'ias15'
-
-    # Number of particles and spatial dimensions
-    num_particles = 3
-    space_dims = 3
 
     # Shape of arrays for various inputs and outputs
     time_shape = (n_traj, traj_size)
@@ -205,11 +280,9 @@ def make_data_sej(n_traj: int, n_years: int, sample_freq: int,
     # Sample the trajectories
     for i in tqdm(range(n_traj)):
         # Generate one trajectory
-        inputs_traj, outputs_traj = make_traj_g3b(m=m0, 
-                                                  a=orb_a0[i], e=orb_e0[i], inc=orb_inc0[i], 
-                                                  Omega=orb_Omega0[i], omega=orb_omega0[i], f=orb_f0[i], 
-                                                  n_years=n_years, sample_freq=sample_freq, 
-                                                  integrator=integrator)
+        inputs_traj, outputs_traj = \
+            make_traj_cart(m=mu, q0=qp[i], v0=vp[i], n_years=n_years, sample_freq=sample_freq, 
+                           integrator=integrator, debug_print = False)
 
         # Copy results into main arrays
         # Inputs
@@ -271,9 +344,7 @@ def make_data_sej(n_traj: int, n_years: int, sample_freq: int,
 
 # ********************************************************************************************************************* 
 def make_filename_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int, 
-                      sd_log_a: float, sd_log_e: float, sd_log_inc: float,
-                      sd_Omega: float, sd_omega: float, sd_f: float,
-                      seed: int):
+                      sd_q: np.array, sd_v: np.array, seed: int):
     """Make file name for serializing datasets for the perturbed sen-earth-jupiter system"""
     
     # Create dictionary with attributes
@@ -282,15 +353,11 @@ def make_filename_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: i
         'vt_split': vt_split,
         'n_years': n_years,
         'sample_freq': sample_freq,
-        'sd_log_a': sd_log_a,
-        'sd_log_e': sd_log_e,
-        'sd_log_inc': sd_log_inc,
-        'sd_Omega': sd_Omega,
-        'sd_omega': sd_omega,
-        'sd_f': sd_f,
+        'sd_q': sd_q,
+        'sd_v': sd_v,
         'seed': seed,
         }
-    
+
     # Create a non-negative hash ID of the attributes
     # attributes_bytes = bytes(str(attributes), 'utf-8')
     # hash_id = zlib.crc32(attributes_bytes)
@@ -301,15 +368,11 @@ def make_filename_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: i
 
 # ********************************************************************************************************************* 
 def load_data_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int, 
-                  sd_log_a: float, sd_log_e: float, sd_log_inc: float,
-                  sd_Omega: float, sd_omega: float, sd_f: float,
-                  seed: int):
+                  sd_q: np.array, sd_v: np.array, seed: int):
     """Load data for the perturbed sun-earth-jupiter problem for train, val and test"""
     # Get the filename for these arguments
     filename = make_filename_sej(n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq, 
-                                 sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-                                 sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
-                                 seed=seed)
+                                 sd_q=sd_q, sd_v=sd_v, seed=seed)
     # Attempt to load the file
     try:
         with open(filename, 'rb') as fh:
@@ -333,16 +396,12 @@ def load_data_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int,
 
 # ********************************************************************************************************************* 
 def make_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int,
-                      sd_log_a: float, sd_log_e: float, sd_log_inc: float,
-                      sd_Omega: float, sd_omega: float, sd_f: float,
-                      seed: int, batch_size: int):
+                      sd_q: np.array, sd_v: np.array, seed: int, batch_size: int):
     """Make datasets for the perturbed sen-earth-jupiter problem for train, val and test"""
 
     # Attempt to load the data
     data = load_data_sej(n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq, 
-                         sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-                         sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
-                         seed=seed)
+                         sd_q=sd_q, sd_v=sd_v, seed=seed)
 
     # Unpack data if available
     if data is not None:
@@ -361,23 +420,16 @@ def make_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: i
 
         # Generate inputs and outputs for orbits with input parameters
         inputs_trn, outputs_trn = make_data_sej(n_traj=n_traj_trn, n_years=n_years, sample_freq=sample_freq,
-                                                sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-                                                sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
-                                                seed=seed_trn)
+                                                sd_q=sd_q, sd_v=sd_v, seed=seed_trn)
         inputs_val, outputs_val = make_data_sej(n_traj=n_traj_val, n_years=n_years, sample_freq=sample_freq,
-                                                sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-                                                sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
-                                                seed=seed_val)
+                                                sd_q=sd_q, sd_v=sd_v, seed=seed_val)
         inputs_tst, outputs_tst = make_data_sej(n_traj=n_traj_tst, n_years=n_years, sample_freq=sample_freq,
-                                                sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-                                                sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
-                                                seed=seed_tst)
+                                                sd_q=sd_q, sd_v=sd_v, seed=seed_tst)
         
         # Get the filename for these arguments
         filename = make_filename_sej(n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq, 
-                                     sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-                                     sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
-                                     seed=seed)
+                                     sd_q=sd_q, sd_v=sd_v, seed=seed)
+
         # Save these to file
         vartbl = dict()
         vartbl['inputs_trn'] = inputs_trn
@@ -407,9 +459,7 @@ def make_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: i
 
 # ********************************************************************************************************************* 
 def combine_datasets_sej_impl(n_traj: int, vt_split: float, n_years: int, sample_freq: int, 
-                              sd_log_a: float, sd_log_e: float, sd_log_inc: float,
-                              sd_Omega: float, sd_omega: float, sd_f: float,
-                              seeds: List[int], batch_size: int):
+                              sd_q: np.array, sd_v: np.array, seeds: List[int], batch_size: int):
     """Combine a collection of SEJ data sets into one large data set."""
     
     # First dataset
@@ -418,10 +468,8 @@ def combine_datasets_sej_impl(n_traj: int, vt_split: float, n_years: int, sample
     ds_trn, ds_val, ds_tst = make_datasets_sej(
            n_traj=n_traj, vt_split=vt_split, 
            n_years=n_years, sample_freq=sample_freq,
-           sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-           sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
-           seed=seed,
-           batch_size=batch_size)
+           sd_q=sd_q, sd_v=sd_v, 
+           seed=seed, batch_size=batch_size)
     # Concatenate remaining datasets
     for seed in tqdm(list(seeds[1:])):
         # Status update
@@ -430,10 +478,8 @@ def combine_datasets_sej_impl(n_traj: int, vt_split: float, n_years: int, sample
         ds_trn_new, ds_val_new, ds_tst_new = make_datasets_sej(
                n_traj=n_traj, vt_split=vt_split, 
                n_years=n_years, sample_freq=sample_freq,
-               sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-               sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
-               seed=seed,
-               batch_size=batch_size)
+               sd_q=sd_q, sd_v=sd_v, 
+               seed=seed, batch_size=batch_size)
         # Concatenate the new datasets
         ds_trn = ds_trn.concatenate(ds_trn_new)
         ds_val = ds_val.concatenate(ds_val_new)
@@ -454,14 +500,8 @@ def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int):
     sample_freq=10
 
     # Orbital perturbation scales
-    sej_sigma = {
-    'sd_log_a' : 0.01,
-    'sd_log_e' : 0.10,
-    'sd_log_inc' : 0.10,
-    'sd_Omega' : np.pi * 0.02,
-    'sd_omega' : np.pi * 0.02,
-    'sd_f' : np.pi * 0.02,
-    }
+    sd_q = 0.01
+    sd_v = 0.01
     
     # List of random seeds
     seeds = list(range(seed0, seed0+3*num_data_sets, 3))
@@ -472,7 +512,7 @@ def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int):
     # Delegate to conbine_datasets_g3b
     ds_trn, ds_val, ds_tst = combine_datasets_sej_impl(
         n_traj=n_traj, vt_split=vt_split, n_years=n_years, sample_freq=sample_freq,
-        **sej_sigma,
+        sd_q=sd_q, sd_v=sd_v,
         seeds=seeds, batch_size=batch_size)
     
     return ds_trn, ds_val, ds_tst
@@ -489,18 +529,14 @@ def main():
     make_sa_sej(n_years=n_years, sample_freq=sample_freq)
     
     # Number and size of trajectories
-    num_batches = 20
+    num_batches = 5
     n_traj = 10000
-    batch_size = 64
+    batch_size = 256
     vt_split = 0.20
     
     # Orbital perturbation scales
-    sd_log_a = 0.01
-    sd_log_e = 0.10
-    sd_log_inc = 0.10
-    sd_Omega = np.pi * 0.02
-    sd_omega = np.pi * 0.02
-    sd_f = np.pi * 0.02
+    sd_q = np.array([0.00, 0.01, 0.05])
+    sd_v = sd_q
     
     # List of seeds to use for datasets
     seed0 = 42
@@ -511,8 +547,7 @@ def main():
     for i, seed in tqdm(enumerate(seeds)):
         make_datasets_sej(n_traj=n_traj, vt_split=vt_split, 
                           n_years=n_years, sample_freq=sample_freq,
-                          sd_log_a=sd_log_a, sd_log_e=sd_log_e, sd_log_inc=sd_log_inc,
-                          sd_Omega=sd_Omega, sd_omega=sd_omega, sd_f=sd_f,
+                          sd_q=sd_q, sd_v=sd_v,
                           seed=seed, batch_size=batch_size)
 # ********************************************************************************************************************* 
 if __name__ == '__main__':

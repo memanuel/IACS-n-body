@@ -22,10 +22,9 @@ from utils import hash_id_crc32
 keras = tf.keras
 
 # ********************************************************************************************************************* 
-def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrator='ias15', debug_print = False):
+def make_sim_elts(m, a, e, inc, Omega, omega, f, sample_freq, integrator, debug_print):
     """
-    Make an array of training data points for the general 3 body problem.
-    Creates one trajectory with the same initial configuration.
+    Make a Rebound simulation for the 3 body problem using orbital elements
     INPUTS:
     m: masses of of 3 bodies in solar units; array of size 3
     a: the semi-major axis of the orbit in AU;
@@ -40,12 +39,8 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     NOTE:
     the orbital element inputs a, e, inc, Omega, omega, f are all arrays of size 3
     RETURNS:
-    input_dict: a dictionary with the input fields t, q0, v0
-    output_dict: a dictionary with the output fields q, v, a, q0_rec, v0_rec, T, H, H, L
+    sim: an instance of the simulator that is ready to integrate
     """
-    # Number of samples including both start and end
-    N = n_years*sample_freq + 1
-
     # Create a simulation
     sim = rebound.Simulation()
 
@@ -61,18 +56,8 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     # Get sorted list of indices for adding bodies so a is in ascending order
     js = np.argsort(a)
     
-    # Unpack the masses; note that m[0] is the primary and indices on m must be shifted
-    # by 1 compared to indices on the orbital elements
-    m0 = m[0]
-    m1 = m[js[0]+1]
-    m2 = m[js[1]+1]
-    
-    # Mass output - must sort along with a! Also convert to float32 type.
-    # m_ = np.array([m0] + [m[j+1] for j in js], dtype=np.float32)
-    m_ = np.array([m0, m1, m2], dtype=np.float32)
-
     # Add primary with specified mass at origin with 0 velocity
-    sim.add(m=m0)
+    sim.add(m=m[0])
 
     # Add the bodies in ascending order of a
     # j is the index position of the body that is the ith from the center
@@ -85,10 +70,30 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
             
     # Move to the center-of-momentum coordinate system
     sim.move_to_com()
+    
+    return sim
 
-    if debug_print:
-        print(f'\nStatus after shift to COM:\n')
-        print(sim.status())
+# ********************************************************************************************************************* 
+def make_traj_from_sim(sim: rebound.Simulation, n_years: int, sample_freq: int, debug_print: bool):
+    """
+    Make an array of training data points for the general 3 body problem from a simulation.
+    Creates one trajectory with the same initial configuration.
+    INPUTS:
+    sim: rebound Simulation object
+    n_years: the number of years of data to simulate, e.g. 2
+    sample_freq: number of sample points per year, e.g. 365
+    RETURNS:
+    input_dict: a dictionary with the input fields t, q0, v0
+    output_dict: a dictionary with the output fields q, v, a, q0_rec, v0_rec, T, H, H, L
+    """
+    # Number of samples including both start and end
+    N = n_years*sample_freq + 1
+
+    # Unpack the masses and wrap into array m
+    ps = sim.particles
+    p0, p1, p2 = ps
+    m0, m1, m2 = p0.m, p1.m, p2.m
+    m = np.array([m0, m1, m2], dtype=np.float32)
 
     # Array shapes
     num_particles = 3
@@ -101,8 +106,8 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     # Initialize cartesian entries to zero vectors
     q = np.zeros(traj_shape, dtype=np.float32)
     v = np.zeros(traj_shape, dtype=np.float32)
-    acc = np.zeros(traj_shape, dtype=np.float32)
-    
+    a = np.zeros(traj_shape, dtype=np.float32)
+
     # Initialize orbital elements over time to zero vectors
     orb_a = np.zeros(elt_shape, dtype=np.float32)
     orb_e = np.zeros(elt_shape, dtype=np.float32)
@@ -150,9 +155,9 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
                 [p1.vx, p1.vy, p1.vz],
                 [p2.vx, p2.vy, p2.vz]]
         # Save the acceleration
-        acc[i] = [[p0.ax, p0.ay, p0.az],
-                  [p1.ax, p1.ay, p1.az],
-                  [p2.ax, p2.ay, p2.az]]
+        a[i] = [[p0.ax, p0.ay, p0.az],
+                [p1.ax, p1.ay, p1.az],
+                [p2.ax, p2.ay, p2.az]]
         
         # Calculate the two orbits
         orb1 = p1.calculate_orbit()
@@ -209,7 +214,7 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
         't': ts,
         'q0': q0,
         'v0': v0,
-        'm': m_
+        'm': m
         }
 
     # Assemble the output dict
@@ -217,7 +222,7 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
         # the trajectory
         'q': q,
         'v': v,
-        'a': acc,
+        'a': a,
 
         # the orbital elements over time
         'orb_a': orb_a,
@@ -241,6 +246,37 @@ def make_traj_g3b(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrato
     # Return the dicts
     return (inputs, outputs)
 
+# ********************************************************************************************************************* 
+def make_traj_elts(m, a, e, inc, Omega, omega, f, n_years, sample_freq, integrator='ias15', debug_print=False):
+    """
+    Make an array of training data points for the general 3 body problem from input orbital elements
+    INPUTS:
+    m: masses of of 3 bodies in solar units; array of size 3
+    a: the semi-major axis of the orbit in AU;
+    e: the eccentricity of the orbit; must be in the range [0, 1) for an elliptic orbit
+    inc: the inclination
+    Omega: the longitude of the ascending node
+    omega: the argument of pericenter
+    f: the true anomaly at epoch    
+    n_years: the number of years of data to simulate, e.g. 2
+    sample_freq: number of sample points per year, e.g. 365
+    integrator: the name of the rebound integrator.  one of 'ias15' or 'whfast'
+    NOTE:
+    the orbital element inputs a, e, inc, Omega, omega, f are all arrays of size 3
+    RETURNS:
+    input_dict: a dictionary with the input fields t, q0, v0
+    output_dict: a dictionary with the output fields q, v, a, q0_rec, v0_rec, T, H, H, L
+    """
+
+    # Build the simulation from the orbital elements
+    sim = make_sim_elts(m=m, a=a, e=e, inc=inc, Omega=Omega, omega=omega, f=f,
+                        sample_freq=sample_freq, integrator=integrator, debug_print=debug_print)
+    
+    # Create the trajectory from this simulation
+    inputs, outputs = make_traj_from_sim(sim=sim, n_years=n_years, sample_freq=sample_freq, debug_print=debug_print)
+
+    # Return the dicts
+    return (inputs, outputs)
 
 # ********************************************************************************************************************* 
 def repeat_array(x, batch_size: int):
