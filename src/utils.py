@@ -8,8 +8,9 @@ Tue Jun  4 15:24:22 2019
 
 import numpy as np
 import matplotlib as mpl
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import pickle
+import zlib
 
 from typing import Dict, Callable
 
@@ -49,6 +50,11 @@ def arange_inc(x: float, y: float = None, z: float = None) -> np.ndarray:
     return np.arange(start, stop, step)
 
 # *************************************************************************************************
+# Generic root mean square of numpy arrays
+def rms(x: np.array, axis=None):
+    return np.sqrt(np.mean(np.square(x), axis=axis))
+
+# *************************************************************************************************
 # Serialize generic Python variables using Pickle
 def load_vartbl(fname: str) -> Dict:
     """Load a dictionary of variables from a pickled file"""
@@ -65,3 +71,11 @@ def save_vartbl(vartbl: Dict, fname: str) -> None:
     with open(fname, 'wb') as fh:
         pickle.dump(vartbl, fh)
 
+# *************************************************************************************************
+def hash_id_crc32(attributes: Dict) -> int:
+    """Create a hash ID from a dictionary using the CRC 32 alogrithm"""
+    # Create a non-negative hash ID of an attributes dictionary
+    attributes_bytes = bytes(str(attributes), 'utf-8')
+    hash_id = zlib.crc32(attributes_bytes)
+    return hash_id
+    

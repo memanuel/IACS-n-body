@@ -11,10 +11,12 @@ Mon Aug 05 10:21:00 2019
 import tensorflow as tf
 import rebound
 import numpy as np
-import zlib
 import pickle
 from tqdm.auto import tqdm
 from typing import List
+
+# Local imports
+from utils import hash_id_crc32
 
 # Aliases
 keras = tf.keras
@@ -428,8 +430,9 @@ def make_filename_g3b(n_traj: int, vt_split: float, n_years: int, sample_freq: i
         }
     
     # Create a non-negative hash ID of the attributes
-    attributes_bytes = bytes(str(attributes), 'utf-8')
-    hash_id = zlib.crc32(attributes_bytes)
+    # attributes_bytes = bytes(str(attributes), 'utf-8')
+    # hash_id = zlib.crc32(attributes_bytes)
+    hash_id = hash_id_crc32(attributes)
     
     # Create the filename
     return f'../data/g3b/{hash_id}.pickle'

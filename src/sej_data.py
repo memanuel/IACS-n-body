@@ -11,7 +11,6 @@ Tue Aug 20 16:40:29 2019
 import tensorflow as tf
 import rebound
 import numpy as np
-import zlib
 import pickle
 from tqdm.auto import tqdm
 import warnings
@@ -19,6 +18,7 @@ from typing import List
 
 # Local imports
 from g3b_data import make_traj_g3b
+from utils import hash_id_crc32
 
 # Aliases
 keras = tf.keras
@@ -81,7 +81,7 @@ def make_sa_sej(n_years: int, sample_freq:int ):
     # If this file already exists, load and return it
     try:
         sa = rebound.SimulationArchive(fname_archive)
-        print(f'Found simulation archive {fname_archive}')
+        # print(f'Found simulation archive {fname_archive}')
     except:
         # Initialize a new simulation
         object_names = ['Sun', 'Earth', 'Jupiter']
@@ -292,8 +292,9 @@ def make_filename_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: i
         }
     
     # Create a non-negative hash ID of the attributes
-    attributes_bytes = bytes(str(attributes), 'utf-8')
-    hash_id = zlib.crc32(attributes_bytes)
+    # attributes_bytes = bytes(str(attributes), 'utf-8')
+    # hash_id = zlib.crc32(attributes_bytes)
+    hash_id = hash_id_crc32(attributes)
 
     # Create the filename
     return f'../data/sej/{hash_id}.pickle'
