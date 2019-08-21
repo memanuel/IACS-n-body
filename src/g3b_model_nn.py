@@ -128,21 +128,8 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     f2 = MeanToTrueAnomaly(name='mean_to_true_anomaly_f2')([M2, e2])
 
     # ******************************************************************
-    # Feature extraction: preliminary Jacobi coordinates & masses
+    # Feature extraction: masses & cos/sin of f
     # ******************************************************************
-
-    # Model mapping orbital elements to cartesian coordinates
-    model_e2c_1 = make_model_elt_to_cfg(include_accel=False, batch_size=batch_size, name='prelim_elt_to_jac_1')
-    model_e2c_2 = make_model_elt_to_cfg(include_accel=False, batch_size=batch_size, name='prelim_elt_to_jac_2')
-
-    # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
-    elt1 = (a1, e1, inc1, Omega1, omega1, f1, mu1,)
-    elt2 = (a2, e2, inc2, Omega2, omega2, f2, mu2,)
-
-    # Convert from orbital elements to cartesian coordinates
-    # This is the position and velocity of the Jacobi coordinate 
-    qjt_1, vjt_1 = model_e2c_1(elt1)
-    qjt_2, vjt_2 = model_e2c_2(elt2)
 
     # Extract masses of p1 and p2
     m1 = m[:, 1:2]
@@ -156,6 +143,17 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     # skip mass of body 0 because it as a constant = 1.0 solar mass
     m1 =  keras.layers.RepeatVector(n=traj_size, name='m1')(m1)
     m2 =  keras.layers.RepeatVector(n=traj_size, name='m2')(m2)
+    
+    # Repeat the initial true anomaly f1_0 and f2_0
+    f1_0_vec = keras.layers.RepeatVector(n=traj_size, name='f1_0_vec')(f1_0)
+    f2_0_vec = keras.layers.RepeatVector(n=traj_size, name='f2_0_vec')(f2_0)
+    
+    
+    # Convert f1 and f2 to cosine and sine to eliminate secular trend
+    cos_f1_0 = keras.layers.Activation(activation=tf.cos, name='cos_f1_0')(f1_0_vec)
+    sin_f1_0 = keras.layers.Activation(activation=tf.sin, name='sin_f1_0')(f1_0_vec)
+    cos_f2_0 = keras.layers.Activation(activation=tf.cos, name='cos_f2_0')(f2_0_vec)
+    sin_f2_0 = keras.layers.Activation(activation=tf.sin, name='sin_f2_0')(f2_0_vec)
 
     # ******************************************************************
     # Neural network: feature layers
@@ -164,8 +162,8 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     # Create an initial array of features: the time, mass and orbital elements
     phi_0 = keras.layers.concatenate(
         inputs=[t_vec, 
-                m1, a1, e1, inc1, Omega1, omega1, qjt_1, vjt_1,
-                m2, a2, e2, inc2, Omega2, omega2, qjt_2, vjt_2], 
+                m1, a1, e1, inc1, Omega1, omega1, cos_f1_0, sin_f1_0,
+                m2, a2, e2, inc2, Omega2, omega2, cos_f2_0, sin_f2_0], 
         name='phi_0')
 
     # Hidden layers as specified in hidden_sizes
@@ -190,7 +188,7 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
         phi_n = phi_2
 
     # ******************************************************************
-    # Neural network: layers with adjustment to orbital elements
+    # Neural network: layers with time derivatives of orbital elements
     # ******************************************************************
     
     # Set type of regularizer
@@ -198,95 +196,98 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     reg_type = keras.regularizers.l1
     
     # Semimajor axis
-    delta_a1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+    ddt_a1 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_a1')(phi_n)
-    delta_a2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+        name='ddt_a1')(phi_n)
+    ddt_a2 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
         name='delta_a2')(phi_n)
 
     # Eccentricity
-    delta_e1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+    ddt_e1 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_e1')(phi_n)
-    delta_e2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+        name='ddt_e1')(phi_n)
+    ddt_e2 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_e2')(phi_n)
+        name='ddt_e2')(phi_n)
 
     # Inclination
-    delta_inc1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+    ddt_inc1 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_inc1')(phi_n)
-    delta_inc2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+        name='deltddt_inc1')(phi_n)
+    ddt_inc2 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_inc2')(phi_n)
+        name='ddt_inc2')(phi_n)
     
     # Longitude of ascending node
-    delta_Omega1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+    ddt_Omega1 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_Omega1')(phi_n)
-    delta_Omega2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+        name='ddt_Omega1')(phi_n)
+    ddt_Omega2 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_Omega2')(phi_n)
+        name='ddt_Omega2')(phi_n)
     
     # Argument of periapsis
-    delta_omega1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+    ddt_omega1 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_omega1')(phi_n)
-    delta_omega2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+        name='ddt_omega1')(phi_n)
+    ddt_omega2 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_omega2')(phi_n)
+        name='ddt_omega2')(phi_n)
 
     # True anomaly
-    delta_f1 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+    ddt_f1 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=keras.regularizers.l1(activity_reg), 
-        name='delta_f1')(phi_n)    
-    delta_f2 = keras.layers.Dense(
-        units=1, kernel_initializer='zeros', use_bias=False, 
+        name='ddt_f1')(phi_n)    
+    ddt_f2 = keras.layers.Dense(
+        units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_f2')(phi_n)    
+        name='ddt_f2')(phi_n)    
 
+    # ******************************************************************
     # Apply adjustments to Kepler-Jacobi orbital elements
-    a1 = keras.layers.add(inputs=[a1, delta_a1], name='a1_raw')
-    a2 = keras.layers.add(inputs=[a2, delta_a2], name='a2_raw')
+    # ******************************************************************
+        
+    a1 = keras.layers.add(inputs=[a1, ddt_a1 * t_vec], name='a1_raw')
+    a2 = keras.layers.add(inputs=[a2, ddt_a2 * t_vec], name='a2_raw')
     
-    e1 = keras.layers.add(inputs=[e1, delta_e1], name='e1_raw')
-    e2 = keras.layers.add(inputs=[e2, delta_e2], name='e2_raw')
+    e1 = keras.layers.add(inputs=[e1, ddt_e1 * t_vec], name='e1_raw')
+    e2 = keras.layers.add(inputs=[e2, ddt_e2 * t_vec], name='e2_raw')
 
-    inc1 = keras.layers.add(inputs=[inc1, delta_inc1], name='inc1_raw')
-    inc2 = keras.layers.add(inputs=[inc2, delta_inc2], name='inc2_raw')
+    inc1 = keras.layers.add(inputs=[inc1, ddt_inc1 * t_vec], name='inc1_raw')
+    inc2 = keras.layers.add(inputs=[inc2, ddt_inc2 * t_vec], name='inc2_raw')
 
-    Omega1 = keras.layers.add(inputs=[Omega1, delta_Omega1], name='Omega1')
-    Omega2 = keras.layers.add(inputs=[Omega2, delta_Omega2], name='Omega2')
+    Omega1 = keras.layers.add(inputs=[Omega1, ddt_Omega1 * t_vec], name='Omega1')
+    Omega2 = keras.layers.add(inputs=[Omega2, ddt_Omega2 * t_vec], name='Omega2')
 
-    omega1 = keras.layers.add(inputs=[omega1, delta_omega1], name='omega1')
-    omega2 = keras.layers.add(inputs=[omega2, delta_omega2], name='omega2')
+    omega1 = keras.layers.add(inputs=[omega1, ddt_omega1 * t_vec], name='omega1')
+    omega2 = keras.layers.add(inputs=[omega2, ddt_omega2 * t_vec], name='omega2')
 
-    f1 = keras.layers.add(inputs=[f1, delta_f1], name='f1')
-    f2 = keras.layers.add(inputs=[f2, delta_f2], name='f2')    
+    f1 = keras.layers.add(inputs=[f1, ddt_f1 * t_vec], name='f1')
+    f2 = keras.layers.add(inputs=[f2, ddt_f2 * t_vec], name='f2')    
 
     # Limit a to be non-negative
     a1 = keras.layers.ReLU(name='a1')(a1)
