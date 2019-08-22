@@ -15,6 +15,7 @@ import rebound
 import numpy as np
 import pickle
 from tqdm.auto import tqdm
+import argparse
 from typing import List
 
 # Local imports
@@ -395,7 +396,7 @@ def load_data_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int,
 # ********************************************************************************************************************* 
 def make_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int,
                       sd_q: np.array, sd_v: np.array, seed: int, batch_size: int,
-                      assemble_datasets: bool = False):
+                      assemble_datasets: bool = True):
     """Make datasets for the perturbed sen-earth-jupiter problem for train, val and test"""
 
     # Attempt to load the data
@@ -493,7 +494,7 @@ def combine_datasets_sej_impl(n_traj: int, vt_split: float, n_years: int, sample
     return ds_trn, ds_val, ds_tst
 
 # ********************************************************************************************************************* 
-def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int):
+def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int, scale_factor: float):
     """Combine a collection of SEJ data sets into one large data set."""
     # Number of trajectories in each constituent batch
     n_traj = 10000
@@ -503,9 +504,9 @@ def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int):
     n_years=100
     sample_freq=10
 
-    # Orbital perturbation scales
-    sd_q = 0.01
-    sd_v = 0.01
+    # Orbital perturbation scales on sun, earth and jupiter respectively
+    sd_q = scale_factor * np.array([0.00, 0.01, 0.05])
+    sd_v = sd_q
     
     # List of random seeds
     seeds = list(range(seed0, seed0+3*num_data_sets, 3))
@@ -521,7 +522,25 @@ def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int):
     
     return ds_trn, ds_val, ds_tst
 
-import argparse
+# ********************************************************************************************************************* 
+def orb_elt_cov(ds: tf.data.Dataset):
+    """Get the covariance of the initial orbital elements in a dataset"""
+    # Get array with the starting values of the six orbital elements
+    orb_a = np.concatenate([data[1]['orb_a'][:, 0, :] for i, data in ds.enumerate()], axis=0)
+    orb_e = np.concatenate([data[1]['orb_e'][:, 0, :] for i, data in ds.enumerate()], axis=0)
+    orb_inc = np.concatenate([data[1]['orb_inc'][:, 0, :] for i, data in ds.enumerate()], axis=0)
+    orb_Omega = np.concatenate([data[1]['orb_Omega'][:, 0, :] for i, data in ds.enumerate()], axis=0)
+    orb_omega = np.concatenate([data[1]['orb_omega'][:, 0, :] for i, data in ds.enumerate()], axis=0)
+    orb_f = np.concatenate([data[1]['orb_f'][:, 0, :] for i, data in ds.enumerate()], axis=0)
+    
+    # Combined orbital elements; array of shape num_trajectories, 12
+    orb_elt = np.concatenate([orb_a, orb_e, orb_inc, orb_Omega, orb_omega, orb_f], axis=1)
+    
+    # Compute the covariance of the initial orbital elements
+    cov = np.cov(orb_elt, rowvar=False)
+    
+    return cov
+
 # ********************************************************************************************************************* 
 def main():
     """Main routine for making SEJ data sets"""
@@ -564,7 +583,6 @@ def main():
     sd_v = sd_q
     
     # List of seeds to use for datasets
-    # seed0 = 42
     seed1 = seed0 + num_batches * 3
     seeds = list(range(seed0, seed1, 3))
     
@@ -577,7 +595,8 @@ def main():
         make_datasets_sej(n_traj=n_traj, vt_split=vt_split, 
                           n_years=n_years, sample_freq=sample_freq,
                           sd_q=sd_q, sd_v=sd_v,
-                          seed=seed, batch_size=batch_size, assemble_datasets=assemble_datasets)
+                          seed=seed, batch_size=batch_size, 
+                          assemble_datasets=assemble_datasets)
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()

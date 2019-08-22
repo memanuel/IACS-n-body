@@ -27,7 +27,7 @@ from g3b import make_physics_model_g3b
 
 # ********************************************************************************************************************* 
 def make_position_model_g3b_nn(hidden_sizes, skip_layers=True, 
-                               kernel_reg=1.0E-6, activity_reg=1.0E-6, 
+                               kernel_reg=0.0, activity_reg=0.0, 
                                traj_size = 1001, batch_size=64):
     """
     Compute orbit positions for the general three body problem using a neural
