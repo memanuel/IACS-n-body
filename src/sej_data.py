@@ -8,12 +8,13 @@ Tue Aug 20 16:40:29 2019
 """
 
 # Library imports
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
 import rebound
 import numpy as np
 import pickle
 from tqdm.auto import tqdm
-import warnings
 from typing import List
 
 # Local imports
@@ -23,8 +24,6 @@ from utils import hash_id_crc32
 # Aliases
 keras = tf.keras
 
-# Suppress the annoying and verbose tensorflow warnings
-warnings.simplefilter("ignore")
 
 # ********************************************************************************************************************* 
 def make_sim_cart(m, q0, v0, sample_freq, integrator, debug_print):
@@ -65,8 +64,7 @@ def make_sim_cart(m, q0, v0, sample_freq, integrator, debug_print):
     for i in range(3):
         sim.add(m=m[i], x=qx[i], y=qy[i], z=qz[i], vx=vx[i], vy=vy[i], vz=vz[i])
         if debug_print:
-            print(f'particle {i}, m={m[i]}, x={qx[i]}, y={qy[i]}, z={qz[i]}, '
-                  f'vx={vx[i]}, vy={vy[i]}, vz={vz[i]}, ')
+            print(f'particle {i}, m={m[i]}, x={qx[i]}, y={qy[i]}, z={qz[i]}, vx={vx[i]}, vy={vy[i]}, vz={vz[i]}')
     
     # Move to the center-of-momentum coordinate system
     sim.move_to_com()
@@ -396,7 +394,8 @@ def load_data_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int,
 
 # ********************************************************************************************************************* 
 def make_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: int,
-                      sd_q: np.array, sd_v: np.array, seed: int, batch_size: int):
+                      sd_q: np.array, sd_v: np.array, seed: int, batch_size: int,
+                      assemble_datasets: bool = False):
     """Make datasets for the perturbed sen-earth-jupiter problem for train, val and test"""
 
     # Attempt to load the data
@@ -441,21 +440,26 @@ def make_datasets_sej(n_traj: int, vt_split: float, n_years: int, sample_freq: i
         with open(filename, 'wb') as fh:
             pickle.dump(vartbl, fh)
 
-    # Create DataSet objects for train, val and test sets
-    ds_trn = tf.data.Dataset.from_tensor_slices((inputs_trn, outputs_trn))
-    ds_val = tf.data.Dataset.from_tensor_slices((inputs_val, outputs_val))
-    ds_tst = tf.data.Dataset.from_tensor_slices((inputs_tst, outputs_tst))
+    # Create DataSet objects for train, val and test sets if the assemble_dataset flag was passed
+    if assemble_datasets:
+        ds_trn = tf.data.Dataset.from_tensor_slices((inputs_trn, outputs_trn))
+        ds_val = tf.data.Dataset.from_tensor_slices((inputs_val, outputs_val))
+        ds_tst = tf.data.Dataset.from_tensor_slices((inputs_tst, outputs_tst))
+        
+        # Set shuffle buffer size
+        buffer_size = batch_size * 256
     
-    # Set shuffle buffer size
-    buffer_size = batch_size * 256
-
-    # Shuffle and batch data sets
-    drop_remainder = True
-    ds_trn = ds_trn.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
-    ds_val = ds_val.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
-    ds_tst = ds_tst.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
+        # Shuffle and batch data sets
+        drop_remainder = True
+        ds_trn = ds_trn.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
+        ds_val = ds_val.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
+        ds_tst = ds_tst.shuffle(buffer_size=buffer_size, seed=seed).batch(batch_size, drop_remainder=drop_remainder)
+        
+        data = ds_trn, ds_val, ds_tst
+    else:
+        data = None
     
-    return ds_trn, ds_val, ds_tst
+    return data
 
 # ********************************************************************************************************************* 
 def combine_datasets_sej_impl(n_traj: int, vt_split: float, n_years: int, sample_freq: int, 
@@ -517,10 +521,33 @@ def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int):
     
     return ds_trn, ds_val, ds_tst
 
-    
+import argparse
 # ********************************************************************************************************************* 
 def main():
     """Main routine for making SEJ data sets"""
+    # Process command line arguments
+    parser = argparse.ArgumentParser(description='Generate data for perturbed Sun-Earth-Jupiter system.')
+    parser.add_argument('-num_batches', metavar='B', type=int, default=5,
+                        help='the number of batches to run')
+    parser.add_argument('-n_traj', metavar='N', type=int, default=10000,
+                        help='the number of trajectories')
+    parser.add_argument('-scale_factor', metavar='F', type=float, default=1.0,
+                        help='scale factor that multiplies base perturbation size')
+    parser.add_argument('-seed', metavar='S', type=int, default=42,
+                        help='the first seed for the random number generator')
+    args = parser.parse_args()
+    
+    # Unpack command line arguments
+    num_batches = args.num_batches
+    n_traj = args.n_traj
+    seed0 = args.seed
+    scale_factor = args.scale_factor
+
+    # Status
+    print(f'\nGenerating {num_batches} batches of {n_traj} trajectories each.')
+    print(f'Scale factor = {scale_factor}.')
+    print(f'Initial random seed = {seed0}.')
+    
     # Length and sample frequency
     n_years = 100
     sample_freq = 10
@@ -528,27 +555,29 @@ def main():
     # Make the simulation archive for the unperturbed (real) sun-earth-jupiter system
     make_sa_sej(n_years=n_years, sample_freq=sample_freq)
     
-    # Number and size of trajectories
-    num_batches = 5
-    n_traj = 10000
+    # Batch size and number of train and validation samples
     batch_size = 256
     vt_split = 0.20
     
-    # Orbital perturbation scales
-    sd_q = np.array([0.00, 0.01, 0.05])
+    # Orbital perturbation scales on sun, earth and jupiter respectively
+    sd_q = scale_factor * np.array([0.00, 0.01, 0.05])
     sd_v = sd_q
     
     # List of seeds to use for datasets
-    seed0 = 42
+    # seed0 = 42
     seed1 = seed0 + num_batches * 3
     seeds = list(range(seed0, seed1, 3))
+    
+    # Set assemble_datasets flag to false; don't need datasets,
+    # only want to save the numpy arrays to disk
+    assemble_datasets = False
     
     # Run perturbed simulation
     for i, seed in tqdm(enumerate(seeds)):
         make_datasets_sej(n_traj=n_traj, vt_split=vt_split, 
                           n_years=n_years, sample_freq=sample_freq,
                           sd_q=sd_q, sd_v=sd_v,
-                          seed=seed, batch_size=batch_size)
+                          seed=seed, batch_size=batch_size, assemble_datasets=assemble_datasets)
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
