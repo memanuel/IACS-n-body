@@ -580,7 +580,7 @@ def main():
     
     # Orbital perturbation scales on sun, earth and jupiter respectively
     sd_q = scale_factor * np.array([0.00, 0.01, 0.05])
-    sd_v = sd_q
+    sd_v = scale_factor * np.array([0.00, 0.001, 0.0005])
     
     # List of seeds to use for datasets
     seed1 = seed0 + num_batches * 3
