@@ -531,8 +531,8 @@ def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int, scale_
     return ds_trn, ds_val, ds_tst
 
 # ********************************************************************************************************************* 
-def orb_elt_cov(ds: tf.data.Dataset):
-    """Get the covariance of the initial orbital elements in a dataset"""
+def orb_elts0(ds: tf.data.Dataset):
+    """Get the initial orbital elements in a dataset"""
     # Get array with the starting values of the six orbital elements
     orb_a = np.concatenate([data[1]['orb_a'][:, 0, :] for i, data in ds.enumerate()], axis=0)
     orb_e = np.concatenate([data[1]['orb_e'][:, 0, :] for i, data in ds.enumerate()], axis=0)
@@ -540,14 +540,33 @@ def orb_elt_cov(ds: tf.data.Dataset):
     orb_Omega = np.concatenate([data[1]['orb_Omega'][:, 0, :] for i, data in ds.enumerate()], axis=0)
     orb_omega = np.concatenate([data[1]['orb_omega'][:, 0, :] for i, data in ds.enumerate()], axis=0)
     orb_f = np.concatenate([data[1]['orb_f'][:, 0, :] for i, data in ds.enumerate()], axis=0)
+    # H = np.concatenate([data[1]['H'][:] for i, data in ds.enumerate()], axis=0)
     
     # Combined orbital elements; array of shape num_trajectories, 12
     orb_elt = np.concatenate([orb_a, orb_e, orb_inc, orb_Omega, orb_omega, orb_f], axis=1)
     
-    # Compute the covariance of the initial orbital elements
-    cov = np.cov(orb_elt, rowvar=False)
+    return orb_elt
+
+# ********************************************************************************************************************* 
+def orb_elt_summary(orb_elt):
+    """Print a summary of the initial orbital elements in a data set"""
+    # List of orbital elements in the cov matrix
+    elt_names = ['a1', 'a2', 'e1', 'e2', 'inc1', 'inc2', 
+                 'Omega1', 'Omega2', 'omega1', 'omega2', 'f1', 'f2']
+    # limit to the interesting ones
+    elt_names = elt_names[0:6]
     
-    return cov
+    # Compute mean, std, min and max of orbital elemetns
+    elt_mean = np.mean(orb_elt, axis=0)
+    elt_std = np.std(orb_elt, axis=0)
+    elt_min = np.min(orb_elt, axis=0)
+    elt_max = np.max(orb_elt, axis=0)    
+    
+    # Display summary statistics of orbital elements
+    print(f'element:  mean     :  std dev  :  min      :  max')
+    for i, elt_name in enumerate(elt_names):
+        print(f'{elt_name:6} : {elt_mean[i]:9.6f} : {elt_std[i]:9.6f} : '
+              f'{elt_min[i]:9.6f} : {elt_max[i]:9.6f}')
 
 # ********************************************************************************************************************* 
 def main():
