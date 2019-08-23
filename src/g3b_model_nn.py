@@ -34,12 +34,15 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     network that computes adjustments to orbital elements.
     Factory function that returns a functional model.
     """
-    num_particles = 3
+    # Dimensionality
+    num_body = 3
     space_dims = 3
+    
+    # Input layers
     t = keras.Input(shape=(traj_size,), batch_size=batch_size, name='t')
-    q0 = keras.Input(shape=(num_particles, space_dims,), batch_size=batch_size, name='q0')
-    v0 = keras.Input(shape=(num_particles, space_dims,), batch_size=batch_size, name='v0')
-    m = keras.Input(shape=(num_particles,), batch_size=batch_size, name='m')
+    q0 = keras.Input(shape=(num_body, space_dims,), batch_size=batch_size, name='q0')
+    v0 = keras.Input(shape=(num_body, space_dims,), batch_size=batch_size, name='v0')
+    m = keras.Input(shape=(num_body,), batch_size=batch_size, name='m')
 
     # Wrap these up into one tuple of inputs for the model
     inputs = (t, q0, v0, m)
@@ -82,13 +85,17 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     # Alias mu0_i for naming consistency
     mu1_0 = mu0_1
     mu2_0 = mu0_2
-    
+
     # Reshape t to (batch_size, traj_size, 1)
     t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(t)
-    
+
+    # ******************************************************************
+    # Kepler-Jacobi Model: Analytical approximation ignoring interaction of two small bodies
+    # ******************************************************************
+
     # ******************************************************************
     # Predict orbital elements for Jacobi coordinates of body 1
-    
+
     # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size)
     a1 = keras.layers.RepeatVector(n=traj_size, name='a1_kj')(a1_0)
     e1 = keras.layers.RepeatVector(n=traj_size, name='e1_kj')(e1_0)
@@ -128,7 +135,7 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     f2 = MeanToTrueAnomaly(name='mean_to_true_anomaly_f2')([M2, e2])
 
     # ******************************************************************
-    # Feature extraction: masses & cos/sin of f
+    # Feature extraction: masses & cos/sin of angle variables
     # ******************************************************************
 
     # Extract masses of p1 and p2
@@ -140,16 +147,33 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     m2.set_shape(mass_shape)
 
     # Repeat the masses to shape (batch_size, traj_size, num_body-1)
-    # skip mass of body 0 because it as a constant = 1.0 solar mass
+    # skip mass of body 0 because it is a constant = 1.0 solar mass
     m1 =  keras.layers.RepeatVector(n=traj_size, name='m1')(m1)
     m2 =  keras.layers.RepeatVector(n=traj_size, name='m2')(m2)
     
     # Repeat the initial true anomaly f1_0 and f2_0
     f1_0_vec = keras.layers.RepeatVector(n=traj_size, name='f1_0_vec')(f1_0)
-    f2_0_vec = keras.layers.RepeatVector(n=traj_size, name='f2_0_vec')(f2_0)
+    f2_0_vec = keras.layers.RepeatVector(n=traj_size, name='f2_0_vec')(f2_0)    
+
+    # Convert inc1 and inc2 to cosine and sine
+    cos_inc1 = keras.layers.Activation(activation=tf.cos, name='cos_inc1')(inc1)
+    sin_inc1 = keras.layers.Activation(activation=tf.sin, name='sin_inc1')(inc1)
+    cos_inc2 = keras.layers.Activation(activation=tf.cos, name='cos_inc2')(inc2)
+    sin_inc2 = keras.layers.Activation(activation=tf.sin, name='sin_inc2')(inc2)
     
+    # Convert Omega1 and Omega2 to cosine and sine
+    cos_Omega1 = keras.layers.Activation(activation=tf.cos, name='cos_Omega1')(Omega1)
+    sin_Omega1 = keras.layers.Activation(activation=tf.sin, name='sin_Omega1')(Omega1)
+    cos_Omega2 = keras.layers.Activation(activation=tf.cos, name='cos_Omega2')(Omega2)
+    sin_Omega2 = keras.layers.Activation(activation=tf.sin, name='sin_Omega2')(Omega2)
     
-    # Convert f1 and f2 to cosine and sine to eliminate secular trend
+    # Convert omega1 and omega2 to cosine and sine
+    cos_omega1 = keras.layers.Activation(activation=tf.cos, name='cos_omega1')(omega1)
+    sin_omega1 = keras.layers.Activation(activation=tf.sin, name='sin_omega1')(omega1)
+    cos_omega2 = keras.layers.Activation(activation=tf.cos, name='cos_omega2')(omega2)
+    sin_omega2 = keras.layers.Activation(activation=tf.sin, name='sin_omega2')(omega2)
+    
+    # Convert f1 and f2 to cosine and sine
     cos_f1_0 = keras.layers.Activation(activation=tf.cos, name='cos_f1_0')(f1_0_vec)
     sin_f1_0 = keras.layers.Activation(activation=tf.sin, name='sin_f1_0')(f1_0_vec)
     cos_f2_0 = keras.layers.Activation(activation=tf.cos, name='cos_f2_0')(f2_0_vec)
@@ -160,11 +184,23 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
     # ******************************************************************
     
     # Create an initial array of features: the time, mass and orbital elements
-    phi_0 = keras.layers.concatenate(
-        inputs=[t_vec, 
-                m1, a1, e1, inc1, Omega1, omega1, cos_f1_0, sin_f1_0,
-                m2, a2, e2, inc2, Omega2, omega2, cos_f2_0, sin_f2_0], 
-        name='phi_0')
+    feature_list = [
+        # time of this snapshot and body masses (body 1 constant = 1.0 Msun)
+        t_vec, m1, m2,
+        # orbital elements 1 (10 features)
+        a1, e1, 
+        cos_inc1, sin_inc1, 
+        cos_Omega1, sin_Omega1, 
+        cos_omega1, sin_omega1, 
+        cos_f1_0, sin_f1_0,
+        # orbital elements 2 (10 features)
+        a2, e2, 
+        cos_inc2, sin_inc2, 
+        cos_Omega2, sin_Omega2, 
+        cos_omega2, sin_omega2, 
+        cos_f2_0, sin_f2_0]
+    # Inputs to neural network is a flattened arrat; 23 features per time snap
+    phi_0 = keras.layers.concatenate(inputs=feature_list, name='phi_0')
 
     # Hidden layers as specified in hidden_sizes
     # Number of hidden layers
@@ -187,6 +223,13 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
             phi_2 = keras.layers.concatenate(inputs=[phi_1, phi_2], name='phi_2_aug')
         phi_n = phi_2
 
+    # Third hidden layer if applicable
+    if num_layers > 2:
+        phi_3 = keras.layers.Dense(units=hidden_sizes[2], activation='tanh', name='phi_3')(phi_2)
+        if skip_layers:
+            phi_3 = keras.layers.concatenate(inputs=[phi_2, phi_3], name='phi_3_aug')
+        phi_n = phi_3
+
     # ******************************************************************
     # Neural network: layers with time derivatives of orbital elements
     # ******************************************************************
@@ -205,7 +248,7 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
         units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='delta_a2')(phi_n)
+        name='ddt_a2')(phi_n)
 
     # Eccentricity
     ddt_e1 = keras.layers.Dense(
@@ -224,7 +267,7 @@ def make_position_model_g3b_nn(hidden_sizes, skip_layers=True,
         units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
         activity_regularizer=reg_type(activity_reg), 
-        name='deltddt_inc1')(phi_n)
+        name='ddt_inc1')(phi_n)
     ddt_inc2 = keras.layers.Dense(
         units=1, kernel_initializer='zeros', bias_initializer='zeros',
         kernel_regularizer=reg_type(kernel_reg),
@@ -384,3 +427,24 @@ def make_model_g3b_nn(hidden_sizes, skip_layers=True, use_autodiff: bool = False
     return make_physics_model_g3b(position_model=position_model, use_autodiff=use_autodiff,
                                   traj_size=traj_size, batch_size=batch_size)
 
+# ********************************************************************************************************************* 
+def baseline_loss(model, ds):
+    """Make initial entry on history table before training starts"""
+    loss_keys = ['loss', 
+                 'q_loss', 'v_loss', 'a_loss',
+                 'q0_rec_loss', 'v0_rec_loss',
+                 'H_loss', 'P_loss', 'L_loss']
+    loss_vals = model.evaluate(ds)
+    loss_baseline = {key: loss_vals[i] for i, key in enumerate(loss_keys)}
+    
+    # Set dummy batch_num and time
+    loss_baseline['batch_num'] = 0
+    loss_baseline['time'] = 0.0
+
+    # hist0 is a dictionary of numpy arrays
+    hist0 = {key: np.array([val], dtype=np.float32) for key, val in loss_baseline.items()}
+
+    # Baseline position loss
+    q_loss = loss_baseline['q_loss']
+    
+    return hist0, q_loss

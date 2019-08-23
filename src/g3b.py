@@ -354,9 +354,10 @@ def make_physics_model_g3b(position_model: keras.Model,
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def fit_model(model, folder, ds, epochs, save_freq, prev_history=None, batch_num=0):
+def fit_model(model, ds, epochs, 
+              model_name, folder, 
+              save_freq, prev_history=None, batch_num=0):
     # Name for model data
-    model_name = model.name
     filepath=f'../models/{folder}/{model_name}_batch_{batch_num:03}.h5'
 
     # Parameters for callbacks
@@ -369,12 +370,12 @@ def fit_model(model, folder, ds, epochs, save_freq, prev_history=None, batch_num
     cb_time = TimeHistory()
 
     cb_ckp = keras.callbacks.ModelCheckpoint(
-            filepath=filepath, 
-            save_freq=save_freq,
-            save_best_only=True,
-            save_weights_only=True,
-            monitor='loss',
-            verbose=0)    
+                filepath=filepath, 
+                save_freq=save_freq,
+                save_best_only=True,
+                save_weights_only=True,
+                monitor='loss',
+                verbose=0)    
 
     # All selected callbacks
     # callbacks = [cb_log, cb_time, cb_ckp, cb_early_stop]
