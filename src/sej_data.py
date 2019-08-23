@@ -494,6 +494,15 @@ def combine_datasets_sej_impl(n_traj: int, vt_split: float, n_years: int, sample
     return ds_trn, ds_val, ds_tst
 
 # ********************************************************************************************************************* 
+def make_perturbations(scale_factor: float):
+    """Make default orbital perturbations given a scaling factor"""
+    # Orbital perturbation scales on sun, earth and jupiter respectively
+    sd_q = scale_factor * np.array([0.00, 0.01, 0.05])
+    sd_v = scale_factor * np.array([0.00, 0.001, 0.0005])
+    
+    return sd_q, sd_v
+    
+# ********************************************************************************************************************* 
 def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int, scale_factor: float):
     """Combine a collection of SEJ data sets into one large data set."""
     # Number of trajectories in each constituent batch
@@ -505,8 +514,7 @@ def combine_datasets_sej(num_data_sets: int, batch_size: int, seed0: int, scale_
     sample_freq=10
 
     # Orbital perturbation scales on sun, earth and jupiter respectively
-    sd_q = scale_factor * np.array([0.00, 0.01, 0.05])
-    sd_v = sd_q
+    sd_q, sd_v = make_perturbations(scale_factor)
     
     # List of random seeds
     seeds = list(range(seed0, seed0+3*num_data_sets, 3))
@@ -579,8 +587,7 @@ def main():
     vt_split = 0.20
     
     # Orbital perturbation scales on sun, earth and jupiter respectively
-    sd_q = scale_factor * np.array([0.00, 0.01, 0.05])
-    sd_v = scale_factor * np.array([0.00, 0.001, 0.0005])
+    sd_q, sd_v = make_perturbations(scale_factor)
     
     # List of seeds to use for datasets
     seed1 = seed0 + num_batches * 3
