@@ -20,6 +20,10 @@
 *.bmp
 
 # ******************************************************************************************
+# Symlinks on Linux - don't want these as part of repo
+data
+
+# ******************************************************************************************
 # Model checkpoints in specific directories
 src/tensorflow-tutorial/checkpoints
 src/tensorflow-tutorial/training_1
