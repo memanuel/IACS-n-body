@@ -19,6 +19,20 @@ from astro_utils import mjd_to_horizons, datetime_to_horizons, datetime_to_mjd, 
 from utils import rms
 
 # ********************************************************************************************************************* 
+# Collections of objects
+object_names_planets = ['Sun', 'Mercury', 'Venus', 'Earth', 'Mars',  'Jupiter', 'Saturn', 'Uranus', 'Neptune']
+object_names_moons = \
+    ['Sun', 
+     'Mercury', 'Venus', 
+     'Earth Geocenter', 'Moon', 
+     'Mars Geocenter', 'Phobos', 'Deimos',
+     'Jupiter Geocenter', 'Io', 'Europa', 'Ganymede', 'Callisto',
+     'Saturn Geocenter', 'Mimas', 'Enceladus', 'Tethys', 'Dione', 'Rhea', 'Titan', 'Iapetus',
+     'Uranus', 'Ariel', 'Umbriel', 'Titania', 'Oberon', 'Miranda',
+     'Neptune', 'Triton',
+     'Pluto']
+
+# ********************************************************************************************************************* 
 def object_to_horizon_names(object_names):
     """Convert from user friendly object names to Horizons names"""
     # See https://ssd.jpl.nasa.gov/horizons.cgi#top for looking up IDs
@@ -28,7 +42,7 @@ def object_to_horizon_names(object_names):
     # Earth and the Moon
     object_name_to_hrzn['Earth Barycenter'] = '3'
     object_name_to_hrzn['Earth Geocenter'] = '399'
-    # object_name_to_hrzn['Moon'] = '301'
+    object_name_to_hrzn['Moon'] = '301'
     
     # Mars and its moons
     # https://en.wikipedia.org/wiki/Moons_of_Mars
@@ -131,8 +145,7 @@ def make_sim_planets(t: datetime):
     sim_name = 'planets'
 
     # List of object names
-    object_names = ['Sun', 'Mercury', 'Venus', 'Earth', 'Mars', 
-                    'Jupiter', 'Saturn', 'Uranus', 'Neptune']
+    object_names = object_names_planets
 
     # Return the simulation
     return make_sim(sim_name=sim_name, object_names=object_names, t=t)
@@ -144,19 +157,16 @@ def make_sim_moons(t: datetime):
     sim_name = 'moons'
 
     # List of object names
-    object_names = \
-    ['Sun', 
-     'Mercury', 'Venus', 
-     'Earth Geocenter', 'Moon', 
-     'Mars Geocenter', 'Phobos', 'Deimos',
-     'Jupiter Geocenter', 'Io', 'Europa', 'Ganymede', 'Callisto',
-     'Saturn Geocenter', 'Mimas', 'Enceladus', 'Tethys', 'Dione', 'Rhea', 'Titan', 'Iapetus',
-     'Uranus', 'Ariel', 'Unbriel', 'Titania', 'Oberon', 'Miranda',
-     'Neptune', 'Triton',
-     'Pluto']
+    object_names = object_names_moons
 
     # Return the simulation
-    return make_sim(sim_name=sim_name, object_names=object_names, t=t)
+    sim = make_sim(sim_name=sim_name, object_names=object_names, t=t)
+    
+    # Set integrator
+    sim.integror = 'WHFAST'
+    sim.dt = 1.0
+    
+    return sim
 
 # ********************************************************************************************************************* 
 def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation, 
@@ -187,9 +197,10 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     sim_fwd.t = epoch_t
     sim_back.t = epoch_t
     
-    # Set the times for snapshots in both directions
-    ts_fwd = np.arange(epoch_t, t1+time_step, time_step)
-    ts_back = np.arange(epoch_t, t0-time_step, -time_step)
+    # Set the times for snapshots in both directions;
+    t_start = epoch_t - (epoch_t % time_step)
+    ts_fwd = np.arange(t_start, t1+time_step, time_step)
+    ts_back = reversed(np.arange(t0, t_start, time_step))
 
     # File names for forward and backward integrations
     fname_fwd = fname_archive.replace('.bin', '_fwd.bin')
@@ -255,12 +266,12 @@ def make_archive(fname_archive: str, sim_epoch: rebound.Simulation,
 def sim_elt_array(sim):
     """Extract the orbital elements of each body in the simulation"""
     # Allocate array of elements
-    elts = np.zeros(shape=(sim.N-1, 6))
+    elts = np.zeros(shape=(sim.N-1, 7))
     
     # Iterate through particles AFTER the primary
     ps = sim.particles
     for i, p in enumerate(ps[1:]):
-        elts[i] = np.array([p.a, p.e, p.inc, p.Omega, p.omega, p.f])
+        elts[i] = np.array([p.a, p.e, p.inc, p.Omega, p.omega, p.f, p.M])
         
     return elts
 
@@ -278,31 +289,28 @@ def sim_cfg_array(sim):
     return cfgs
 
 # ********************************************************************************************************************* 
-def report_sim_difference(sim0, sim1, object_names, object_name):
-    """Generate selected asteroid simulations"""
+def report_sim_difference(sim0, sim1, object_names):
+    """Report the difference between two simulations on a summary basis"""
     # Extract orbital element arrays directrly from Horizons
     elt0 = sim_elt_array(sim0)
     elt1 = sim_elt_array(sim1)
 
     # Take differences
-    elt_diff = (elt1- elt0)
+    elt_diff = (elt1 - elt0)
     # Compute RMS difference by orbital element
     elt_rms = rms(elt_diff, axis=0)
-
-    # Body i
-    object_num = object_names.index(object_name)
-    i = object_num-1
-    elt_i = elt_diff[object_num-1]
+    elt_err = np.abs(elt_diff)
 
     # Names of selected elements
-    elt_names = ['a', 'e', 'inc', 'Omega', 'omega', 'f']
+    elt_names = ['a', 'e', 'inc', 'Omega', 'omega', 'f', 'M']
 
     # Report RMS orbital element differences
-    print(f'RMS Difference of elements and body {object_name}:')
+    print(f'RMS Difference of elements:')
     for j, elt in enumerate(elt_names):
-        idx = np.argmax(np.abs(elt_diff[j]))+1
-        worse = object_names[idx]
-        print(f'{elt:5} : {elt_rms[j]:5.2e} : {worse:10} : {elt_i[j]:+5.2e} : {elt0[i, j]:11.8f} : {elt1[i, j]:11.8f}')
+        idx = np.argmax(elt_err[:, j])
+        worse = object_names[idx+1]
+        print(f'{elt:5} : {elt_rms[j]:5.2e} : {worse:10} : {elt_err[idx, j]:5.2e} : '
+              f'{elt0[idx, j]:11.8f} : {elt1[idx, j]:11.8f}')
     print(f'Overall RMS = {rms(elt_diff):5.2e}')
 
     # Extract orbital element arrays directrly from Horizons
@@ -314,85 +322,104 @@ def report_sim_difference(sim0, sim1, object_names, object_name):
     # pos_dif = cif_diff[:, 0:3]
     # Compute RMS difference of configuration
     cfg_rms = rms(cfg_diff, axis=0)
-    # Body i
-    cfg_i = cfg_diff[object_num]
+    cfg_err = np.abs(cfg_diff)
 
     # Names of Cartesian configuration variables
     cfg_names = ['qx', 'qy', 'qz', 'vx', 'vy', 'vz']
 
     # Report RMS Cartesian differences
-    print(f'\nRMS Difference of configuration and {object_name}:')
-    i = object_num
+    print(f'\nRMS Difference of configuration:')
     for j, var in enumerate(cfg_names):
-        idx = np.argmax(np.abs(cfg_diff[j]))
+        idx = np.argmax(np.abs(cfg_diff[:, j]))
         worse = object_names[idx]
-        print(f'{var:2} : {cfg_rms[j]:5.2e} : {worse:10}: {cfg_i[j]:+5.2e} : {cfg0[i, j]:11.8f} : {cfg1[i, j]:11.8f}')
+        print(f'{var:2} : {cfg_rms[j]:5.2e} : {worse:10}: {cfg_err[idx, j]:+5.2e}')
     print(f'Overall RMS = {rms(cfg_diff):5.2e}')
 
 # ********************************************************************************************************************* 
-def test_planet_integration(sa):
+def test_planet_integration(sa, object_names):
     """Generate selected asteroid simulations"""
     
-    # Start and end times of simulation
+    # Start time of simulation
     dt0: datetime = datetime(2000, 1, 1)
-    dt1: datetime = datetime(2040, 1, 1)
     
-    sim0 = make_sim_planets(dt0)
-    sim1 = make_sim_planets(dt1)
+    test_years = [2000, 2040]
+    # test_years = list(range(2000, 2015, 5)) + list(range(2015, 2025)) + list(range(2025, 2041, 5))
+    test_dates = [datetime(year, 1, 1) for year in test_years]
+    for dt_t in test_dates:
+        t = (dt_t - dt0).days
+        sim_t = make_sim_planets(dt_t)
+        print(f'\nDifference on {dt_t}:')
+        report_sim_difference(sim_t, sa[t], object_names)
 
-    # Planet to display
-    object_names = ['Sun', 'Mercury', 'Venus', 'Earth', 'Moon', 
-                    'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']    
-    object_name = 'Earth'
-
-    # print(f'\nDifference at start t0:')
-    # report_sim_difference(sim0, sa[0], planet_num)
+# ********************************************************************************************************************* 
+def test_moon_integration(sa, object_names):
+    """Generate selected asteroid simulations"""
     
-    print(f'\nDifference at end t1:')
-    report_sim_difference(sim1, sa[-1], object_names, object_name)
+    # Start time of simulation
+    dt0: datetime = datetime(2000, 1, 1)
     
-    # test_years = [2000, 2005, 2010, 2015, 2020, 2025, 2030, 2035, 2040]
-    # test_years = [2018, 2019, 2020]
-    test_years = []
+    test_years = list(range(2000, 2015, 5)) + list(range(2015, 2025)) + list(range(2025, 2041, 5))
     for year in test_years:
         dt_t = datetime(year, 1, 1)
         t = (dt_t - dt0).days
-        sim_t = make_sim_planets(dt_t)
+        sim_t = make_sim_moons(dt_t)
         print(f'\nDifference on January 1, {year}:')
-        report_sim_difference(sim_t, sa[t], object_name)
-    
+        report_sim_difference(sim_t, sa[t], object_names)
+        
 # ********************************************************************************************************************* 
-def main():
-    """Generate selected asteroid simulations"""
+#def main():
+#    """Generate selected asteroid simulations"""
     
-    # Reference epoch for asteroids file
-    epoch_mjd: float = 58600.0
-    # Convert to a datetime
-    epoch_dt: datetime = mjd_to_datetime(epoch_mjd)
-    
-    # Start and end times of simulation
-    dt0: datetime = datetime(2000, 1, 1)
-    dt1: datetime = datetime(2040, 1, 1)
-    
-    # Create simulations snapshots of planets
-    # print(f'Epoch {epoch_hrzn} / mjd={epoch_mjd}.')
-    # print(f'Start {datetime_to_horizons(dt0)}.')
-    # print(f'End   {datetime_to_horizons(dt1)}.')
-    sim_epoch = make_sim_planets(epoch_dt)
-    sim_epoch = make_sim_moons(epoch_dt)
+# Reference epoch for asteroids file
+epoch_mjd: float = 58600.0
+# Convert to a datetime
+epoch_dt: datetime = mjd_to_datetime(epoch_mjd)
 
-    # Integrate the planets from dt0 to dt1
-    fname_archive = '../data/asteroid/sim_planets_2000_2040.bin'
-    time_step = 1
-    sa = make_archive(fname_archive=fname_archive, sim_epoch=sim_epoch,
-                      epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
+# Start and end times of simulation
+dt0: datetime = datetime(2000, 1, 1)
+dt1: datetime = datetime(2040, 1, 1)
+
+# Create simulations snapshots of planets
+# print(f'Epoch {epoch_hrzn} / mjd={epoch_mjd}.')
+# print(f'Start {datetime_to_horizons(dt0)}.')
+# print(f'End   {datetime_to_horizons(dt1)}.')
+sim_planets = make_sim_planets(epoch_dt)
+sim_moons = make_sim_moons(epoch_dt)
+
+time_step = 1
+# Integrate the planets from dt0 to dt1
+fname_planets = '../data/planets/planets_2000-2040.bin'
+# sa_planets = make_archive(fname_archive=fname_planets, sim_epoch=sim_planets,
+#                          epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
+
+# Integrate the planets and moons from dt0 to dt1
+fname_moons = '../data/planets/moons_2000-2040.bin'
+sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
+                          epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
    
-    # Test integration of planetrs
-    # test_planet_integration(sa)
+# Test integration of planets
+# test_planet_integration(sa_planets, object_names_planets)
+test_moon_integration(sa_moons, object_names_moons)
 
 # ********************************************************************************************************************* 
-if __name__ == '__main__':
-    main()
-    pass
+#if __name__ == '__main__':
+#    main()
+#    pass
 
-
+#t = (datetime(2019,6,30)-datetime(2000,1,1)).days
+#sa = rebound.SimulationArchive('../data/planets/planets_2000-2040.bin')
+#sim0 = rebound.Simulation('../data/planets/planets_2019-06-30_00-00.bin')
+#sim1 = sa[t]
+#
+## Extract orbital element arrays directrly from Horizons
+#elt0 = sim_elt_array(sim0)
+#elt1 = sim_elt_array(sim1)
+#
+## Take differences
+#elt_diff = (elt1- elt0)
+## Compute RMS difference by orbital element
+#elt_rms = rms(elt_diff, axis=0)
+#elt_err = np.abs(elt_diff)
+#
+## Names of selected elements
+#elt_names = ['a', 'e', 'inc', 'Omega', 'omega', 'f', 'M']
