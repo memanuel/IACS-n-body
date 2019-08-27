@@ -16,6 +16,8 @@ julian_base_datetime: datetime = datetime(1899, 12, 31, 12, 0, 0)
 julian_base_number: int = 2415020
 
 # The modified Julian Date is 2400000.5 less than the Julian Base Number
+modified_julian_offset: float = 2400000.5
+
 # Equivalently, it is the number of days from the epoch beginning 1858-11-178 0:00 (midnight)
 # http://scienceworld.wolfram.com/astronomy/ModifiedJulianDate.html
 modified_julian_base_date: date = date(1858, 11, 17)
@@ -61,10 +63,10 @@ def datetime_to_jd(t: datetime) -> float:
     return julian_base_number + dt.days + sec2day * dt.seconds 
 
 # *************************************************************************************************
-def datetime_to_mjd(t: datetime) -> float:
+def datetime_to_mjd(t: datetime, epoch = modified_julian_base_datetime) -> float:
     """Convert a Python datetime to a Modified Julian day"""
     # Compute the number of days from Julian Base Date to date t
-    dt = t - modified_julian_base_datetime
+    dt = t - epoch
     return dt.days + sec2day * dt.seconds
 
 # *************************************************************************************************
@@ -80,13 +82,39 @@ def mjd_to_datetime(mjd: float) -> date:
     dt = timedelta(seconds=day2sec*mjd)
     return modified_julian_base_datetime + dt
 
-def test_jd():
+# *************************************************************************************************
+def jd_to_mjd(jd: float) -> date:
+    """Convert a floating point julian date to a modified julian date"""
+    return jd - modified_julian_offset
+
+# *************************************************************************************************
+def mjd_to_jd(mjd: float) -> date:
+    """Convert a floating point modified julian date to a julian date"""
+    return mjd + modified_julian_offset
+
+# *************************************************************************************************
+def datetime_to_horizons(t: datetime):
+    """Convert a Python datetime to a datetime string understood by NASA Horizons"""
+    return t.strftime('%Y-%m-%d %H:%M')
+
+# *************************************************************************************************
+def jd_to_horizons(jd: float):
+    """Convert a Julian Day to a string understood by NASA Horizons"""
+    return f'JD{jd:.8f}'
+
+# *************************************************************************************************
+def mjd_to_horizons(mjd: float):
+    """Convert a Modified Julian Day to a string understood by NASA Horizons"""
+    jd = mjd_to_jd(mjd)
+    return jd_to_horizons(jd)
+
+# *************************************************************************************************
+def test_julian_day():
     """Test Julian Day conversions"""
     # Known conversion from Small-Body browser
     t = datetime(2019, 4, 27, 0)
     jd = 2458600.5
-    # mjd = 58600
-    mjd = jd - 2400000.5
+    mjd = 58600
 
     # Compute recovered time and julian date    
     t_rec = jd_to_datetime(jd)
@@ -115,4 +143,9 @@ def test_jd():
     print(f'Error in mjd: {err_mjd}')
     print(f'*** {msg} ***')
     
-test_jd()
+# *************************************************************************************************
+def main():
+    test_julian_day()
+
+if __name__ == '__main__':
+    main()
