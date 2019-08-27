@@ -1,0 +1,10 @@
+Searching Horizons as of 2019-04-27 00:00.
+Searching NASA Horizons for 'Sun'... Found: Sun (10).
+Searching NASA Horizons for 'Mercury'... Found: Mercury Barycenter (199).
+Searching NASA Horizons for 'Venus'... Found: Venus Barycenter (299).
+Searching NASA Horizons for 'Earth'... Found: Earth-Moon Barycenter (3).
+Searching NASA Horizons for 'Mars'... Found: Mars Barycenter (4).
+Searching NASA Horizons for 'Jupiter'... Found: Jupiter Barycenter (5).
+Searching NASA Horizons for 'Saturn'... Found: Saturn Barycenter (6).
+Searching NASA Horizons for 'Uranus'... Found: Uranus Barycenter (7).
+Searching NASA Horizons for 'Neptune'... Found: Neptune Barycenter (8).

@@ -196,11 +196,21 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     # Set the time counter on both simulation copies to the epoch time
     sim_fwd.t = epoch_t
     sim_back.t = epoch_t
+
+    # Set the time step
+    sim_dt = 0.01
+    sim_fwd.dt = sim_dt
+    sim_back.dt = -sim_dt
     
     # Set the times for snapshots in both directions;
     t_start = epoch_t - (epoch_t % time_step)
     ts_fwd = np.arange(t_start, t1+time_step, time_step)
     ts_back = reversed(np.arange(t0, t_start, time_step))
+    
+    # ts = np.arange(t0, t1+time_step, time_step)
+    # idx = np.searchsorted(ts, epoch_t, side='left')
+    # ts_fwd = ts[idx:]
+    # ts_back = ts[:idx]
 
     # File names for forward and backward integrations
     fname_fwd = fname_archive.replace('.bin', '_fwd.bin')
@@ -389,27 +399,27 @@ sim_moons = make_sim_moons(epoch_dt)
 time_step = 1
 # Integrate the planets from dt0 to dt1
 fname_planets = '../data/planets/planets_2000-2040.bin'
-# sa_planets = make_archive(fname_archive=fname_planets, sim_epoch=sim_planets,
-#                          epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
+sa_planets = make_archive(fname_archive=fname_planets, sim_epoch=sim_planets,
+                          epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
 
 # Integrate the planets and moons from dt0 to dt1
 fname_moons = '../data/planets/moons_2000-2040.bin'
-sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
-                          epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
+#sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
+#                          epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
    
 # Test integration of planets
-# test_planet_integration(sa_planets, object_names_planets)
-test_moon_integration(sa_moons, object_names_moons)
+test_planet_integration(sa_planets, object_names_planets)
+# test_moon_integration(sa_moons, object_names_moons)
 
 # ********************************************************************************************************************* 
 #if __name__ == '__main__':
 #    main()
 #    pass
 
-#t = (datetime(2019,6,30)-datetime(2000,1,1)).days
-#sa = rebound.SimulationArchive('../data/planets/planets_2000-2040.bin')
-#sim0 = rebound.Simulation('../data/planets/planets_2019-06-30_00-00.bin')
-#sim1 = sa[t]
+t = (datetime(2000,1,1)-datetime(2000,1,1)).days
+sa = rebound.SimulationArchive('../data/planets/planets_2000-2040.bin')
+sim0 = rebound.Simulation('../data/planets/planets_2000-01-01_00-00.bin')
+sim1 = sa[t]
 #
 ## Extract orbital element arrays directrly from Horizons
 #elt0 = sim_elt_array(sim0)
