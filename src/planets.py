@@ -9,6 +9,7 @@ Fri Aug 23 16:13:28 2019
 # Library imports
 import numpy as np
 import rebound
+import matplotlib.pyplot as plt
 from datetime import datetime
 import os
 from tqdm import tqdm as tqdm_console
@@ -201,11 +202,12 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     # Create copies of the simulation to integrate forward and backward
     sim_fwd = sim_epoch.copy()
     sim_back = sim_epoch.copy()
-    reverse_velocity(sim_back)
+    # reverse_velocity(sim_back)
 
     # Set the time counter on both simulation copies to the epoch time
     sim_fwd.t = epoch_t
-    sim_back.t = 0
+    # sim_back.t = 0
+    sim_back.t = epoch_t
 
     # Set the time step
     # sim_dt = 0.01
@@ -218,10 +220,10 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     ts_back = reversed(np.arange(t0, t_start, time_step))
     # ts_back = epoch_t - np.arange(t0, t_start, time_step)[::-1]
     
-    # ts = np.arange(t0, t1+time_step, time_step)
-    # idx = np.searchsorted(ts, epoch_t, side='left')
-    # ts_fwd = ts[idx:]
-    # ts_back = ts[:idx]
+    ts = np.arange(t0, t1+time_step, time_step)
+    idx = np.searchsorted(ts, epoch_t, side='left')
+    ts_fwd = ts[idx:]
+    ts_back = reversed(ts[:idx])
 
     # File names for forward and backward integrations
     fname_fwd = fname_archive.replace('.bin', '_fwd.bin')
@@ -237,7 +239,8 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     # Integrate the simulation backward in time
     for t in tqdm_console(ts_back):
         # Integrate to the current time step with an exact finish time
-        sim_back.integrate(epoch_t - t, exact_finish_time=1)
+        # sim_back.integrate(epoch_t - t, exact_finish_time=1)
+        sim_back.integrate(t, exact_finish_time=1)
         # Save a snapshot to the archive file
         sim_back.simulationarchive_snapshot(filename=fname_back)
 
@@ -247,8 +250,8 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     
     # Combine the forward and backward archives in forward order from t0 to t1
     for sim in reversed(sa_back):
-        sim.t = epoch_t - sim.t        
-        reverse_velocity(sim)
+        # sim.t = epoch_t - sim.t        
+        # reverse_velocity(sim)
         sim.simulationarchive_snapshot(fname_archive)
     for sim in sa_fwd:
         sim.simulationarchive_snapshot(fname_archive)
@@ -312,12 +315,26 @@ def sim_cfg_array(sim):
     return cfgs
 
 # ********************************************************************************************************************* 
-def report_sim_difference(sim0, sim1, object_names):
+def report_sim_difference(sim0, sim1, object_names, verbose=False):
     """Report the difference between two simulations on a summary basis"""
     # Extract configuration arrays for the two simulations
     cfg0 = sim_cfg_array(sim0)
     cfg1 = sim_cfg_array(sim1)
 
+    # Compute RMS difference of configuration
+    # cfg_rms = rms(cfg_diff, axis=0)
+    # cfg_err = np.abs(cfg_diff)
+
+    # Names of Cartesian configuration variables
+    # cfg_names = ['qx', 'qy', 'qz', 'vx', 'vy', 'vz']
+
+    # Report RMS Cartesian differences
+    # print(f'\nRMS Difference of configuration:')
+    # for j, var in enumerate(cfg_names):
+    #    idx = np.argmax(np.abs(cfg_diff[:, j]))
+    #    worse = object_names[idx]
+    #    print(f'{var:2} : {cfg_rms[j]:5.2e} : {worse:10}: {cfg_err[idx, j]:+5.2e}')
+    
     # Displacement of each body to earth
     try:
         earth_idx = object_names.index('Earth')
@@ -339,29 +356,19 @@ def report_sim_difference(sim0, sim1, object_names):
     pos_diff = cfg_diff[:, 0:3]
     vel_diff = cfg_diff[:, 3:6]
 
-    # Compute RMS difference of configuration
-    cfg_rms = rms(cfg_diff, axis=0)
-    cfg_err = np.abs(cfg_diff)
     pos_err = np.linalg.norm(pos_diff, axis=1)
-    pos_err_rel = pos_err / np.linalg.norm(cfg0[:, 0:3])
+    pos_err_rel = pos_err / np.linalg.norm(cfg0[:, 0:3], axis=1)
     vel_err = np.linalg.norm(vel_diff, axis=1)
-    vel_err_rel = vel_err / np.linalg.norm(cfg0[:, 3:6])
+    vel_err_rel = vel_err / np.linalg.norm(cfg0[:, 3:6], axis=1)
 
-    # Names of Cartesian configuration variables
-    cfg_names = ['qx', 'qy', 'qz', 'vx', 'vy', 'vz']
-
-    # Report RMS Cartesian differences
-    print(f'\nRMS Difference of configuration:')
-    for j, var in enumerate(cfg_names):
-        idx = np.argmax(np.abs(cfg_diff[:, j]))
-        worse = object_names[idx]
-        print(f'{var:2} : {cfg_rms[j]:5.2e} : {worse:10}: {cfg_err[idx, j]:+5.2e}')
-    
     print(f'\nPosition difference - absolute & relative')
-    print(f'Body       : ASC     : DEC     : AU      : Rel      : Vel Rel')
-    for i, nm in enumerate(object_names):
-        print(f'{nm:10} : {asc_err[i]:5.2e}: {dec_err[i]:5.2e}: {pos_err[i]:5.2e}: {pos_err_rel[i]:5.2e} : {vel_err_rel[i]:5.2e}')
-    print(f'Overall    : {rms(pos_err):5.2e}: {rms(pos_err_rel):5.2e} : {rms(vel_err_rel):5.2e}')
+    print(f'Body       : ASC     : DEC     : AU      : Rel     : Vel Rel')
+    if verbose:
+        for i, nm in enumerate(object_names):
+            print(f'{nm:10} : {asc_err[i]:5.2e}: {dec_err[i]:5.2e}: {pos_err[i]:5.2e}: '
+                  f'{pos_err_rel[i]:5.2e}: {vel_err_rel[i]:5.2e}')
+    print(f'Overall    : {rms(asc_err):5.2e}: {rms(dec_err):5.2e}: {rms(pos_err):5.2e}: '
+          f'{rms(pos_err_rel):5.2e}: {rms(vel_err_rel):5.2e}')
 
     # Extract orbital element arrays from the two simulations
     elt0 = sim_elt_array(sim0)
@@ -378,47 +385,57 @@ def report_sim_difference(sim0, sim1, object_names):
 
     # Report RMS orbital element differences
     print(f'\nOrbital element errors:')
-    print(f'elt    : RMS      : worst      : max_err  : HRZN        : REB')
-    for j, elt in enumerate(elt_names):
-        idx = np.argmax(elt_err[:, j])
-        worse = object_names[idx+1]
-        print(f'{elt:6} : {elt_rms[j]:5.2e} : {worse:10} : {elt_err[idx, j]:5.2e} : '
-              f'{elt0[idx, j]:11.8f} : {elt1[idx, j]:11.8f}')
-    # print(f'Overall RMS = {rms(elt_diff):5.2e}')
+    if verbose:
+        print(f'elt    : RMS      : worst      : max_err  : HRZN        : REB')
+        for j, elt in enumerate(elt_names):
+            idx = np.argmax(elt_err[:, j])
+            worse = object_names[idx+1]
+            print(f'{elt:6} : {elt_rms[j]:5.2e} : {worse:10} : {elt_err[idx, j]:5.2e} : '
+                  f'{elt0[idx, j]:11.8f} : {elt1[idx, j]:11.8f}')
     print(f'RMS (a, e, inc) =          {rms(elt_diff[:,0:3]):5.2e}')
-    print(f'RMS (f, M, pomega, long) = {rms(elt_diff[:,5:9]):5.2e}')
+    print(f'RMS (f, M, pomega, long) = {rms(elt_diff[:,5:9]):5.2e}')      
 
+    # One summary error statistic
+    ang_err = rms(np.array([asc_err, dec_err]))
+    print(f'\nRMS Angle error:\n{ang_err:5.2e}')
+    
+    # Return the angle errors
+    return asc_err, dec_err
+    
 # ********************************************************************************************************************* 
-def test_planet_integration(sa, object_names):
-    """Generate selected asteroid simulations"""
+def test_integration(sa, object_names, make_sim_func = make_sim_planets, make_plot=False):
+    """Test the integration of the planets against Horizons data"""
     
     # Start time of simulation
     dt0: datetime = datetime(2000, 1, 1)
     
-    test_years = [2000]
-    # test_years = list(range(2000, 2015, 5)) + list(range(2015, 2025)) + list(range(2025, 2041, 5))
+    # Dates to be tested
+    test_years = [2000, 2040]
+    test_years = list(range(2000, 2015, 5)) + list(range(2015, 2025)) + list(range(2025, 2041, 5))
     test_dates = [datetime(year, 1, 1) for year in test_years]
+    
+    # Errors on these dates
+    asc_errs = []
+    dec_errs = []
+    
+    # Test the dates
     for dt_t in test_dates:
         t = (dt_t - dt0).days
         sim_t = make_sim_planets(dt_t)
         print(f'\nDifference on {dt_t}:')
-        report_sim_difference(sim_t, sa[t], object_names)
-
-# ********************************************************************************************************************* 
-def test_moon_integration(sa, object_names):
-    """Generate selected asteroid simulations"""
+        asc_err, dec_err = report_sim_difference(sim_t, sa[t], object_names)
+        asc_errs.append(asc_err)
+        dec_errs.append(dec_err)
     
-    # Start time of simulation
-    dt0: datetime = datetime(2000, 1, 1)
-    
-    test_years = list(range(2000, 2015, 5)) + list(range(2015, 2025)) + list(range(2025, 2041, 5))
-    for year in test_years:
-        dt_t = datetime(year, 1, 1)
-        t = (dt_t - dt0).days
-        sim_t = make_sim_moons(dt_t)
-        print(f'\nDifference on January 1, {year}:')
-        report_sim_difference(sim_t, sa[t], object_names)
-        
+    # Plot error summary
+    if make_plot:
+        asc_err_rms = np.array([rms(x) for x in asc_errs])
+        dec_err_rms = np.array([rms(x) for x in dec_errs])
+        ang_err_rms = rms(np.stack([asc_err_rms, dec_err_rms]), axis=0)
+        fig, ax = plt.subplots()
+        ax.set_title('Angle Error vs. Time')
+        ax.plot(test_years, ang_err_rms, marker='o', color='blue')
+       
 # ********************************************************************************************************************* 
 #def main():
 #    """Generate selected asteroid simulations"""
@@ -451,7 +468,7 @@ fname_moons = '../data/planets/moons_2000-2040.bin'
 #                          epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
    
 # Test integration of planets
-test_planet_integration(sa_planets, object_names_planets)
+test_integration(sa_planets, object_names_planets, make_sim_planets, True)
 # test_moon_integration(sa_moons, object_names_moons)
 
 # ********************************************************************************************************************* 
