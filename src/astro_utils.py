@@ -6,6 +6,7 @@ Michael S. Emanuel
 Fri Aug 23 16:13:28 2019
 """
 
+import numpy as np
 from datetime import date, datetime, timedelta
 
 # Constant with the base date for julian day conversions
@@ -107,6 +108,36 @@ def mjd_to_horizons(mjd: float):
     """Convert a Modified Julian Day to a string understood by NASA Horizons"""
     jd = mjd_to_jd(mjd)
     return jd_to_horizons(jd)
+
+# *************************************************************************************************
+def xyz_to_sph(x: np.array, y: np.array, z: np.array):
+    """
+    Convert a Cartesian coordinates x, y, z of a displacement vector to 
+    spherical coordinates r, asc, dec"""
+    # The distance R
+    r = np.sqrt(x*x + y*y + z*z)
+
+    # The right ascension
+    asc = np.arctan2(y, x)
+
+    # The declination; use mask to avoid divide by zero when r=0
+    dec = np.zeros_like(z)
+    mask = r>0
+    dec[mask] = np.arcsin(z[mask] / r[mask])
+
+    return r, asc, dec
+
+# *************************************************************************************************
+def cart_to_sph(q: np.array):
+    """
+    Convert a Cartesian coordinates q with shape (N,3)o f a displacement vector to 
+    spherical coordinates r, asc, dec"""
+    # Unpack x, y, z
+    x = q[:, 0]
+    y = q[:, 1]
+    z = q[:, 2]
+    # Delegate to xyz_to_sph
+    return xyz_to_sph(x, y, z)
 
 # *************************************************************************************************
 def test_julian_day():

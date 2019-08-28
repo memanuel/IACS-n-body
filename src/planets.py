@@ -15,7 +15,7 @@ from tqdm import tqdm as tqdm_console
 from typing import List, Dict
 
 # Local imports
-from astro_utils import mjd_to_horizons, datetime_to_horizons, datetime_to_mjd, mjd_to_datetime
+from astro_utils import datetime_to_horizons, datetime_to_mjd, mjd_to_datetime, cart_to_sph
 from utils import rms
 
 # ********************************************************************************************************************* 
@@ -169,6 +169,15 @@ def make_sim_moons(t: datetime):
     return sim
 
 # ********************************************************************************************************************* 
+def reverse_velocity(sim):
+    """Reverse the velocities in a simulation for backwards time integration; modifies sim in place"""
+    for p in sim.particles:
+        vx, vy, vz = p.vx, p.vy, p.vz
+        p.vx = -vx
+        p.vy = -vy
+        p.vz = -vz
+
+# ********************************************************************************************************************* 
 def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation, 
                       epoch_dt: datetime, dt0: datetime, dt1: datetime, 
                       time_step: int):
@@ -192,20 +201,22 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     # Create copies of the simulation to integrate forward and backward
     sim_fwd = sim_epoch.copy()
     sim_back = sim_epoch.copy()
-    
+    reverse_velocity(sim_back)
+
     # Set the time counter on both simulation copies to the epoch time
     sim_fwd.t = epoch_t
-    sim_back.t = epoch_t
+    sim_back.t = 0
 
     # Set the time step
-    sim_dt = 0.01
-    sim_fwd.dt = sim_dt
-    sim_back.dt = -sim_dt
+    # sim_dt = 0.01
+    # sim_fwd.dt = sim_dt
+    # sim_back.dt = -sim_dt
     
     # Set the times for snapshots in both directions;
     t_start = epoch_t - (epoch_t % time_step)
     ts_fwd = np.arange(t_start, t1+time_step, time_step)
     ts_back = reversed(np.arange(t0, t_start, time_step))
+    # ts_back = epoch_t - np.arange(t0, t_start, time_step)[::-1]
     
     # ts = np.arange(t0, t1+time_step, time_step)
     # idx = np.searchsorted(ts, epoch_t, side='left')
@@ -226,7 +237,7 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     # Integrate the simulation backward in time
     for t in tqdm_console(ts_back):
         # Integrate to the current time step with an exact finish time
-        sim_back.integrate(t, exact_finish_time=1)
+        sim_back.integrate(epoch_t - t, exact_finish_time=1)
         # Save a snapshot to the archive file
         sim_back.simulationarchive_snapshot(filename=fname_back)
 
@@ -236,6 +247,8 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     
     # Combine the forward and backward archives in forward order from t0 to t1
     for sim in reversed(sa_back):
+        sim.t = epoch_t - sim.t        
+        reverse_velocity(sim)
         sim.simulationarchive_snapshot(fname_archive)
     for sim in sa_fwd:
         sim.simulationarchive_snapshot(fname_archive)
@@ -276,12 +289,12 @@ def make_archive(fname_archive: str, sim_epoch: rebound.Simulation,
 def sim_elt_array(sim):
     """Extract the orbital elements of each body in the simulation"""
     # Allocate array of elements
-    elts = np.zeros(shape=(sim.N-1, 7))
+    elts = np.zeros(shape=(sim.N-1, 9))
     
     # Iterate through particles AFTER the primary
     ps = sim.particles
     for i, p in enumerate(ps[1:]):
-        elts[i] = np.array([p.a, p.e, p.inc, p.Omega, p.omega, p.f, p.M])
+        elts[i] = np.array([p.a, p.e, p.inc, p.Omega, p.omega, p.f, p.M, p.pomega, p.l])
         
     return elts
 
@@ -301,38 +314,38 @@ def sim_cfg_array(sim):
 # ********************************************************************************************************************* 
 def report_sim_difference(sim0, sim1, object_names):
     """Report the difference between two simulations on a summary basis"""
-    # Extract orbital element arrays directrly from Horizons
-    elt0 = sim_elt_array(sim0)
-    elt1 = sim_elt_array(sim1)
-
-    # Take differences
-    elt_diff = (elt1 - elt0)
-    # Compute RMS difference by orbital element
-    elt_rms = rms(elt_diff, axis=0)
-    elt_err = np.abs(elt_diff)
-
-    # Names of selected elements
-    elt_names = ['a', 'e', 'inc', 'Omega', 'omega', 'f', 'M']
-
-    # Report RMS orbital element differences
-    print(f'RMS Difference of elements:')
-    for j, elt in enumerate(elt_names):
-        idx = np.argmax(elt_err[:, j])
-        worse = object_names[idx+1]
-        print(f'{elt:5} : {elt_rms[j]:5.2e} : {worse:10} : {elt_err[idx, j]:5.2e} : '
-              f'{elt0[idx, j]:11.8f} : {elt1[idx, j]:11.8f}')
-    print(f'Overall RMS = {rms(elt_diff):5.2e}')
-
-    # Extract orbital element arrays directrly from Horizons
+    # Extract configuration arrays for the two simulations
     cfg0 = sim_cfg_array(sim0)
     cfg1 = sim_cfg_array(sim1)
 
+    # Displacement of each body to earth
+    try:
+        earth_idx = object_names.index('Earth')
+    except:
+        earth_idx = object_names.index('Earth Geocenter')
+    q0 = cfg0[:, 0:3] - cfg0[earth_idx, 0:3]
+    q1 = cfg1[:, 0:3] - cfg1[earth_idx, 0:3]
+    
+    # Right Ascension and Declination
+    r0, asc0, dec0 = cart_to_sph(q0)
+    r1, asc1, dec1 = cart_to_sph(q1)
+
+    # Error in asc and dec
+    asc_err = np.abs(asc1-asc0)
+    dec_err = np.abs(dec1-dec0)
+
     # Take differences
     cfg_diff = (cfg1 - cfg0)
-    # pos_dif = cif_diff[:, 0:3]
+    pos_diff = cfg_diff[:, 0:3]
+    vel_diff = cfg_diff[:, 3:6]
+
     # Compute RMS difference of configuration
     cfg_rms = rms(cfg_diff, axis=0)
     cfg_err = np.abs(cfg_diff)
+    pos_err = np.linalg.norm(pos_diff, axis=1)
+    pos_err_rel = pos_err / np.linalg.norm(cfg0[:, 0:3])
+    vel_err = np.linalg.norm(vel_diff, axis=1)
+    vel_err_rel = vel_err / np.linalg.norm(cfg0[:, 3:6])
 
     # Names of Cartesian configuration variables
     cfg_names = ['qx', 'qy', 'qz', 'vx', 'vy', 'vz']
@@ -343,7 +356,37 @@ def report_sim_difference(sim0, sim1, object_names):
         idx = np.argmax(np.abs(cfg_diff[:, j]))
         worse = object_names[idx]
         print(f'{var:2} : {cfg_rms[j]:5.2e} : {worse:10}: {cfg_err[idx, j]:+5.2e}')
-    print(f'Overall RMS = {rms(cfg_diff):5.2e}')
+    
+    print(f'\nPosition difference - absolute & relative')
+    print(f'Body       : ASC     : DEC     : AU      : Rel      : Vel Rel')
+    for i, nm in enumerate(object_names):
+        print(f'{nm:10} : {asc_err[i]:5.2e}: {dec_err[i]:5.2e}: {pos_err[i]:5.2e}: {pos_err_rel[i]:5.2e} : {vel_err_rel[i]:5.2e}')
+    print(f'Overall    : {rms(pos_err):5.2e}: {rms(pos_err_rel):5.2e} : {rms(vel_err_rel):5.2e}')
+
+    # Extract orbital element arrays from the two simulations
+    elt0 = sim_elt_array(sim0)
+    elt1 = sim_elt_array(sim1)
+
+    # Take differences
+    elt_diff = (elt1 - elt0)
+    # Compute RMS difference by orbital element
+    elt_rms = rms(elt_diff, axis=0)
+    elt_err = np.abs(elt_diff)
+
+    # Names of selected elements
+    elt_names = ['a', 'e', 'inc', 'Omega', 'omega', 'f', 'M', 'pomega', 'long']
+
+    # Report RMS orbital element differences
+    print(f'\nOrbital element errors:')
+    print(f'elt    : RMS      : worst      : max_err  : HRZN        : REB')
+    for j, elt in enumerate(elt_names):
+        idx = np.argmax(elt_err[:, j])
+        worse = object_names[idx+1]
+        print(f'{elt:6} : {elt_rms[j]:5.2e} : {worse:10} : {elt_err[idx, j]:5.2e} : '
+              f'{elt0[idx, j]:11.8f} : {elt1[idx, j]:11.8f}')
+    # print(f'Overall RMS = {rms(elt_diff):5.2e}')
+    print(f'RMS (a, e, inc) =          {rms(elt_diff[:,0:3]):5.2e}')
+    print(f'RMS (f, M, pomega, long) = {rms(elt_diff[:,5:9]):5.2e}')
 
 # ********************************************************************************************************************* 
 def test_planet_integration(sa, object_names):
@@ -352,7 +395,7 @@ def test_planet_integration(sa, object_names):
     # Start time of simulation
     dt0: datetime = datetime(2000, 1, 1)
     
-    test_years = [2000, 2040]
+    test_years = [2000]
     # test_years = list(range(2000, 2015, 5)) + list(range(2015, 2025)) + list(range(2025, 2041, 5))
     test_dates = [datetime(year, 1, 1) for year in test_years]
     for dt_t in test_dates:
@@ -422,11 +465,11 @@ sim0 = rebound.Simulation('../data/planets/planets_2000-01-01_00-00.bin')
 sim1 = sa[t]
 #
 ## Extract orbital element arrays directrly from Horizons
-#elt0 = sim_elt_array(sim0)
-#elt1 = sim_elt_array(sim1)
+elt0 = sim_elt_array(sim0)
+elt1 = sim_elt_array(sim1)
 #
 ## Take differences
-#elt_diff = (elt1- elt0)
+elt_diff = (elt1- elt0)
 ## Compute RMS difference by orbital element
 #elt_rms = rms(elt_diff, axis=0)
 #elt_err = np.abs(elt_diff)
