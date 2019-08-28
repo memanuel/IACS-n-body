@@ -139,6 +139,15 @@ def cart_to_sph(q: np.array):
     # Delegate to xyz_to_sph
     return xyz_to_sph(x, y, z)
 
+# ********************************************************************************************************************* 
+def reverse_velocity(sim):
+    """Reverse the velocities in a simulation for backwards time integration; modifies sim in place"""
+    for p in sim.particles:
+        vx, vy, vz = p.vx, p.vy, p.vz
+        p.vx = -vx
+        p.vy = -vy
+        p.vz = -vz
+
 # *************************************************************************************************
 def test_julian_day():
     """Test Julian Day conversions"""
