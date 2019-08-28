@@ -179,8 +179,10 @@ def make_sim_moons(t: datetime):
     sim = make_sim(sim_name=sim_name, object_names=object_names, t=t)
     
     # Set integrator and time step
-    sim.integrator = 'leapfrog'
-    sim.dt = 1.0/256.0
+    sim.integrator = 'ias15'
+    # sim.dt = 1.0/1024.0
+    ias15 = sim.ri_ias15
+    ias15.min_dt = 1.0 / 2.0
     
     return sim
 
@@ -367,7 +369,8 @@ def report_sim_difference(sim0, sim1, object_names, verbose=False):
     print(f'\nPosition difference - absolute & relative')
     print(f'Body       : ASC     : DEC     : AU      : Rel     : Vel Rel')
     if verbose:
-        for i, nm in enumerate(object_names):
+        object_names_short = [nm.replace(' Geocenter', '') for nm in object_names]
+        for i, nm in enumerate(object_names_short):
             print(f'{nm:10} : {asc_err[i]:5.2e}: {dec_err[i]:5.2e}: {pos_err[i]:5.2e}: '
                   f'{pos_err_rel[i]:5.2e}: {vel_err_rel[i]:5.2e}')
     print(f'Overall    : {rms(asc_err):5.2e}: {rms(dec_err):5.2e}: {rms(pos_err):5.2e}: '
@@ -392,7 +395,7 @@ def report_sim_difference(sim0, sim1, object_names, verbose=False):
         print(f'elt    : RMS      : worst      : max_err  : HRZN        : REB')
         for j, elt in enumerate(elt_names):
             idx = np.argmax(elt_err[:, j])
-            worse = object_names[idx+1]
+            worse = object_names_short[idx+1]
             print(f'{elt:6} : {elt_rms[j]:5.2e} : {worse:10} : {elt_err[idx, j]:5.2e} : '
                   f'{elt0[idx, j]:11.8f} : {elt1[idx, j]:11.8f}')
     print(f'RMS (a, e, inc) =          {rms(elt_diff[:,0:3]):5.2e}')
@@ -426,7 +429,7 @@ def test_integration(sa, object_names, make_sim_func = make_sim_planets, make_pl
         t = (dt_t - dt0).days
         sim_t = make_sim_func(dt_t)
         print(f'\nDifference on {dt_t}:')
-        asc_err, dec_err = report_sim_difference(sim_t, sa[t], object_names)
+        asc_err, dec_err = report_sim_difference(sim_t, sa[t], object_names, True)
         asc_errs.append(asc_err)
         dec_errs.append(dec_err)
     
@@ -471,7 +474,7 @@ def main():
                               epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
     
     # Integrate the planets and moons from dt0 to dt1
-    fname_moons = '../data/planets/sim_moons_2000-2040.bin'
+    fname_moons = '../data/planets/sim_moons_2000-2040_ias15_dt2.bin'
     sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
                            epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
        
