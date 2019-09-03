@@ -11,6 +11,9 @@
 *.csv
 *.tsv
 
+# JPL Ephemeris kernels
+*.bsp
+
 # TensorBoard outputs
 *.v2
 
