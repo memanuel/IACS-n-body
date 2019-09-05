@@ -116,10 +116,6 @@ def make_sim_asteroids(sim_base: rebound.Simulation, df: pd.DataFrame, n0: int, 
     """
     # Start with a copy of the base simulation
     sim = sim_base.copy()
-    # The particles
-    ps = sim.particles
-    # Set the primary to the sun (NOT the solar system barycenter!)
-    primary = ps['Sun']
     # Set the number of active particles to the base simulation
     # https://rebound.readthedocs.io/en/latest/ipython/Testparticles.html
     sim.N_active = sim_base.N
@@ -133,10 +129,12 @@ def make_sim_asteroids(sim_base: rebound.Simulation, df: pd.DataFrame, n0: int, 
         omega = df.omega[num]
         M = df.M[num]
         name = df.Name[num]
+        # Set the primary to the sun (NOT the solar system barycenter!)
+        primary = sim.particles['Sun']
         # Add the new asteroid
         sim.add(m=0.0, a=a, e=e, inc=inc, Omega=Omega, omega=omega, M=M, primary=primary)
         # Set the hash to the asteroid's name
-        ps[-1].hash = rebound.hash(name)
+        sim.particles[-1].hash = rebound.hash(name)
 
     # Return the new simulation including the asteroids
     return sim
@@ -164,7 +162,7 @@ def make_sim_asteroids_horizons(fname: str, asteroid_names: List[str], epoch_mjd
     return sim
 
 # ********************************************************************************************************************* 
-def test_element_recovery(sim_base: rebound.Simulation, df:pd.DataFrame, asteroid_name: str, epoch_mjd: int):
+def test_one_asteroid(sim: rebound.Simulation, asteroid_name: str, epoch_mjd: int, verbose: bool = False):
     """Test whether orbital elements of the named asteroid are recovered vs. Horizons"""
     # Convert epoch to a datetime
     epoch_dt: datetime = mjd_to_datetime(epoch_mjd)
@@ -179,20 +177,89 @@ def test_element_recovery(sim_base: rebound.Simulation, df:pd.DataFrame, asteroi
     p1 = sim1.particles[asteroid_name]
     orb1 = p1.calculate_orbit(primary=primary1)
     
-    # Create simulation using data from file
-    sim2 = make_sim_asteroids(sim_base=sim_base, df=df, n0=1, n1=2)
+    # The simulation to be tested, which was assembled from the data file
+    sim2 = sim
     primary2 = sim2.particles['Sun']
     p2 = sim2.particles[asteroid_name]
     orb2 = p2.calculate_orbit(primary=primary2)
 
-    # Compute errors
-    print(f'Errors in recovered orbital elements for {asteroid_name}:')
-    print(f'a    : {np.abs(orb2.a - orb1.a):5.3e}')
-    print(f'e    : {np.abs(orb2.e - orb1.e):5.3e}')
-    print(f'inc  : {np.abs(orb2.inc - orb1.inc):5.3e}')
-    print(f'Omega: {np.abs(orb2.Omega - orb1.Omega):5.3e}')
-    print(f'omega: {np.abs(orb2.omega - orb1.omega):5.3e}')
-    print(f'f    : {np.abs(orb2.f - orb1.f):5.3e}')
+    # Compute errors in cartesian coordinates
+    q1 = np.array([p1.x, p1.y, p1.z]) - np.array([primary1.x, primary1.y, primary1.z])
+    q2 = np.array([p2.x, p2.y, p2.z]) - np.array([primary2.x, primary2.y, primary2.z])
+    q = np.linalg.norm(q2 - q1)
+    v1 = np.array([p1.vx, p1.vy, p1.vz]) - np.array([primary1.vx, primary1.vy, primary1.vz])
+    v2 = np.array([p2.vx, p2.vy, p2.vz]) - np.array([primary2.vx, primary2.vy, primary2.vz])
+    v = np.linalg.norm(v2 - v1)
+
+    # Compute errors in orbital elements
+    a = np.abs(orb2.a - orb1.a)
+    e = np.abs(orb2.e - orb1.e)
+    inc = np.abs(orb2.inc - orb1.inc)
+    Omega = np.abs(orb2.Omega - orb1.Omega)
+    omega = np.abs(orb2.omega - orb1.omega)
+    f = np.abs(orb2.f - orb1.f)
+    
+    # Report errors if requested
+    if verbose:
+        print(f'\nErrors in recovered orbital elements for {asteroid_name}:')
+        print(f'q    : {q:5.3e}')
+        print(f'v    : {v:5.3e}')
+        print(f'a    : {a:5.3e}')
+        print(f'e    : {e:5.3e}')
+        print(f'inc  : {inc:5.3e}')
+        print(f'Omega: {Omega:5.3e}')
+        print(f'omega: {omega:5.3e}')
+        print(f'f    : {f:5.3e}')
+    
+    # Return the errors in q and v
+    return q, v
+
+# ********************************************************************************************************************* 
+def test_element_recovery(epoch_mjd: float, verbose: bool = False):
+    """Test recovery of initial orbital elements for selected asteroids"""
+    # List of asteroids to test
+    # Started with first 10
+    # Juno has an ambiguous name
+    # Hebe matches to Thebe
+    # Metis matches, but the Horizons orbit has messed up elements with a=-3.025, e=1.245
+    asteroid_names = ['Ceres', 'Pallas', 'Vesta', 'Astraea', 'Flora', 'Hygiea', 'Parthenope', 'Victoria',
+                      'Egeria', 'Irene', 'Eunomia', 'Psyche', 'Thetis', 'Melpomene', 'Fortuna', 'Massalia',
+                      'Lutetia', 'Kalliope', 'Thalia', 'Phocaea']
+
+    # Load data from JPL asteroids file
+    df_in = load_data()
+    # Convert data to rebound format
+    df = convert_data(df_in=df_in)
+    
+    # Convert to a datetime
+    epoch_dt: datetime = mjd_to_datetime(epoch_mjd)
+    
+    # Rebound simulation of the planets and moons on this date
+    sim_base = make_sim_moons(epoch_dt)
+    sim_clean_names(sim_base)
+        
+    # Add selected asteroids
+    sim = make_sim_asteroids(sim_base=sim_base, df=df, n0=1, n1=31)
+
+    # Assemble array of errors in q and v
+    N = len(asteroid_names)
+    q = np.zeros(N)
+    v = np.zeros(N)
+    for i, asteroid_name in enumerate(asteroid_names):
+        # print(f'{asteroid_name}')
+        qi, vi = test_one_asteroid(sim=sim, asteroid_name=asteroid_name, epoch_mjd=epoch_mjd, verbose=verbose)
+        q[i], v[i] = qi, vi
+    
+    # Compute RMS error in position and velocity
+    q_rms = rms(q)
+    v_rms = rms(v)
+
+    # Report results
+    print(f'Testing recovery of orbital elements vs. Horizons for')
+    print(', '.join(asteroid_names))
+    print(f'RMS error over {N} asteroids:')
+    print(f'q: {q_rms:5.3e}')
+    print(f'v: {v_rms:5.3e}')
 
 # ********************************************************************************************************************* 
 
@@ -217,15 +284,16 @@ sim_clean_names(sim_base)
     
 # Add selected asteroids
 n0=1
-n1=11
+n1=1001
 sim = make_sim_asteroids(sim_base=sim_base, df=df, n0=n0, n1=n1)
 ps = sim.particles
 primary = sim.particles['Sun']
 p = sim.particles['Ceres']
 orb = p.calculate_orbit(primary=primary)
 
-# Test whether initial elements match Horizons
-test_element_recovery(sim_base=sim_base, df=df, asteroid_name='Ceres', epoch_mjd=epoch_mjd)
+# Test whether initial elements match Horizons on selected asteroids
+# test_one_asteroid(sim=sim, asteroid_name='Ceres', epoch_mjd=epoch_mjd)
+test_element_recovery(epoch_mjd=epoch_mjd, verbose=True)
 
-# Integrate the planets and moons from dt0 to dt1
-fname = '../data/planets/sim_moons_2000-2040_ias15_dt2.bin'
+# Integrate the asteroids from dt0 to dt1
+fname = '../data/asteroids/sim_asteroids_n_{n0:06}_{n1:06}.bin'
