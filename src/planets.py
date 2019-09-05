@@ -130,8 +130,9 @@ def make_sim(sim_name: str, object_names, t: datetime):
 
     # If this file already exists, load and return it
     try:
-        sa = rebound.SimulationArchive(fname_archive)
-        sim = sa[0]
+        # sa = rebound.SimulationArchive(fname_archive)
+        # sim = sa[0]
+        sim = rebound.Simulation(fname_archive)
     except:        
         # Convert t to a horizon date string
         horizon_date: str = datetime_to_horizons(t)
