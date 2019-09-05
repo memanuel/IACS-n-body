@@ -8,15 +8,53 @@ Fri Aug 23 16:13:28 2019
 
 # Library imports
 import numpy as np
+import pandas as pd
 import rebound
 from datetime import datetime
-import os
 from tqdm import tqdm as tqdm_console
 from typing import List, Dict
 
 # Local imports
 from astro_utils import mjd_to_horizons, datetime_to_horizons, datetime_to_mjd, mjd_to_datetime
 from utils import rms
+
+# ********************************************************************************************************************* 
+def load_data():
+    """Load the asteroid data into a Pandas DataFrame"""
+    # The source for this file is at https://ssd.jpl.nasa.gov/?sb_elem
+    fname = '../jpl/orb_elements_asteroid.txt'
+    names = ['Num', 'Name', 'Epoch', 'a', 'e', 'i', 'w', 'Node', 'M', 'H', 'G', 'Ref']
+    colspec_tbl = {'Num': (0,6), 
+                   'Name': (7, 25), 
+                   'Epoch': (25, 30), 
+                   'a': (31, 41), 
+                   'e': (42, 52), 
+                   'i': (54, 62), 
+                   'w': (63, 72),
+                   'Node': (73, 82),
+                   'M': (83, 94),
+                   'H': (95, 100),
+                   'G': (101, 105),
+                   'Ref': (106, 113)}
+    colspecs = [colspec_tbl[nm] for nm in names]
+    header = 0
+    skiprows = [1]
+    dtype = {
+        'Num': int,
+        'Name': str,
+        'Epoch': float,
+        'a': float,
+        'e': float,
+        'i': float,
+        'w': float,
+        'Node': float,
+        'M': float,
+        'H': float,
+        'G': float,
+        'Ref': str,
+    }
+    df = pd.read_fwf(fname, colspecs=colspecs, header=header, names=names, skiprows=skiprows, dtype=dtype)
+    return df
 
 # ********************************************************************************************************************* 
 def make_sa_ceres(n_years: int, sample_freq:int ):
@@ -96,3 +134,6 @@ def test_element_recovery():
     print(f'omega: {np.abs(orb2.omega - orb1.omega):5.3e}')
     print(f'f    : {np.abs(orb2.f - orb1.f):5.3e}')
 
+# ********************************************************************************************************************* 
+
+df = load_data()

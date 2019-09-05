@@ -416,8 +416,8 @@ def test_integration(sa, object_names, make_sim_func = make_sim_planets, make_pl
     dt0: datetime = datetime(2000, 1, 1)
     
     # Dates to be tested
-    test_years = [2000, 2040]
-    test_years = list(range(2000, 2015, 5)) + list(range(2015, 2025)) + list(range(2025, 2041, 5))
+    test_years = [2040]
+    # test_years = list(range(2000, 2015, 5)) + list(range(2015, 2025)) + list(range(2025, 2041, 5))
     test_dates = [datetime(year, 1, 1) for year in test_years]
     
     # Errors on these dates
@@ -434,10 +434,10 @@ def test_integration(sa, object_names, make_sim_func = make_sim_planets, make_pl
         dec_errs.append(dec_err)
     
     # Plot error summary
+    asc_err_rms = np.array([rms(x) for x in asc_errs])
+    dec_err_rms = np.array([rms(x) for x in dec_errs])
+    ang_err_rms = rms(np.stack([asc_err_rms, dec_err_rms]), axis=0)
     if make_plot:
-        asc_err_rms = np.array([rms(x) for x in asc_errs])
-        dec_err_rms = np.array([rms(x) for x in dec_errs])
-        ang_err_rms = rms(np.stack([asc_err_rms, dec_err_rms]), axis=0)
         fig, ax = plt.subplots()
         ax.set_title('Angle Error vs. Time')
         ax.plot(test_years, ang_err_rms, marker='o', color='blue')
@@ -479,8 +479,8 @@ def main():
                            epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
        
     # Test integration of planets
-    # test_integration(sa_planets, object_names_planets, make_sim_planets, True)
-    test_integration(sa_moons, test_objects_moons, make_sim_moons, True)
+    test_integration(sa_planets, object_names_planets, make_sim_planets, True)
+    # test_integration(sa_moons, test_objects_moons, make_sim_moons, True)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
