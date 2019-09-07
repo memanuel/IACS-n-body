@@ -94,22 +94,6 @@ def mjd_to_jd(mjd: float) -> date:
     return mjd + modified_julian_offset
 
 # *************************************************************************************************
-def datetime_to_horizons(t: datetime):
-    """Convert a Python datetime to a datetime string understood by NASA Horizons"""
-    return t.strftime('%Y-%m-%d %H:%M')
-
-# *************************************************************************************************
-def jd_to_horizons(jd: float):
-    """Convert a Julian Day to a string understood by NASA Horizons"""
-    return f'JD{jd:.8f}'
-
-# *************************************************************************************************
-def mjd_to_horizons(mjd: float):
-    """Convert a Modified Julian Day to a string understood by NASA Horizons"""
-    jd = mjd_to_jd(mjd)
-    return jd_to_horizons(jd)
-
-# *************************************************************************************************
 def xyz_to_sph(x: np.array, y: np.array, z: np.array):
     """
     Convert a Cartesian coordinates x, y, z of a displacement vector to 

@@ -12,30 +12,32 @@ import rebound
 import matplotlib.pyplot as plt
 from datetime import datetime
 import os
+import shutil
 from itertools import chain
 from tqdm import tqdm as tqdm_console
-from typing import List, Dict
 
 # Local imports
-from astro_utils import datetime_to_horizons, datetime_to_mjd, mjd_to_datetime, cart_to_sph
+from astro_utils import datetime_to_mjd, mjd_to_datetime, cart_to_sph
+from horizons import datetime_to_horizons, make_sim_horizons, extend_sim_horizons, mass_tbl
 from utils import rms, plot_style
 
 # ********************************************************************************************************************* 
 # Collections of objects
 # The sun and 8 planets
-object_names_planets = ['Sun', 'Mercury', 'Venus', 'Earth', 'Mars',  'Jupiter', 'Saturn', 'Uranus', 'Neptune']
+object_names_planets = ['Sun', 'Mercury Barycenter', 'Venus Barycenter', 'Earth Barycenter', 
+                        'Mars Barycenter',  'Jupiter Barycenter', 'Saturn Barycenter', 
+                        'Uranus Barycenter', 'Neptune Barycenter']
 
 # The sun, 8 planets, and the most significant moons
 # See https://en.wikipedia.org/wiki/List_of_Solar_System_objects_by_size
 object_names_moons = \
-    ['Sun', 
-     'Mercury', 'Venus', 
-     'Earth Geocenter', 'Moon', 
-     'Mars Geocenter', 'Phobos', 'Deimos',
-     'Jupiter Geocenter', 'Io', 'Europa', 'Ganymede', 'Callisto',
-     'Saturn Geocenter', 'Mimas', 'Enceladus', 'Tethys', 'Dione', 'Rhea', 'Titan', 'Iapetus',
-     'Uranus Geocenter', 'Ariel', 'Umbriel', 'Titania', 'Oberon', 'Miranda',
-     'Neptune Geocenter', 'Triton',
+    ['Sun', 'Mercury', 'Venus', 
+     'Earth', 'Moon', 
+     'Mars', 'Phobos', 'Deimos',
+     'Jupiter', 'Io', 'Europa', 'Ganymede', 'Callisto',
+     'Saturn', 'Mimas', 'Enceladus', 'Tethys', 'Dione', 'Rhea', 'Titan', 'Iapetus',
+     'Uranus', 'Ariel', 'Umbriel', 'Titania', 'Oberon', 'Miranda',
+     'Neptune', 'Triton',
      'Pluto', 'Charon',
      # These objects don't have mass on Horizons; mass added with table
      'Eris', 'Makemake', 'Haumea', '2007 OR10', 'Quaoar',
@@ -43,142 +45,10 @@ object_names_moons = \
      ]
 
 # These are the objects tested for the moon integration
-test_objects_moons = ['Sun', 'Mercury', 'Venus', 'Earth Geocenter', 'Mars Geocenter', 
-                      'Jupiter Geocenter', 'Saturn Geocenter', 'Uranus Geocenter', 'Neptune Geocenter']
-
-# Missing masses
-# https://en.wikipedia.org/wiki/List_of_Solar_System_objects_by_size
-mass_tbl = {
-    'Eris': 16.7E21,
-    'Makemake': 4.4E21,
-    'Haumea': 4.006E21,
-    '2007 OR10': 1.75E21,
-    'Quaoar': 1.4E21,
-    'Ceres': 0.939E21,
-    'Orcus': 0.641E21,
-    'Hygiea': 10.76E20,
-    'Varuna': 3.7E20,
-    'Varda': 2.664E20,
-    'Vesta': 2.59E20,
-    'Pallas': 2.11E20,
-    '229762': 1.361E20,
-    '2002 UX25': 1.25E20
-    }
-
-# Convert to solar masses
-mass_sun = 1988550000.0E21
-for nm in mass_tbl:
-    mass_tbl[nm] /= mass_sun
+test_objects_moons = ['Sun', 'Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']
 
 # Set plot style
 plot_style()
-
-# ********************************************************************************************************************* 
-def object_to_horizon_names(object_names):
-    """Convert from user friendly object names to Horizons names"""
-    # See https://ssd.jpl.nasa.gov/horizons.cgi#top for looking up IDs
-    # Initialize every name to map to itself
-    object_name_to_hrzn : Dict['str', 'str'] = {nm: nm for nm in object_names}
-
-    # Earth and the Moon
-    object_name_to_hrzn['Earth Barycenter'] = '3'
-    object_name_to_hrzn['Earth Geocenter'] = '399'
-    object_name_to_hrzn['Moon'] = '301'
-    
-    # Mars and its moons
-    # https://en.wikipedia.org/wiki/Moons_of_Mars
-    object_name_to_hrzn['Mars Barycenter'] = '4'
-    object_name_to_hrzn['Mars Geocenter'] = '499'
-    # object_name_to_hrzn['Phobos'] = '401'
-    # object_name_to_hrzn['Deimos'] = '402'
-
-    # Jupiter and its moons
-    # https://en.wikipedia.org/wiki/Galilean_moons
-    object_name_to_hrzn['Jupiter Barycenter'] = '5'
-    object_name_to_hrzn['Jupiter Geocenter'] = '599'
-    # object_name_to_hrzn['Io'] = '501'
-    # object_name_to_hrzn['Europa'] = '502'
-    # object_name_to_hrzn['Ganymede'] = '503'
-    # object_name_to_hrzn['Callisto'] = '504'
-
-    # Saturn and its moons
-    # https://en.wikipedia.org/wiki/Moons_of_Saturn
-    object_name_to_hrzn['Saturn Barycenter'] = '6'
-    object_name_to_hrzn['Saturn Geocenter'] = '699'
-    
-    # Uranus and its moons
-    # https://en.wikipedia.org/wiki/Moons_of_Uranus
-    object_name_to_hrzn['Uranus Barycenter'] = '7'
-    object_name_to_hrzn['Uranus Geocenter'] = '799'
-
-    # Neptune and its moons
-    # https://en.wikipedia.org/wiki/Moons_of_Neptune
-    object_name_to_hrzn['Neptune Barycenter'] = '8'
-    object_name_to_hrzn['Neptune Geocenter'] = '899'
-
-    # Pluto and its moons
-    object_name_to_hrzn['Pluto Barycenter'] = '9'
-    object_name_to_hrzn['Pluto Geocenter'] = '999'
-
-    # List of horizon object names corresponding to these input object names
-    horizon_names = [object_name_to_hrzn[nm] for nm in object_names]
-
-    return horizon_names
-
-# ********************************************************************************************************************* 
-def make_sim_horizons(object_names: List[str], horizon_date: str):
-    """Create a new rebound simulation with initial data from the NASA Horizons system"""
-    # Create a simulation
-    sim = rebound.Simulation()
-    
-    # Set units
-    sim.units = ('day', 'AU', 'Msun')
-    
-    # Convert from user friendly object names to Horizons names
-    horizon_names = object_to_horizon_names(object_names)
-
-    # Add these objects from Horizons
-    print(f'Searching Horizons as of {horizon_date}.')
-    sim.add(horizon_names, date=horizon_date)
-    
-    # Add hashes for the object names
-    for i, particle in enumerate(sim.particles):
-        particle.hash = rebound.hash(object_names[i])
-        
-    # Move to center of mass
-    sim.move_to_com()
-    
-    return sim
-
-# ********************************************************************************************************************* 
-def extend_sim_horizons(sim: rebound.Simulation, object_names: List[str], horizon_date: str):
-    """Extend a rebound simulation with initial data from the NASA Horizons system"""
-    # Number of particles
-    N_orig = sim.N
-    
-    # Convert from user friendly object names to Horizons names
-    horizon_names = object_to_horizon_names(object_names)
-
-    # Add these objects from Horizons
-    print(f'Searching Horizons as of {horizon_date}.')
-    sim.add(horizon_names, date=horizon_date)
-    
-    # Add hashes for the object names
-    for i, p in enumerate(sim.particles[N_orig:]):
-        object_name = object_names[i]
-        p.hash = rebound.hash(object_name)
-        if p.m == 0.0:
-            try:
-                m = mass_tbl[object_name]
-                p.m = m
-                print(f'Added mass {m:5.3e} Msun for {object_name}.')
-            except:
-                print(f'Could not find mass for {object_name}.')
-
-    # Move to center of mass
-    sim.move_to_com()
-    
-    return sim
 
 # ********************************************************************************************************************* 
 def make_sim(sim_name: str, object_names, t: datetime):
@@ -636,15 +506,19 @@ def main():
                               time_step=time_step, save_step=save_step)
     
     # Integrate the planets and moons from dt0 to dt1
-    # fname_moons = f'../data/planets/sim_moons_2000-2040_ias15_sf{steps_per_day}.bin'
-    fname_moons = f'../data/planets/sim_moons_2000-2040.bin'
+    fname_moons = f'../data/planets/sim_moons_2000-2040_ias15_sf{steps_per_day}.bin'
     sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
                             epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
                             time_step=time_step, save_step=save_step)
+    # Copy file to generically named one
+    fname_moons_gen = f'../data/planets/sim_moons_2000-2040.bin'
+    shutil.copy(fname_moons, fname_moons_gen)
        
     # Test integration of planets
-    # print(f'\n***** Testing integration of sun and 8 planets. *****')
-    # test_integration(sa_planets, object_names_planets, make_sim_planets, True)
+    print(f'\n***** Testing integration of sun and 8 planets. *****')
+    test_integration(sa_planets, object_names_planets, make_sim_planets, True)
+    
+    # Test integration of planets and moons
     num_obj = sim_moons.N
     print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, major moons. *****')
     test_integration(sa_moons, test_objects_moons, make_sim_moons, True)
