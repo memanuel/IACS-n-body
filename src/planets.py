@@ -78,6 +78,9 @@ object_names_dwarfs = object_names_planets + dwarfs
 # Test objects for dwarfs integration - same as for planets
 test_objects_dwarfs = test_objects_planets
 
+# Objects in collection 'all'
+object_names_all = object_names_moons + dwarfs
+
 # Shared collection of test asteroids to integrate
 test_asteroids = [
     'Ceres', 'Pallas', 'Juno', 'Vesta', 'Iris',
@@ -183,8 +186,8 @@ def make_sim_planets(epoch: datetime, integrator='ias15', steps_per_day: int = 2
     return sim
 
 # ********************************************************************************************************************* 
-def make_sim_moons(epoch: datetime, integrator='ias15', steps_per_day: int = 64):
-    """Create a simulation with the sun and 8 planets plus selected moons at the specified time"""
+def make_sim_moons(epoch: datetime, integrator='ias15', steps_per_day: int = 16):
+    """Create a simulation with the sun and 8 planets plus selected moons"""
     # Arguments for make_sim
     sim_name = 'moons'
     object_names = add_test_asteroids(object_names_moons, test_asteroids)
@@ -200,8 +203,8 @@ def make_sim_moons(epoch: datetime, integrator='ias15', steps_per_day: int = 64)
     return sim
 
 # ********************************************************************************************************************* 
-def make_sim_dwarfs(epoch: datetime, integrator='ias15', steps_per_day: int = 64):
-    """Create a simulation with the sun, 8 planets plus selected dwarf planets"""
+def make_sim_dwarfs(epoch: datetime, integrator='ias15', steps_per_day: int = 16):
+    """Create a simulation with the sun, 8 planets and selected dwarf planets"""
     # Arguments for make_sim
     sim_name = 'dwarfs'
     object_names = add_test_asteroids(object_names_dwarfs, test_asteroids)
@@ -213,6 +216,23 @@ def make_sim_dwarfs(epoch: datetime, integrator='ias15', steps_per_day: int = 64
 
     # Zero out the test asteroid masses
     set_test_asteroid_masses(sim=sim, object_names_orig=object_names_dwarfs, test_asteroids=test_asteroids)
+    
+    return sim
+
+# ********************************************************************************************************************* 
+def make_sim_all(epoch: datetime, integrator='ias15', steps_per_day: int = 16):
+    """Create a simulation with all the massive objects (planets, moons, dwarf planets)"""
+    # Arguments for make_sim
+    sim_name = 'all'
+    object_names = add_test_asteroids(object_names_all, test_asteroids)
+    save_file = False
+
+    # Build a simulation with the selected objects
+    sim = make_sim(sim_name=sim_name, object_names=object_names, epoch=epoch, 
+                   integrator=integrator, steps_per_day=steps_per_day, save_file=save_file)
+
+    # Zero out the test asteroid masses
+    set_test_asteroid_masses(sim=sim, object_names_orig=object_names_all, test_asteroids=test_asteroids)
     
     return sim
 
@@ -330,6 +350,7 @@ def make_archive(fname_archive: str, sim_epoch: rebound.Simulation,
         sa = rebound.SimulationArchive(filename=fname_archive)
     except:
         # If the archive is not on disk, save it to disk
+        print(f'Generating archive {fname_archive} from {dt0} to {dt1}, time_step={time_step}...')
         make_archive_impl(fname_archive=fname_archive, sim_epoch=sim_epoch,
                           epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step, save_step=save_step)
         # Load the new archive into memory
@@ -488,7 +509,9 @@ def report_sim_difference(sim0, sim1, object_names, verbose=False):
     
 # ********************************************************************************************************************* 
 def test_integration(sa: rebound.SimulationArchive, test_objects: List[str], 
-                     sim_name: str, make_plot: bool =False):
+                     sim_name: str, test_name: str, 
+                     verbose: bool = False,
+                     make_plot: bool = False):
     """Test the integration of the planets against Horizons data"""
     # Start time of simulation
     dt0: datetime = datetime(2000, 1, 1)
@@ -506,44 +529,52 @@ def test_integration(sa: rebound.SimulationArchive, test_objects: List[str],
     for dt_t in test_dates:
         t = (dt_t - dt0).days
         sim_t = make_sim_horizons(object_names=test_objects, epoch=dt_t)
-        verbose = (dt_t in verbose_dates)
-        if verbose:
+        report_this_date = (dt_t in verbose_dates) and verbose
+        if report_this_date:
             print(f'\nDifference on {dt_t}:')
-        pos_err, ang_err = report_sim_difference(sim0=sim_t, sim1=sa[t], object_names=test_objects, verbose=verbose)
+        pos_err, ang_err = report_sim_difference(sim0=sim_t, sim1=sa[t], 
+                                                 object_names=test_objects, verbose=report_this_date)
         pos_errs.append(pos_err)
         ang_errs.append(ang_err)
     
     # Plot error summary
     pos_err_rms = np.array([rms(x) for x in pos_errs])
     ang_err_rms = np.array([rms(x) for x in ang_errs])
-    sim_name_chart = sim_name.title()
+        
     if make_plot:
+        # Chart titles
+        sim_name_chart = sim_name.title()
+        test_name_chart = test_name.title() if test_name != 'planets_com' else 'Planets (COM)'
+
         # Error in the position
         fig, ax = plt.subplots(figsize=[10,8])
-        ax.set_title(f'Position Error - {sim_name_chart} Integration')
-        ax.set_ylabel('RMS Position Error on 8 Planets in AU')
+        ax.set_title(f'Position Error of {test_name} in {sim_name_chart} Integration')
+        ax.set_ylabel(f'RMS Position Error in AU')
         ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0,))
         ax.plot(test_years, pos_err_rms, marker='o', color='red')
         ax.grid()
-        fig.savefig(fname=f'../figs/planets_integration/sim_error_{sim_name}_pos.png', bbox_inches='tight')
+        fname = f'../figs/planets_integration/sim_error_{sim_name}_{test_name}_pos.png'
+        fig.savefig(fname=fname, bbox_inches='tight')
 
         # Error in the angle
         fig, ax = plt.subplots(figsize=[10,8])
-        ax.set_title(f'Angle Error - {sim_name_chart} Integration')
-        ax.set_ylabel('RMS Angle Error vs. Earth in Arcseconds')
+        ax.set_title(f'Angle Error of {test_name_chart} in {sim_name_chart} Integration')
+        ax.set_ylabel(f'RMS Angle Error vs. Earth in Arcseconds')
         ax.plot(test_years, ang_err_rms, marker='o', color='blue')
         ax.grid()
-        fig.savefig(fname=f'../figs/planets_integration/sim_error_{sim_name}_angle.png', bbox_inches='tight')
-        
-    print(f'\nError by Date:')
-    print('DATE       : ANG   : AU  ')
-    for i, dt_t in enumerate(test_dates):
-        print(f'{dt_t.date()} : {ang_err_rms[i]:5.3f} : {pos_err_rms[i]:5.3e}')
+        fname = f'../figs/planets_integration/sim_error_{sim_name}_{test_name}_angle.png'
+        fig.savefig(fname=fname, bbox_inches='tight')
+    
+    if verbose:
+        print(f'\nError by Date:')
+        print('DATE       : ANG   : AU  ')
+        for i, dt_t in enumerate(test_dates):
+            print(f'{dt_t.date()} : {ang_err_rms[i]:5.3f} : {pos_err_rms[i]:5.3e}')
     
     # Compute average error
     mean_ang_err = np.mean(ang_err_rms)
     mean_pos_err = np.mean(pos_err_rms)
-    print(f'\nMean RMS error over dates:')
+    print(f'\nMean RMS error in {sim_name} integration of {test_name} test objects:')
     print(f'AU   : {mean_pos_err:5.3e}')
     print(f'angle: {mean_ang_err:5.3f}')
     
@@ -551,22 +582,40 @@ def test_integration(sa: rebound.SimulationArchive, test_objects: List[str],
     return pos_err_rms, ang_err_rms
        
 # ********************************************************************************************************************* 
+def run_one_sim(sim_name: str, sim_epoch: rebound.Simulation, 
+                epoch_dt: datetime, dt0: datetime, dt1: datetime, 
+                time_step: int, save_step: int, steps_per_day: int):
+    """Run one simulation, saving it to a simulation archive"""
+    integrator = sim_epoch.integrator
+    fname = f'../data/planets/sim_{sim_name}_2000-2040_{integrator}_sf{steps_per_day}.bin'
+    fname_gen = f'../data/planets/sim_{sim_name}_2000-2040.bin'
+    sa = make_archive(fname_archive=fname, sim_epoch=sim_epoch,
+                      epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
+                      time_step=time_step, save_step=save_step)
+    # Copy file to generically named one
+    shutil.copy(fname, fname_gen)
+    
+    return sa
+
+# ********************************************************************************************************************* 
 def main():
     """Integrate the orbits of the planets and major moons"""
     
     # Process command line arguments
     parser = argparse.ArgumentParser(description='Integrate the orbits of planets and moons.')
-    parser.add_argument('type', nargs='?', metavar='T', type=str, default='n',
-                        help='type of integration, p for planets, d for dwarfs, m for moons, a for all, n for none')
+    parser.add_argument('type', nargs='?', metavar='T', type=str, default='A',
+                        help='type of integration: p- planets; d- dwarfs; m-moons; a-all, '
+                             'A-all 4 strategies: n-none')
     args = parser.parse_args()
     
     # Unpack command line arguments
     integration_type = args.type
     
     # Flags for planets and moons
-    run_planets: bool = integration_type in ('p', 'a')
-    run_moons: bool = integration_type in ('m', 'a')
-    run_dwarfs: bool = integration_type in ('d', 'a')
+    run_planets: bool = integration_type in ('p', 'A')
+    run_moons: bool = integration_type in ('m', 'A')
+    run_dwarfs: bool = integration_type in ('d', 'A')
+    run_all: bool = integration_type in ('a', 'A')
 
     # Reference epoch for asteroids file
     epoch_mjd: float = 58600.0
@@ -582,10 +631,13 @@ def main():
     integrator_planets: str = 'ias15'
     integrator_moons: str = 'ias15'
     integrator_dwarfs: str = 'ias15'
+    integrator_all: str = 'ias15'
+    
     # Integrator time step
     steps_per_day_planets: int = 16
     steps_per_day_moons: int = 16
     steps_per_day_dwarfs: int = 16
+    steps_per_day_all: int = 16
 
     # Initial configuration of planets, moons, and dwarfs
     sim_planets = make_sim_planets(epoch=epoch_dt, integrator=integrator_planets, 
@@ -594,18 +646,8 @@ def main():
                                steps_per_day=steps_per_day_moons)
     sim_dwarfs = make_sim_dwarfs(epoch=epoch_dt, integrator=integrator_dwarfs, 
                                  steps_per_day=steps_per_day_dwarfs)
-
-    # Filenames for the integrations
-    fname_planets = f'../data/planets/sim_planets_2000-2040_{integrator_planets}_sf{steps_per_day_planets}.bin'
-    fname_moons = f'../data/planets/sim_moons_2000-2040_{integrator_moons}_sf{steps_per_day_moons}.bin'
-    fname_dwarfs = f'../data/planets/sim_dwarfs_2000-2040_{integrator_dwarfs}_sf{steps_per_day_dwarfs}.bin'
-
-    # Clean up old files
-    try:
-        # os.remove(fname_dwarfs)
-        pass
-    except:
-        pass
+    sim_all = make_sim_all(epoch=epoch_dt, integrator=integrator_all, 
+                           steps_per_day=steps_per_day_all)
 
     # Shared time_step and save_step
     time_step: int = 1
@@ -613,64 +655,84 @@ def main():
 
     # Integrate the planets from dt0 to dt1
     if run_planets:
-        sa_planets = make_archive(fname_archive=fname_planets, sim_epoch=sim_planets,
+        sim_name = 'planets'
+        fname = f'../data/planets/sim_{sim_name}_2000-2040_{integrator_planets}_sf{steps_per_day_planets}.bin'
+        fname_gen = f'../data/planets/sim_{sim_name}_2000-2040.bin'
+        sa_planets = make_archive(fname_archive=fname, sim_epoch=sim_planets,
                                   epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
                                   time_step=time_step, save_step=save_step)
         # Copy file to generically named one
-        fname_planets_gen = f'../data/planets/sim_planets_2000-2040.bin'
-        shutil.copy(fname_planets, fname_planets_gen)
+        shutil.copy(fname, fname_gen)
     
     # Integrate the planets and moons from dt0 to dt1
     if run_moons:
-        sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
+        sim_name = 'moons'
+        fname = f'../data/planets/sim_{sim_name}_2000-2040_{integrator_planets}_sf{steps_per_day_planets}.bin'
+        fname_gen = f'../data/planets/sim_{sim_name}_2000-2040.bin'
+        sa_moons = make_archive(fname_archive=fname, sim_epoch=sim_moons,
                                 epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
                                 time_step=time_step, save_step=save_step)
         # Copy file to generically named one
-        fname_moons_gen = f'../data/planets/sim_moons_2000-2040.bin'
-        shutil.copy(fname_moons, fname_moons_gen)
+        shutil.copy(fname, fname_gen)
        
     # Integrate the planets and dwarf planets from dt0 to dt1
     if run_dwarfs:
-        sa_dwarfs = make_archive(fname_archive=fname_dwarfs, sim_epoch=sim_dwarfs,
+        sim_name = 'dwarfs'
+        fname = f'../data/planets/sim_{sim_name}_2000-2040_{integrator_planets}_sf{steps_per_day_planets}.bin'
+        fname_gen = f'../data/planets/sim_{sim_name}_2000-2040.bin'
+        sa_dwarfs = make_archive(fname_archive=fname, sim_epoch=sim_dwarfs,
                                  epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
                                  time_step=time_step, save_step=save_step)
         # Copy file to generically named one
-        fname_dwarfs_gen = f'../data/planets/sim_dwarfs_2000-2040.bin'
-        shutil.copy(fname_dwarfs, fname_dwarfs_gen)
+        shutil.copy(fname, fname_gen)
+       
+    # Integrate the all bodies from dt0 to dt1
+    if run_all:
+        sim_name = 'all'
+        fname = f'../data/planets/sim_{sim_name}_2000-2040_{integrator_planets}_sf{steps_per_day_planets}.bin'
+        fname_gen = f'../data/planets/sim_{sim_name}_2000-2040.bin'
+        sa_all = make_archive(fname_archive=fname, sim_epoch=sim_dwarfs,
+                              epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
+                              time_step=time_step, save_step=save_step)
+        # Copy file to generically named one
+        shutil.copy(fname, fname_gen)
        
     # Test integration of planets
     if run_planets:
         print(f'\n***** Testing integration of sun and 8 planets. *****')
         print(f'Integrator = {integrator_planets}, steps per day = {steps_per_day_planets}.')
-        # pos_err_planets, ang_err_planets = \
-        # test_integration(sa=sa_planets, test_objects=test_objects_planets, sim_name='planets', make_plot=False)
+        test_integration(sa=sa_planets, test_objects=test_objects_planets, 
+                         sim_name='planets', test_name='planets_com', make_plot=False)
         pos_err_planets, ang_err_planets = \
-        test_integration(sa=sa_planets, test_objects=test_objects_asteroids, sim_name='planets', make_plot=False)
+        test_integration(sa=sa_planets, test_objects=test_objects_asteroids, 
+                         sim_name='planets', test_name='asteroids', make_plot=True, verbose=True)
     
     # Test integration of planets and moons
     if run_moons:
         num_obj = sim_moons.N
         print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, moons. *****')
         print(f'Integrator = {integrator_moons}, steps per day = {steps_per_day_moons}.')
-        # pos_err_moons, ang_err_moons = \
-        # test_integration(sa=sa_moons, test_objects=test_objects_moons, sim_name='moons', make_plot=False)
+        test_integration(sa=sa_moons, test_objects=test_objects_moons, 
+                         sim_name='moons', test_name='planets', make_plot=False)
         pos_err_moons, ang_err_moons = \
-        test_integration(sa=sa_moons, test_objects=test_objects_asteroids, sim_name='moons', make_plot=False)
+        test_integration(sa=sa_moons, test_objects=test_objects_asteroids, 
+                         sim_name='moons', test_name='asteroids', make_plot=False)
         
     # Test integration of planets and dwarfs
     if run_dwarfs:
         num_obj = sim_dwarfs.N
         print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, dwarf planets. *****')
         print(f'Integrator = {integrator_dwarfs}, steps per day = {steps_per_day_dwarfs}.')
-        # pos_err_dwarfs, ang_err_dwarfs = \
-        # test_integration(sa=sa_dwarfs, test_objects=test_objects_dwarfs, sim_name='dwarfs', make_plot=False)
+        test_integration(sa=sa_dwarfs, test_objects=test_objects_dwarfs, 
+                         sim_name='dwarfs', test_name='planets', make_plot=False)
         pos_err_dwarfs, ang_err_dwarfs = \
-        test_integration(sa=sa_dwarfs, test_objects=test_objects_asteroids, sim_name='dwarfs', make_plot=False)
+        test_integration(sa=sa_dwarfs, test_objects=test_objects_asteroids, 
+                         sim_name='dwarfs', test_name='asteroids', make_plot=False)
         
     # Plot position error
     fig, ax = plt.subplots(figsize=[10,8])
-    ax.set_title(f'Position Error Comparison')
-    ax.set_ylabel('RMS Position Error on 7 Planets in AU')
+    ax.set_title(f'Position Error on 10 Test Asteroids')
+    ax.set_ylabel('RMS Position Error ')
     ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0,))
     test_years = list(range(2000,2041))
     if run_planets:

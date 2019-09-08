@@ -91,6 +91,19 @@ def load_horizons_cache():
     return hrzn
 
 # ********************************************************************************************************************* 
+def purge_horizons_cache(object_name: str, epoch: datetime = None):
+    """Purge all entries of the named object from the Horizons cache"""
+    # Load the cache
+    hrzn = load_horizons_cache()
+    # The object_id of the named object
+    object_id_purged = name_to_id(object_name)
+    # Iterate through entries
+    for (epoch, object_id) in hrzn:
+        if object_id == object_id_purged:
+            pass
+    # Save the revised cache
+
+# ********************************************************************************************************************* 
 def add_one_object_hrzn(sim: rebound.Simulation, object_name: str, epoch: datetime, hrzn: Dict):
     """Add one object to a simulation with data fromm horizons (cache or API)."""
     # Identifiers for this object
