@@ -61,9 +61,10 @@ overrides = {
     'Neptune': '899',
     'Pluto Barycenter': '9',
     'Pluto': '999',
-    # Spacecraft named Juno
-    'Juno': 'NAME=Juno',
+    # Asteroids with ambiguous names
     '52 Europa': 'NAME=Europa',
+    'Juno': 'NAME=Juno',
+    'Iris': 'NAME=Iris',
     'Sila': '79360',
     }
 # Apply the overrides

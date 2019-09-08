@@ -25,60 +25,68 @@ from horizons import make_sim_horizons, extend_sim_horizons
 from utils import rms, plot_style
 
 # ********************************************************************************************************************* 
-# Collections of objects
-# The sun and 8 planets
-object_names_planets = ['Sun', 'Mercury Barycenter', 'Venus Barycenter', 
-                        'Earth', 'Moon',
-                        'Mars Barycenter',  'Jupiter Barycenter', 'Saturn Barycenter', 
-                        'Uranus Barycenter', 'Neptune Barycenter',]
-
-test_objects_planets = ['Sun', 'Mercury Barycenter', 'Venus Barycenter', 'Earth',
-                        'Mars Barycenter',  'Jupiter Barycenter', 'Saturn Barycenter', 
-                        'Uranus Barycenter', 'Neptune Barycenter']
-
-# The sun, 8 planets, and the most significant moons
-# See https://en.wikipedia.org/wiki/List_of_Solar_System_objects_by_size
-object_names_moons = \
-    ['Sun', 
-     'Mercury', 
-     'Venus', 
-     'Earth', 'Moon', 
-     'Mars Barycenter',
-     'Jupiter', 'Io', 'Europa', 'Ganymede', 'Callisto',
-     'Saturn', 'Mimas', 'Enceladus', 'Tethys', 'Dione', 'Rhea', 'Titan', 'Iapetus', 'Phoebe',
-     'Uranus', 'Ariel', 'Umbriel', 'Titania', 'Oberon', 'Miranda',
-     'Neptune', 'Triton', 'Proteus',
-     'Pluto', 'Charon']
-
-# These are the objects tested for the moon integration
-test_objects_moons = ['Sun', 'Mercury', 'Venus', 'Earth', 'Mars Barycenter', 
-                      'Jupiter', 'Saturn', 'Uranus', 'Neptune']
-
-# Planet barycenters and selected dwarf planets
-object_names_dwarfs = \
-    ['Sun', 'Mercury Barycenter', 'Venus Barycenter', 
-     'Earth', 'Moon',
-     'Mars Barycenter',  
-     'Jupiter Barycenter',
-     'Saturn Barycenter', 
-     'Uranus Barycenter',
-     'Neptune Barycenter',
-     # Additional objects over 10^20 kg
-     'Pluto Barycenter',
-     'Eris', 'Makemake', 'Haumea', '2007 OR10', 'Quaoar',
-     'Hygiea', 'Ceres', 
-     'Orcus', 'Salacia', 'Varuna', 'Varda',
-     'Vesta', 'Pallas', '229762', '2002 UX25', '2002 WC19',
-     'Davida', 'Interamnia', 'Eunomia', '2004 UX10', 'Juno', 'Psyche', '52 Europa',
-    ]                      
-
-test_objects_dwarfs = test_objects_planets
-
 # Set plot style
 plot_style()
 
 # ********************************************************************************************************************* 
-def make_sim(sim_name: str, object_names: List[str], epoch: datetime, integrator, steps_per_day: int):
+# Collections of objects
+
+# The sun and 8 planets
+planets = [
+    'Sun', 'Mercury Barycenter', 'Venus Barycenter', 
+    'Earth', 'Moon',
+    'Mars Barycenter',  'Jupiter Barycenter', 'Saturn Barycenter', 
+    'Uranus Barycenter', 'Neptune Barycenter']
+object_names_planets = planets
+test_objects_planets = object_names_planets
+
+# The sun, 8 planets, and the most significant moons
+# See https://en.wikipedia.org/wiki/List_of_Solar_System_objects_by_size
+moons = [
+    'Sun', 
+    'Mercury', 
+    'Venus', 
+    'Earth', 'Moon', 
+    'Mars Barycenter',
+    'Jupiter', 'Io', 'Europa', 'Ganymede', 'Callisto',
+    'Saturn', 'Mimas', 'Enceladus', 'Tethys', 'Dione', 'Rhea', 'Titan', 'Iapetus', 'Phoebe',
+    'Uranus', 'Ariel', 'Umbriel', 'Titania', 'Oberon', 'Miranda',
+    'Neptune', 'Triton', 'Proteus',
+    'Pluto', 'Charon']
+object_names_moons = moons
+# These are the objects tested for the moon integration
+test_objects_moons = [
+    'Sun', 'Mercury', 'Venus', 'Earth', 'Mars Barycenter', 
+    'Jupiter', 'Saturn', 'Uranus', 'Neptune']
+
+# Planet barycenters and selected dwarf planets above 1E-10 solar masses
+# block 1: mass above 1E-9 solar masses; 4 of the 5 IAU recognized
+dwarfs_09 = ['Pluto Barycenter', 'Eris', 'Makemake', 'Haumea']
+# block 2: mass above 1E-10 solar masses
+dwarfs_10 = [
+    '2007 OR10', 'Quaoar', 'Hygiea', 'Ceres', 'Orcus', 
+    'Salacia', 'Varuna', 'Varda', 'Vesta', 'Pallas']
+# block 3: mass above 1E-11 solar masses
+dwarfs_11 = [
+    '229762', '2002 UX25', '2002 WC19', 'Davida', 'Interamnia', 
+    'Eunomia', '2004 UX10', 'Juno', 'Psyche', '52 Europa']
+
+# Selected dwarfs
+dwarfs = dwarfs_09 + dwarfs_10
+# Object collection for dwarfs integration: planet barycenters + selected dwarfs
+object_names_dwarfs = object_names_planets + dwarfs
+# Test objects for dwarfs integration - same as for planets
+test_objects_dwarfs = test_objects_planets
+
+# Shared collection of test asteroids to integrate
+test_asteroids = [
+    'Ceres', 'Pallas', 'Juno', 'Vesta', 'Iris',
+    'Hygiea', 'Egeria', 'Eunomia', 'Psyche', 'Fortuna']
+test_objects_asteroids = ['Earth'] + test_asteroids
+
+# ********************************************************************************************************************* 
+def make_sim(sim_name: str, object_names: List[str], epoch: datetime, 
+             integrator, steps_per_day: int, save_file: bool):
     """Create or load simulation with the specified objects at the specified time"""
     # Filename for archive
     file_date = epoch.strftime('%Y-%m-%d_%H-%M')
@@ -98,13 +106,12 @@ def make_sim(sim_name: str, object_names: List[str], epoch: datetime, integrator
             print(f'Found missing objects in {fname_archive}:')
             print(objects_missing)
             extend_sim_horizons(sim, object_names = objects_missing, epoch=epoch)
-            sim.simulationarchive_snapshot(filename=fname_archive)
 
         # Sets of named and input object hashes
         hashes_sim = set(p.hash.value for p in sim.particles)
         hashes_input = set(rebound.hash(nm).value for nm in object_names)
 
-        # Filter the simulation so ONLY the named objects are included
+        # Filter the simulation so only the named objects are included
         hashes_remove = [h for h in hashes_sim if h not in hashes_input]        
         for h in hashes_remove:
             sim.remove(hash=h)
@@ -124,22 +131,54 @@ def make_sim(sim_name: str, object_names: List[str], epoch: datetime, integrator
         ias15 = sim.ri_ias15
         ias15.min_dt = dt
 
-    # Save a snapshot to the archive file
-    sim.simulationarchive_snapshot(filename=fname_archive)
+    # Save a snapshot to the archive file if requested
+    if save_file:
+        sim.simulationarchive_snapshot(filename=fname_archive, deletefile=True)
 
     # Return the simulation
     return sim
+
+# ********************************************************************************************************************* 
+def add_test_asteroids(object_names: List[str], test_asteroids: List[str]) -> List[str]:
+    """Augment a set of objects to integrate to include the test asteroids"""
+    object_names_new = object_names.copy()
+    for nm in test_asteroids:
+        if nm not in object_names:
+            object_names_new.append(nm)
+    return object_names_new
+
+def set_test_asteroid_masses(sim: rebound.Simulation, 
+                             object_names_orig: List[str], 
+                             test_asteroids: List[str]) -> None:
+    """Zero out the masses of test asteroids to zero if they were not originally added as massive objects"""
+    # List of objects to zero
+    names_zero = [nm for nm in test_asteroids if nm not in object_names_orig]
+    # Set masses of these objects to zero
+    for nm in names_zero:
+        try:
+            sim.particles[nm].m = 0.0
+        except rebound.ParticleNotFound:
+            print(f'Particle {nm} not in simulation')
+            print(f'object_names_orig:')
+            print(object_names_orig)
+            print(f'test_asteroids:')
+            print(test_asteroids)
+            exit()
 
 # ********************************************************************************************************************* 
 def make_sim_planets(epoch: datetime, integrator='ias15', steps_per_day: int = 256):
     """Create a simulation with the sun and 8 planets at the specified time"""
     # Arguments for make_sim
     sim_name = 'planets'
-    object_names = object_names_planets
+    object_names = add_test_asteroids(object_names_planets, test_asteroids)
+    save_file = False
 
     # Build a simulation with the selected objects
     sim = make_sim(sim_name=sim_name, object_names=object_names, epoch=epoch, 
-                   integrator=integrator, steps_per_day=steps_per_day)
+                   integrator=integrator, steps_per_day=steps_per_day, save_file=save_file)
+
+    # Zero out the test asteroid masses
+    set_test_asteroid_masses(sim=sim, object_names_orig=object_names_planets, test_asteroids=test_asteroids)
 
     return sim
 
@@ -148,11 +187,15 @@ def make_sim_moons(epoch: datetime, integrator='ias15', steps_per_day: int = 64)
     """Create a simulation with the sun and 8 planets plus selected moons at the specified time"""
     # Arguments for make_sim
     sim_name = 'moons'
-    object_names = object_names_moons
+    object_names = add_test_asteroids(object_names_moons, test_asteroids)
+    save_file = False
 
     # Build a simulation with the selected objects
     sim = make_sim(sim_name=sim_name, object_names=object_names, epoch=epoch, 
-                   integrator=integrator, steps_per_day=steps_per_day)
+                   integrator=integrator, steps_per_day=steps_per_day, save_file=save_file)
+
+    # Zero out the test asteroid masses
+    set_test_asteroid_masses(sim=sim, object_names_orig=object_names_moons, test_asteroids=test_asteroids)
     
     return sim
 
@@ -161,11 +204,15 @@ def make_sim_dwarfs(epoch: datetime, integrator='ias15', steps_per_day: int = 64
     """Create a simulation with the sun, 8 planets plus selected dwarf planets"""
     # Arguments for make_sim
     sim_name = 'dwarfs'
-    object_names = object_names_dwarfs
+    object_names = add_test_asteroids(object_names_dwarfs, test_asteroids)
+    save_file = False
 
     # Build a simulation with the selected objects
     sim = make_sim(sim_name=sim_name, object_names=object_names, epoch=epoch, 
-                   integrator=integrator, steps_per_day=steps_per_day)
+                   integrator=integrator, steps_per_day=steps_per_day, save_file=save_file)
+
+    # Zero out the test asteroid masses
+    set_test_asteroid_masses(sim=sim, object_names_orig=object_names_dwarfs, test_asteroids=test_asteroids)
     
     return sim
 
@@ -509,8 +556,8 @@ def main():
     
     # Process command line arguments
     parser = argparse.ArgumentParser(description='Integrate the orbits of planets and moons.')
-    parser.add_argument('type', nargs='?', metavar='T', type=str, default='a',
-                        help='type of integration, p for planets, d for dwarfs, m for moons, a for all')
+    parser.add_argument('type', nargs='?', metavar='T', type=str, default='n',
+                        help='type of integration, p for planets, d for dwarfs, m for moons, a for all, n for none')
     args = parser.parse_args()
     
     # Unpack command line arguments
@@ -536,9 +583,9 @@ def main():
     integrator_moons: str = 'ias15'
     integrator_dwarfs: str = 'ias15'
     # Integrator time step
-    steps_per_day_planets: int = 4
-    steps_per_day_moons: int = 64
-    steps_per_day_dwarfs: int = 4
+    steps_per_day_planets: int = 16
+    steps_per_day_moons: int = 16
+    steps_per_day_dwarfs: int = 16
 
     # Initial configuration of planets, moons, and dwarfs
     sim_planets = make_sim_planets(epoch=epoch_dt, integrator=integrator_planets, 
@@ -548,65 +595,77 @@ def main():
     sim_dwarfs = make_sim_dwarfs(epoch=epoch_dt, integrator=integrator_dwarfs, 
                                  steps_per_day=steps_per_day_dwarfs)
 
-    # Shared time_step and save_step
-    time_step: int = 1
-    save_step: int = 1
-
-    # Integrate the planets from dt0 to dt1
+    # Filenames for the integrations
     fname_planets = f'../data/planets/sim_planets_2000-2040_{integrator_planets}_sf{steps_per_day_planets}.bin'
-    save_step: int = 1
-    sa_planets = make_archive(fname_archive=fname_planets, sim_epoch=sim_planets,
-                              epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
-                              time_step=time_step, save_step=save_step)
-    # Copy file to generically named one
-    fname_planets_gen = f'../data/planets/sim_planets_2000-2040.bin'
-    shutil.copy(fname_planets, fname_planets_gen)
-    
-    # Integrate the planets and moons from dt0 to dt1
     fname_moons = f'../data/planets/sim_moons_2000-2040_{integrator_moons}_sf{steps_per_day_moons}.bin'
-    sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
-                            epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
-                            time_step=time_step, save_step=save_step)
-    # Copy file to generically named one
-    fname_moons_gen = f'../data/planets/sim_moons_2000-2040.bin'
-    shutil.copy(fname_moons, fname_moons_gen)
-       
-    # Integrate the planets and dwarf planets from dt0 to dt1
     fname_dwarfs = f'../data/planets/sim_dwarfs_2000-2040_{integrator_dwarfs}_sf{steps_per_day_dwarfs}.bin'
+
+    # Clean up old files
     try:
         # os.remove(fname_dwarfs)
         pass
     except:
         pass
-    sa_dwarfs = make_archive(fname_archive=fname_dwarfs, sim_epoch=sim_dwarfs,
-                             epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
-                             time_step=time_step, save_step=save_step)
-    # Copy file to generically named one
-    fname_dwarfs_gen = f'../data/planets/sim_dwarfs_2000-2040.bin'
-    shutil.copy(fname_dwarfs, fname_dwarfs_gen)
+
+    # Shared time_step and save_step
+    time_step: int = 1
+    save_step: int = 1
+
+    # Integrate the planets from dt0 to dt1
+    if run_planets:
+        sa_planets = make_archive(fname_archive=fname_planets, sim_epoch=sim_planets,
+                                  epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
+                                  time_step=time_step, save_step=save_step)
+        # Copy file to generically named one
+        fname_planets_gen = f'../data/planets/sim_planets_2000-2040.bin'
+        shutil.copy(fname_planets, fname_planets_gen)
+    
+    # Integrate the planets and moons from dt0 to dt1
+    if run_moons:
+        sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
+                                epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
+                                time_step=time_step, save_step=save_step)
+        # Copy file to generically named one
+        fname_moons_gen = f'../data/planets/sim_moons_2000-2040.bin'
+        shutil.copy(fname_moons, fname_moons_gen)
+       
+    # Integrate the planets and dwarf planets from dt0 to dt1
+    if run_dwarfs:
+        sa_dwarfs = make_archive(fname_archive=fname_dwarfs, sim_epoch=sim_dwarfs,
+                                 epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
+                                 time_step=time_step, save_step=save_step)
+        # Copy file to generically named one
+        fname_dwarfs_gen = f'../data/planets/sim_dwarfs_2000-2040.bin'
+        shutil.copy(fname_dwarfs, fname_dwarfs_gen)
        
     # Test integration of planets
     if run_planets:
         print(f'\n***** Testing integration of sun and 8 planets. *****')
         print(f'Integrator = {integrator_planets}, steps per day = {steps_per_day_planets}.')
+        # pos_err_planets, ang_err_planets = \
+        # test_integration(sa=sa_planets, test_objects=test_objects_planets, sim_name='planets', make_plot=False)
         pos_err_planets, ang_err_planets = \
-        test_integration(sa=sa_planets, test_objects=test_objects_planets, sim_name='planets', make_plot=False)
+        test_integration(sa=sa_planets, test_objects=test_objects_asteroids, sim_name='planets', make_plot=False)
     
     # Test integration of planets and moons
     if run_moons:
         num_obj = sim_moons.N
         print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, moons. *****')
         print(f'Integrator = {integrator_moons}, steps per day = {steps_per_day_moons}.')
+        # pos_err_moons, ang_err_moons = \
+        # test_integration(sa=sa_moons, test_objects=test_objects_moons, sim_name='moons', make_plot=False)
         pos_err_moons, ang_err_moons = \
-        test_integration(sa=sa_moons, test_objects=test_objects_moons, sim_name='moons', make_plot=False)
+        test_integration(sa=sa_moons, test_objects=test_objects_asteroids, sim_name='moons', make_plot=False)
         
     # Test integration of planets and dwarfs
     if run_dwarfs:
         num_obj = sim_dwarfs.N
         print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, dwarf planets. *****')
         print(f'Integrator = {integrator_dwarfs}, steps per day = {steps_per_day_dwarfs}.')
+        # pos_err_dwarfs, ang_err_dwarfs = \
+        # test_integration(sa=sa_dwarfs, test_objects=test_objects_dwarfs, sim_name='dwarfs', make_plot=False)
         pos_err_dwarfs, ang_err_dwarfs = \
-        test_integration(sa=sa_dwarfs, test_objects=test_objects_dwarfs, sim_name='dwarfs', make_plot=False)
+        test_integration(sa=sa_dwarfs, test_objects=test_objects_asteroids, sim_name='dwarfs', make_plot=False)
         
     # Plot position error
     fig, ax = plt.subplots(figsize=[10,8])
@@ -614,9 +673,12 @@ def main():
     ax.set_ylabel('RMS Position Error on 7 Planets in AU')
     ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0,))
     test_years = list(range(2000,2041))
-    ax.plot(test_years, pos_err_planets, label='planets', marker='+', color='blue')
-    ax.plot(test_years, pos_err_moons, label='moons', marker='x', color='green')
-    ax.plot(test_years, pos_err_dwarfs, label='dwarfs', marker='o', color='red')
+    if run_planets:
+        ax.plot(test_years, pos_err_planets, label='planets', marker='+', color='blue')
+    if run_moons:
+        ax.plot(test_years, pos_err_moons, label='moons', marker='x', color='green')
+    if run_dwarfs:
+        ax.plot(test_years, pos_err_dwarfs, label='dwarfs', marker='o', color='red')
     ax.grid()
     ax.legend()
     fig.savefig(fname=f'../figs/planets_integration/sim_error_comp.png', bbox_inches='tight')
@@ -624,4 +686,6 @@ def main():
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
-    pass
+#    epoch_dt: datetime = datetime(2019,4,27)
+#    sim_planets = make_sim_planets(epoch=epoch_dt, integrator='ias15', steps_per_day=16)
+#    sim = sim_planets
