@@ -15,6 +15,7 @@ import os
 import shutil
 from itertools import chain
 from tqdm import tqdm as tqdm_console
+import argparse
 from typing import List
 
 # Local imports
@@ -25,7 +26,12 @@ from utils import rms, plot_style
 # ********************************************************************************************************************* 
 # Collections of objects
 # The sun and 8 planets
-object_names_planets = ['Sun', 'Mercury Barycenter', 'Venus Barycenter', 'Earth Barycenter', 
+object_names_planets = ['Sun', 'Mercury Barycenter', 'Venus Barycenter', 
+                        'Earth', 'Moon',
+                        'Mars Barycenter',  'Jupiter Barycenter', 'Saturn Barycenter', 
+                        'Uranus Barycenter', 'Neptune Barycenter']
+
+test_objects_planets = ['Sun', 'Mercury Barycenter', 'Venus Barycenter', 'Earth',
                         'Mars Barycenter',  'Jupiter Barycenter', 'Saturn Barycenter', 
                         'Uranus Barycenter', 'Neptune Barycenter']
 
@@ -44,15 +50,24 @@ object_names_moons = \
      'Neptune', 'Triton', 'Proteus',
      'Pluto', 'Charon',
      # Additional objects over 10^20 kg
-     # 'Eris', 'Makemake', 'Haumea', '2007 OR10', 'Quaoar',
-     # 'Ceres', 'Orcus', 'Hygiea', 'Varuna', 'Varda', 'Vesta', 'Pallas', '229762', '2002 UX25',
      'Ceres', 'Pallas', 'Vesta', 'Hygiea', 'Varuna', 'Quaoar', '2002 UX25', 'Orcus',
-     'Salacia', 'Haumea', 'Eris', 'Makemake', 'Varda', '2007 OR10', '229762'
+     'Salacia', 'Haumea', 'Eris', 'Makemake', 'Varda', '2007 OR10', '229762',
      ]
 
 # These are the objects tested for the moon integration
 test_objects_moons = ['Sun', 'Mercury', 'Venus', 'Earth', 'Mars Barycenter', 
                       'Jupiter', 'Saturn', 'Uranus', 'Neptune']
+
+# Experiment
+object_names_moons = \
+    ['Sun', 'Mercury Barycenter', 'Venus Barycenter', 
+     'Earth', 'Moon',
+     'Mars Barycenter',  'Jupiter Barycenter', 'Saturn Barycenter', 
+     'Uranus Barycenter', 'Neptune Barycenter',
+     # Additional objects over 10^20 kg
+     'Ceres', 'Pallas', 'Vesta', 'Hygiea', 'Varuna', 'Quaoar', '2002 UX25', 'Orcus',
+     'Salacia', 'Haumea', 'Eris', 'Makemake', 'Varda', '2007 OR10', '229762',
+    ]                      
 
 # Set plot style
 plot_style()
@@ -116,13 +131,11 @@ def make_sim_planets(epoch: datetime):
     
     # Set integrator and time step
     sim.integrator = 'ias15'
-    # ias15 = sim.ri_ias15
-    # ias15.min_dt = 1.0 / steps_per_day
 
     return sim
 
 # ********************************************************************************************************************* 
-def make_sim_moons(epoch: datetime, steps_per_day: int = 4):
+def make_sim_moons(epoch: datetime, integrator='ias15', steps_per_day: int = 4):
     """Create a simulation with the sun and 8 planets plus selected moons at the specified time"""
     # Simulation name
     sim_name = 'moons'
@@ -134,9 +147,12 @@ def make_sim_moons(epoch: datetime, steps_per_day: int = 4):
     sim = make_sim(sim_name=sim_name, object_names=object_names, epoch=epoch)
     
     # Set integrator and time step
-    sim.integrator = 'ias15'
-    ias15 = sim.ri_ias15
-    ias15.min_dt = 1.0 / steps_per_day
+    sim.integrator = integrator
+    dt = 1.0 / steps_per_day if steps_per_day > 0 else 0
+    sim.dt = dt
+    if integrator == 'ias15':
+        ias15 = sim.ri_ias15
+        ias15.min_dt = dt
     
     return sim
 
@@ -296,7 +312,7 @@ def sim_cfg_array(sim, object_names=None):
     # Allocate array of configurations
     num_objects = sim.N if object_names is None else len(object_names)
     cfgs = np.zeros(shape=(num_objects, 6))
-    
+
     # Iterate through particles
     ps = sim.particles
 
@@ -338,10 +354,7 @@ def report_sim_difference(sim0, sim1, object_names, verbose=False):
     #    print(f'{var:2} : {cfg_rms[j]:5.2e} : {worse:10}: {cfg_err[idx, j]:+5.2e}')
     
     # Displacement of each body to earth
-    try:
-        earth_idx = object_names.index('Earth')
-    except:
-        earth_idx = object_names.index('Earth Barycenter')
+    earth_idx = object_names.index('Earth')
     q0 = cfg0[:, 0:3] - cfg0[earth_idx, 0:3]
     q1 = cfg1[:, 0:3] - cfg1[earth_idx, 0:3]
     
@@ -359,20 +372,24 @@ def report_sim_difference(sim0, sim1, object_names, verbose=False):
     vel_diff = cfg_diff[:, 3:6]
 
     # Error in position and velocity in heliocentric coordinates; skip the sun
-    pos_err = np.linalg.norm(pos_diff[1:], axis=1)
-    pos_err_rel = pos_err / np.linalg.norm(cfg0[1:, 0:3], axis=1)
-    vel_err = np.linalg.norm(vel_diff[1:], axis=1)
-    vel_err_rel = vel_err / np.linalg.norm(cfg0[1:, 3:6], axis=1)
+    pos_err = np.linalg.norm(pos_diff, axis=1)
+    pos_err_den = np.linalg.norm(cfg0[:, 0:3], axis=1)
+    pos_err_den[0] = 1.0
+    pos_err_rel = pos_err / pos_err_den
+    vel_err = np.linalg.norm(vel_diff, axis=1)
+    vel_err_den = np.linalg.norm(cfg0[:, 3:6], axis=1)
+    vel_err_den[0] = 1.0
+    vel_err_rel = vel_err / vel_err_den
 
-    print(f'\nPosition difference - absolute & relative')
-    print(f'Body       : ASC     : DEC     : AU      : Rel     : Vel Rel')
     if verbose:
+        print(f'\nPosition difference - absolute & relative')
+        print(f'Body       : ASC     : DEC     : AU      : Rel     : Vel Rel')
         object_names_short = [nm.replace(' Barycenter', '') for nm in object_names]
-        for i, nm in enumerate(object_names_short[1:]):
+        for i, nm in enumerate(object_names_short):
             print(f'{nm:10} : {asc_err[i]:5.2e}: {dec_err[i]:5.2e}: {pos_err[i]:5.2e}: '
                   f'{pos_err_rel[i]:5.2e}: {vel_err_rel[i]:5.2e}')
-    print(f'Overall    : {rms(asc_err):5.2e}: {rms(dec_err):5.2e}: {rms(pos_err):5.2e}: '
-          f'{rms(pos_err_rel):5.2e}: {rms(vel_err_rel):5.2e}')
+        print(f'Overall    : {rms(asc_err):5.2e}: {rms(dec_err):5.2e}: {rms(pos_err):5.2e}: '
+              f'{rms(pos_err_rel):5.2e}: {rms(vel_err_rel):5.2e}')
 
     # Extract orbital element arrays from the two simulations
     elt0 = sim_elt_array(sim0, object_names[1:])
@@ -380,6 +397,10 @@ def report_sim_difference(sim0, sim1, object_names, verbose=False):
 
     # Take differences
     elt_diff = (elt1 - elt0)
+    # Angle differences are mod two pi
+    two_pi = 2.0 * np.pi
+    elt_diff[:,2:] = (elt_diff[:,2:] +np.pi ) % two_pi - np.pi
+    
     # Compute RMS difference by orbital element
     elt_rms = rms(elt_diff, axis=0)
     elt_err = np.abs(elt_diff)
@@ -388,26 +409,25 @@ def report_sim_difference(sim0, sim1, object_names, verbose=False):
     elt_names = ['a', 'e', 'inc', 'Omega', 'omega', 'f', 'M', 'pomega', 'long']
 
     # Report RMS orbital element differences
-    print(f'\nOrbital element errors:')
     if verbose:
+        print(f'\nOrbital element errors:')
         print(f'elt    : RMS      : worst      : max_err  : HRZN        : REB')
         for j, elt in enumerate(elt_names):
             idx = np.argmax(elt_err[:, j])
             worse = object_names_short[idx+1]
             print(f'{elt:6} : {elt_rms[j]:5.2e} : {worse:10} : {elt_err[idx, j]:5.2e} : '
                   f'{elt0[idx, j]:11.8f} : {elt1[idx, j]:11.8f}')
-    print(f'RMS (a, e, inc) =          {rms(elt_diff[:,0:3]):5.2e}')
-    print(f'RMS (f, M, pomega, long) = {rms(elt_diff[:,5:9]):5.2e}')      
+        print(f'RMS (a, e, inc) =          {rms(elt_diff[:,0:3]):5.2e}')
+        print(f'RMS (f, M, pomega, long) = {rms(elt_diff[:,5:9]):5.2e}')      
 
     # One summary error statistic
     ang_err = rms(np.array([asc_err, dec_err]))
-    print(f'\nRMS Angle error:\n{ang_err:5.3f}')
     
     # Return the angle errors and RMS position error
-    return asc_err, dec_err, pos_err
+    return pos_err, ang_err
     
 # ********************************************************************************************************************* 
-def test_integration(sa, object_names, sim_name='planets', make_plot=False):
+def test_integration(sa, test_objects, sim_name='planets', make_plot=False):
     """Test the integration of the planets against Horizons data"""
     # Function to make simulation
     sim_func_tbl = {
@@ -422,44 +442,47 @@ def test_integration(sa, object_names, sim_name='planets', make_plot=False):
     # test_years = [2040]
     test_years = list(range(2000, 2041))
     test_dates = [datetime(year, 1, 1) for year in test_years]
+    verbose_dates = [test_dates[-1]]
     
     # Errors on these dates
-    asc_errs = []
-    dec_errs = []
+    ang_errs = []
     pos_errs = []
     
     # Test the dates
     for dt_t in test_dates:
         t = (dt_t - dt0).days
-        sim_t = make_sim_func(dt_t)
-        print(f'\nDifference on {dt_t}:')
-        verbose = (dt_t == test_dates[-1])
-        asc_err, dec_err, pos_err = report_sim_difference(sim_t, sa[t], object_names, verbose=verbose)
-        asc_errs.append(asc_err)
-        dec_errs.append(dec_err)
+        # sim_t = make_sim_func(dt_t)
+        sim_t = make_sim_horizons(object_names=test_objects, epoch=dt_t)
+        verbose = (dt_t in verbose_dates)
+        if verbose:
+            print(f'\nDifference on {dt_t}:')
+        pos_err, ang_err = report_sim_difference(sim_t, sa[t], object_names=test_objects, verbose=verbose)
         pos_errs.append(pos_err)
+        ang_errs.append(ang_err)
     
     # Plot error summary
-    asc_err_rms = np.array([rms(x) for x in asc_errs])
-    dec_err_rms = np.array([rms(x) for x in dec_errs])
-    ang_err_rms = rms(np.stack([asc_err_rms, dec_err_rms]), axis=0)
     pos_err_rms = np.array([rms(x) for x in pos_errs])
+    ang_err_rms = np.array([rms(x) for x in ang_errs])
+    sim_name_chart = sim_name.title()
     if make_plot:
         # Error in the position
         fig, ax = plt.subplots(figsize=[10,8])
-        ax.set_title('Position Error vs. Time')
-        ax.set_ylabel('AU')
+        ax.set_title(f'Position Error - {sim_name_chart} Integration')
+        ax.set_ylabel('RMS Position Error on 8 Planets in AU')
+        ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0,))
         ax.plot(test_years, pos_err_rms, marker='o', color='red')
+        ax.grid()
         fig.savefig(fname=f'../figs/planets_integration/sim_error_{sim_name}_pos.png', bbox_inches='tight')
 
         # Error in the angle
         fig, ax = plt.subplots(figsize=[10,8])
-        ax.set_title('Angle Error vs. Time')
-        ax.set_ylabel('Arcseconds')
+        ax.set_title(f'Angle Error - {sim_name_chart} Integration')
+        ax.set_ylabel('RMS Angle Error vs. Earth in Arcseconds')
         ax.plot(test_years, ang_err_rms, marker='o', color='blue')
+        ax.grid()
         fig.savefig(fname=f'../figs/planets_integration/sim_error_{sim_name}_angle.png', bbox_inches='tight')
         
-    print(f'Error by Date:')
+    print(f'\nError by Date:')
     print('DATE       : ANG   : AU  ')
     for i, dt_t in enumerate(test_dates):
         print(f'{dt_t.date()} : {ang_err_rms[i]:5.3f} : {pos_err_rms[i]:5.3e}')
@@ -468,13 +491,26 @@ def test_integration(sa, object_names, sim_name='planets', make_plot=False):
     mean_ang_err = np.mean(ang_err_rms)
     mean_pos_err = np.mean(pos_err_rms)
     print(f'\nMean RMS error over dates:')
-    print(f'angle: {mean_ang_err:5.3f}')
     print(f'AU   : {mean_pos_err:5.3e}')
+    print(f'angle: {mean_ang_err:5.3f}')
        
 # ********************************************************************************************************************* 
 def main():
     """Integrate the orbits of the planets and major moons"""
     
+    # Process command line arguments
+    parser = argparse.ArgumentParser(description='Integrate the orbits of planets and moons.')
+    parser.add_argument('type', nargs='?', metavar='T', type=str, default='b',
+                        help='type of integration, p for planets, m for moons, b for both')
+    args = parser.parse_args()
+    
+    # Unpack command line arguments
+    integration_type = args.type
+    
+    # Flags for planets and moons
+    run_planets: bool = integration_type in ('p', 'b')
+    run_moons: bool = integration_type in ('m', 'b')
+
     # Reference epoch for asteroids file
     epoch_mjd: float = 58600.0
     # Convert to a datetime
@@ -488,8 +524,9 @@ def main():
     sim_planets = make_sim_planets(epoch=epoch_dt)
 
     # Initial configuration of moons
+    integrator: str = 'ias15'
     steps_per_day: int = 16
-    sim_moons = make_sim_moons(epoch=epoch_dt, steps_per_day=steps_per_day)
+    sim_moons = make_sim_moons(epoch=epoch_dt, integrator=integrator, steps_per_day=steps_per_day)
 
     # Shared time_step and save_step
     time_step: int = 1
@@ -503,7 +540,7 @@ def main():
                               time_step=time_step, save_step=save_step)
     
     # Integrate the planets and moons from dt0 to dt1
-    fname_moons = f'../data/planets/sim_moons_2000-2040_ias15_sf{steps_per_day}.bin'
+    fname_moons = f'../data/planets/sim_moons_2000-2040_{integrator}_sf{steps_per_day}.bin'
     sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
                             epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
                             time_step=time_step, save_step=save_step)
@@ -512,13 +549,16 @@ def main():
     shutil.copy(fname_moons, fname_moons_gen)
        
     # Test integration of planets
-    print(f'\n***** Testing integration of sun and 8 planets. *****')
-    test_integration(sa=sa_planets, object_names=object_names_planets, sim_name='planets', make_plot=True)
+    if run_planets:
+        print(f'\n***** Testing integration of sun and 8 planets. *****')
+        test_integration(sa=sa_planets, test_objects=test_objects_planets, sim_name='planets', make_plot=True)
     
     # Test integration of planets and moons
-    num_obj = sim_moons.N
-    print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, major moons. *****')
-    test_integration(sa=sa_moons, object_names=test_objects_moons, sim_name='moons', make_plot=True)
+    if run_moons:
+        num_obj = sim_moons.N
+        print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, major moons. *****')
+        print(f'Integrator = {integrator}, steps per day = {steps_per_day}.')
+        test_integration(sa=sa_moons, test_objects=test_objects_moons, sim_name='moons', make_plot=True)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':

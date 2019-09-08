@@ -11,7 +11,6 @@ import rebound
 from datetime import datetime
 import collections
 import pickle
-import glob
 from typing import List, Dict
 
 # Local imports
@@ -102,6 +101,7 @@ def add_one_object_hrzn(sim: rebound.Simulation, object_name: str, epoch: dateti
         horizon_name = object_to_horizon_name[object_name]
         # Convert epoch to a horizon date string
         horizon_date: str = datetime_to_horizons(epoch)
+        print(f'Searching Horizons as of {horizon_date}')
         # Add the particle
         sim.add(horizon_name, date=horizon_date)
         # Set the mass and hash of this particle
@@ -146,123 +146,9 @@ def extend_sim_horizons(sim: rebound.Simulation, object_names: List[str], epoch:
     sim.move_to_com()
 
 # ********************************************************************************************************************* 
-def init_horizons_cache():
-    """Initialize cache of Horizons entries"""
-    
-    # Create an empty dictionary; key is (object_id, datetime), value is (m, qx, qy, qz, vy, vy, vz)
-    hrzn = dict()
-    
-    # The object names saved in the planet snapshots
-    object_names_planets = \
-        ['Sun', 'Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']
-    
-    # The object names saved in the moons snapshots
-    object_names_moons = \
-        ['Sun', 'Mercury', 'Venus', 
-         'Earth Geocenter', 'Moon', 
-         'Mars Geocenter', 'Phobos', 'Deimos',
-         'Jupiter Geocenter', 'Io', 'Europa', 'Ganymede', 'Callisto',
-         'Saturn Geocenter', 'Mimas', 'Enceladus', 'Tethys', 'Dione', 'Rhea', 'Titan', 'Iapetus',
-         'Uranus Geocenter', 'Ariel', 'Umbriel', 'Titania', 'Oberon', 'Miranda',
-         'Neptune Geocenter', 'Triton',
-         'Pluto', 'Charon',
-         # These objects don't have mass on Horizons; mass added with table
-         'Eris', 'Makemake', 'Haumea', '2007 OR10', 'Quaoar',
-         'Ceres', 'Orcus', 'Hygiea', 'Varuna', 'Varda', 'Vesta', 'Pallas', '229762', '2002 UX25'
-         ]
-    
-    # Correction from original object names
-    object_name_correction = {nm: nm for nm in object_names_moons}
-    corrections  = {
-        # Corrections for planets shapshots
-        'Earth': 'Earth Barycenter',
-        'Mars': 'Mars Barycenter',
-        'Jupiter' : 'Jupiter Barycenter',
-        'Saturn': 'Saturn Barycenter',
-        'Uranus': 'Uranus Barycenter',
-        'Neptune': 'Neptune Barycenter',
-        # Corrections for moons shapshots
-        'Earth Geocenter': 'Earth',
-        'Mars Geocenter': 'Mars',
-        'Jupiter Geocenter' : 'Jupiter',
-        'Saturn Geocenter': 'Saturn',
-        'Uranus Geocenter': 'Uranus',
-        'Neptune Geocenter': 'Neptune',
-        }
-    for name_old, name_new in corrections.items():
-        object_name_correction[name_old] = name_new
-    
-    # Data from the planet snapshots
-    fnames = glob.glob('../data/planets/v2/planets_*.bin')
-    for fname in fnames:
-        dt_str = fname.replace('../data/planets/v2/planets_', '')
-        dt_str = dt_str.replace('.bin', '')
-        date_str = dt_str[0:10]
-        time_str = dt_str[11:16].replace('-', ':')
-        if date_str == '2019-04-27':
-            continue
-        epoch = datetime.strptime(f'{date_str} {time_str}', '%Y-%m-%d %H:%M')
-        # Load the simulation as of this date
-        sim = rebound.Simulation(fname)
-        for object_name_orig in object_names_planets:
-            # Look up the integer object_id for this body
-            object_name = object_name_correction[object_name_orig]
-            object_id = name_to_id[object_name]
-            # The horizon_name of theis body
-            horizon_name = object_to_horizon_name[object_name]
-            # The dictionary key
-            key = (epoch, object_id)
-            p = sim.particles[object_name_orig]
-            # The mass
-            m = mass_tbl[object_name]
-            # Save a horizon_entry of this particle's attributes
-            hrzn[key] = horizon_entry(m=m, x=p.x, y=p.y, z=p.z, vx=p.vx, vy=p.vy, vz=p.vz,
-                                      object_name=object_name, object_id=object_id, horizon_name=horizon_name)
-    # Data from the moon snapshots
-    fnames = glob.glob('../data/planets/v2/moons_*.bin')
-    for fname in fnames:
-        dt_str = fname.replace('../data/planets/v2/moons_', '')
-        dt_str = dt_str.replace('.bin', '')
-        date_str = dt_str[0:10]
-        time_str = dt_str[11:16].replace('-', ':')
-        if date_str == '2019-04-27':
-            continue
-        epoch = datetime.strptime(f'{date_str} {time_str}', '%Y-%m-%d %H:%M')
-        # Load the simulation as of this date
-        sim = rebound.Simulation(fname)
-        for object_name_orig in object_names_moons:
-            # Look up the integer object_id for this body
-            object_name = object_name_correction[object_name_orig]
-            object_id = name_to_id[object_name]
-            # The horizon_name of theis body
-            horizon_name = object_to_horizon_name[object_name]
-            # The dictionary key
-            key = (epoch, object_id)
-            p = sim.particles[object_name_orig]
-            # The mass
-            m = mass_tbl[object_name]
-            # Save a horizon_entry of this particle's attributes
-            hrzn[key] = horizon_entry(m=m, x=p.x, y=p.y, z=p.z, vx=p.vx, vy=p.vy, vz=p.vz,
-                                      object_name=object_name, object_id=object_id, horizon_name=horizon_name)
-    
-    # Save the cache
-    save_horizons_cache(hrzn)
-
-# ********************************************************************************************************************* 
 try:
     hrzn = load_horizons_cache()
-    print(f'Loaded Horizons cache.')
+    print(f'Loaded Horizons cache with {len(hrzn)} entries.')
 except:
-    init_horizons_cache()
-    hrzn = load_horizons_cache()
-    # hrzn  = dict()
-    print(f'Initialized Horizons cache.')
-
-#for epoch, object_id in hrzn.keys():
-#    if object_id in (199, 299):
-#        object_id_bary = (object_id-99) // 100
-#        key = (epoch, object_id_bary)
-#        if key not in hrzn:
-#            hrzn[key] = hrzn[epoch, object_id]
-#            hrzn[key].object_id = object_id_bary
-#            hrzn[key].object_name = object_id_bary
+    hrzn = dict()
+    print(f'Initialized empty Horizons cache.')
