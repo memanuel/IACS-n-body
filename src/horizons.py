@@ -60,7 +60,11 @@ overrides = {
     'Neptune Barycenter': '8',
     'Neptune': '899',
     'Pluto Barycenter': '9',
-    'Pluto': '999'
+    'Pluto': '999',
+    # Spacecraft named Juno
+    'Juno': 'NAME=Juno',
+    '52 Europa': 'NAME=Europa',
+    'Sila': '79360',
     }
 # Apply the overrides
 for object_name, horizon_name in overrides.items():
