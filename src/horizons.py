@@ -95,13 +95,28 @@ def purge_horizons_cache(object_name: str, epoch: datetime = None):
     """Purge all entries of the named object from the Horizons cache"""
     # Load the cache
     hrzn = load_horizons_cache()
-    # The object_id of the named object
-    object_id_purged = name_to_id(object_name)
-    # Iterate through entries
+    
+    # The object_id of the object to purge
+    object_id_purged = name_to_id[object_name]
+    
+    # The epochs to purge
+    epoch_purged = epoch
+    purge_all_epochs = epoch_purged is None
+    
+    # Iterate through entries to find which keys will be purged
+    keys_to_purge = []
     for (epoch, object_id) in hrzn:
-        if object_id == object_id_purged:
-            pass
-    # Save the revised cache
+        if (object_id == object_id_purged) and (epoch == epoch_purged or purge_all_epochs):
+            keys_to_purge.append((epoch, object_id))
+
+    # Delete selected keys
+    for key in keys_to_purge:
+        del hrzn[key]
+
+    # Save the revised cache and report
+    save_horizons_cache(hrzn)
+    num_deleted: int = len(keys_to_purge)
+    print(f'Deleted {num_deleted} entries from horizons cache for {object_name}, epoch={epoch_purged}')
 
 # ********************************************************************************************************************* 
 def add_one_object_hrzn(sim: rebound.Simulation, object_name: str, epoch: datetime, hrzn: Dict):
