@@ -67,9 +67,9 @@ object_names_dwarfs = \
      'Pluto Barycenter',
      'Eris', 'Makemake', 'Haumea', '2007 OR10', 'Quaoar',
      'Hygiea', 'Ceres', 
-     # 'Orcus', 'Salacia', 'Varuna', 'Varda',
-     # 'Vesta', 'Pallas', '229762', '2002 UX25', '2002 WC19',
-     # 'Davida', 'Interamnia', 'Eunomia', '2004 UX10', 'Juno', 'Psyche', '52 Europa',
+     'Orcus', 'Salacia', 'Varuna', 'Varda',
+     'Vesta', 'Pallas', '229762', '2002 UX25', '2002 WC19',
+     'Davida', 'Interamnia', 'Eunomia', '2004 UX10', 'Juno', 'Psyche', '52 Europa',
     ]                      
 
 test_objects_dwarfs = test_objects_planets
@@ -481,12 +481,12 @@ def test_integration(sa: rebound.SimulationArchive, test_objects: List[str],
         fig.savefig(fname=f'../figs/planets_integration/sim_error_{sim_name}_pos.png', bbox_inches='tight')
 
         # Error in the angle
-#        fig, ax = plt.subplots(figsize=[10,8])
-#        ax.set_title(f'Angle Error - {sim_name_chart} Integration')
-#        ax.set_ylabel('RMS Angle Error vs. Earth in Arcseconds')
-#        ax.plot(test_years, ang_err_rms, marker='o', color='blue')
-#        ax.grid()
-#        fig.savefig(fname=f'../figs/planets_integration/sim_error_{sim_name}_angle.png', bbox_inches='tight')
+        fig, ax = plt.subplots(figsize=[10,8])
+        ax.set_title(f'Angle Error - {sim_name_chart} Integration')
+        ax.set_ylabel('RMS Angle Error vs. Earth in Arcseconds')
+        ax.plot(test_years, ang_err_rms, marker='o', color='blue')
+        ax.grid()
+        fig.savefig(fname=f'../figs/planets_integration/sim_error_{sim_name}_angle.png', bbox_inches='tight')
         
     print(f'\nError by Date:')
     print('DATE       : ANG   : AU  ')
@@ -532,22 +532,28 @@ def main():
     dt1: datetime = datetime(2040,12,31)
     
     # Integrator choices
-    integrator: str = 'ias15'
-    steps_per_day_planets: int = 256
-    steps_per_day_moons: int = 256
-    steps_per_day_dwarfs: int = 256
+    integrator_planets: str = 'ias15'
+    integrator_moons: str = 'ias15'
+    integrator_dwarfs: str = 'ias15'
+    # Integrator time step
+    steps_per_day_planets: int = 4
+    steps_per_day_moons: int = 64
+    steps_per_day_dwarfs: int = 4
 
     # Initial configuration of planets, moons, and dwarfs
-    sim_planets = make_sim_planets(epoch=epoch_dt, integrator=integrator, steps_per_day=steps_per_day_planets)
-    sim_moons = make_sim_moons(epoch=epoch_dt, integrator=integrator, steps_per_day=steps_per_day_moons)
-    sim_dwarfs = make_sim_dwarfs(epoch=epoch_dt, integrator=integrator, steps_per_day=steps_per_day_dwarfs)
+    sim_planets = make_sim_planets(epoch=epoch_dt, integrator=integrator_planets, 
+                                   steps_per_day=steps_per_day_planets)
+    sim_moons = make_sim_moons(epoch=epoch_dt, integrator=integrator_moons, 
+                               steps_per_day=steps_per_day_moons)
+    sim_dwarfs = make_sim_dwarfs(epoch=epoch_dt, integrator=integrator_dwarfs, 
+                                 steps_per_day=steps_per_day_dwarfs)
 
     # Shared time_step and save_step
     time_step: int = 1
     save_step: int = 1
 
     # Integrate the planets from dt0 to dt1
-    fname_planets = f'../data/planets/sim_planets_2000-2040_{integrator}_sf{steps_per_day_planets}.bin'
+    fname_planets = f'../data/planets/sim_planets_2000-2040_{integrator_planets}_sf{steps_per_day_planets}.bin'
     save_step: int = 1
     sa_planets = make_archive(fname_archive=fname_planets, sim_epoch=sim_planets,
                               epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
@@ -557,7 +563,7 @@ def main():
     shutil.copy(fname_planets, fname_planets_gen)
     
     # Integrate the planets and moons from dt0 to dt1
-    fname_moons = f'../data/planets/sim_moons_2000-2040_{integrator}_sf{steps_per_day_moons}.bin'
+    fname_moons = f'../data/planets/sim_moons_2000-2040_{integrator_moons}_sf{steps_per_day_moons}.bin'
     sa_moons = make_archive(fname_archive=fname_moons, sim_epoch=sim_moons,
                             epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
                             time_step=time_step, save_step=save_step)
@@ -566,9 +572,10 @@ def main():
     shutil.copy(fname_moons, fname_moons_gen)
        
     # Integrate the planets and dwarf planets from dt0 to dt1
-    fname_dwarfs = f'../data/planets/sim_dwarfs_2000-2040_{integrator}_sf{steps_per_day_dwarfs}.bin'
+    fname_dwarfs = f'../data/planets/sim_dwarfs_2000-2040_{integrator_dwarfs}_sf{steps_per_day_dwarfs}.bin'
     try:
-        os.remove(fname_dwarfs)
+        # os.remove(fname_dwarfs)
+        pass
     except:
         pass
     sa_dwarfs = make_archive(fname_archive=fname_dwarfs, sim_epoch=sim_dwarfs,
@@ -581,7 +588,7 @@ def main():
     # Test integration of planets
     if run_planets:
         print(f'\n***** Testing integration of sun and 8 planets. *****')
-        print(f'Integrator = {integrator}, steps per day = {steps_per_day_planets}.')
+        print(f'Integrator = {integrator_planets}, steps per day = {steps_per_day_planets}.')
         pos_err_planets, ang_err_planets = \
         test_integration(sa=sa_planets, test_objects=test_objects_planets, sim_name='planets', make_plot=False)
     
@@ -589,7 +596,7 @@ def main():
     if run_moons:
         num_obj = sim_moons.N
         print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, moons. *****')
-        print(f'Integrator = {integrator}, steps per day = {steps_per_day_moons}.')
+        print(f'Integrator = {integrator_moons}, steps per day = {steps_per_day_moons}.')
         pos_err_moons, ang_err_moons = \
         test_integration(sa=sa_moons, test_objects=test_objects_moons, sim_name='moons', make_plot=False)
         
@@ -597,7 +604,7 @@ def main():
     if run_dwarfs:
         num_obj = sim_dwarfs.N
         print(f'\n***** Testing integration of {num_obj} objects in solar system: sun, planets, dwarf planets. *****')
-        print(f'Integrator = {integrator}, steps per day = {steps_per_day_dwarfs}.')
+        print(f'Integrator = {integrator_dwarfs}, steps per day = {steps_per_day_dwarfs}.')
         pos_err_dwarfs, ang_err_dwarfs = \
         test_integration(sa=sa_dwarfs, test_objects=test_objects_dwarfs, sim_name='dwarfs', make_plot=False)
         
@@ -609,7 +616,7 @@ def main():
     test_years = list(range(2000,2041))
     ax.plot(test_years, pos_err_planets, label='planets', marker='+', color='blue')
     ax.plot(test_years, pos_err_moons, label='moons', marker='x', color='green')
-    ax.plot(test_years, pos_err_moons, label='dwarfs', marker='o', color='red')
+    ax.plot(test_years, pos_err_dwarfs, label='dwarfs', marker='o', color='red')
     ax.grid()
     ax.legend()
     fig.savefig(fname=f'../figs/planets_integration/sim_error_comp.png', bbox_inches='tight')
