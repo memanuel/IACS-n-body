@@ -10,23 +10,22 @@ Fri Aug 23 16:13:28 2019
 import numpy as np
 import pandas as pd
 import rebound
-from jplephem.spk import SPK
+# from jplephem.spk import SPK
 from datetime import datetime
 # from tqdm import tqdm as tqdm_console
 import argparse
 from typing import List, Dict
 
 # Local imports
-from astro_utils import mjd_to_horizons, datetime_to_horizons, datetime_to_mjd, mjd_to_datetime
-from planets import make_sim_horizons, make_sim_planets, make_sim_moons, make_archive
-from utils import rms
+from astro_utils import datetime_to_mjd, mjd_to_datetime
+from horizons import mjd_to_horizons, datetime_to_horizons
+from planets import make_sim_planets, make_sim_horizons, report_sim_difference, make_archive
 
 # Load asteroid kernel
-kernel = SPK.open('../jpl/asteroids.bsp')
-
+# kernel = SPK.open('../jpl/asteroids.bsp')
 
 # ********************************************************************************************************************* 
-def load_data():
+def load_data_impl():
     """Load the asteroid data into a Pandas DataFrame"""
     # The source for this file is at https://ssd.jpl.nasa.gov/?sb_elem
     fname = '../jpl/orb_elements_asteroid.txt'
@@ -77,11 +76,13 @@ def convert_data(df_in: pd.DataFrame, epoch_mjd: float=None):
     # Apply the default value of epoch_mjd if it was not input
     if epoch_mjd is None:
         epoch_mjd = pd.Series.mode(df_in.Epoch)[0]
+
     # Create a mask with only the matching rows
     mask = (df_in.Epoch == epoch_mjd)
 
     # Initialize Dataframe with asteroid numbers
     df = pd.DataFrame(data=df_in.Num[mask])
+
     # Add fields one at a time
     df['Name'] = df_in.Name[mask]
     df['epoch_mjd'] = df_in.Epoch[mask]
@@ -94,24 +95,31 @@ def convert_data(df_in: pd.DataFrame, epoch_mjd: float=None):
     df['H'] = df_in.H[mask]
     df['G'] = df_in.G[mask]
     df['Ref'] = df_in.Ref[mask]
+
     # Set the asteroid number field to be the index
     df.set_index(keys=['Num'], drop=False, inplace=True)
+
     # Return the newly assembled DataFrame
     return df
 
 # ********************************************************************************************************************* 
-def sim_clean_names(sim: rebound.Simulation):
-    """Change names of particles to exclude Geocenter suffix"""
-    planet_systems = ['Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']
-    for nm in planet_systems:
-        old_name = f'{nm} Geocenter'
-        sim.particles[old_name].hash = rebound.hash(nm)
-
-# ********************************************************************************************************************* 
-def sa_clean_names(sa: rebound.SimulationArchive):
-    """Change names of particles to exclude Geocenter suffix"""
-    for sim in sa:
-        sim_clean_names(sim)
+def load_data():
+    """Load the asteroid data into a Pandas Dataframe"""
+    # The name for the saved DataFrame
+    fname = '../jpl/orb_elements_asteroid.h5'
+    
+    # Try to load from disk if available
+    try:
+        ast_elt = pd.read_hdf(fname, key='ast_elt')
+    except:
+        # Load data from JPL asteroids file
+        df_in = load_data_impl()
+        # Convert data to rebound format
+        ast_elt = convert_data(df_in=df_in)
+        # Save it to h5
+        ast_elt.to_hdf(fname, key='ast_elt', mode='w')
+    
+    return ast_elt
 
 # ********************************************************************************************************************* 
 def make_sim_asteroids(sim_base: rebound.Simulation, ast_elt: pd.DataFrame, n0: int, n1: int):
@@ -152,45 +160,68 @@ def make_sim_asteroids(sim_base: rebound.Simulation, ast_elt: pd.DataFrame, n0: 
     return sim
 
 # ********************************************************************************************************************* 
-def make_sim_asteroids_horizons(fname: str, asteroid_names: List[str], epoch_mjd: int):
-    """Create or load a simulation with the named asteroids"""
-        
-    # If this file already exists, load and return it
-    try:
-        sim = rebound.Simulation(fname)
-        # print(f'Found simulation archive {fname_archive}')
-    except:
-        # Initialize a new simulation
-        object_names = ['Sun'] + asteroid_names       
-        # The epoch as a horizon date string
-        horizon_date = mjd_to_horizons(epoch_mjd)
-        
-        # Initialize simulation
-        sim = make_sim_horizons(object_names=object_names, horizon_date=horizon_date)
-        
-        # Save a snapshot to the archive file
-        sim.simulationarchive_snapshot(filename=fname)
-    
+def make_sim_asteroids_horizons(asteroid_names: List[str], epoch: datetime):
+    """Create or load a simulation with the planets and the named asteroids"""
+
+    # The objects: Sun, Earth and requested asteroids
+    object_names = ['Sun', 'Earth'] + asteroid_names
+
+    # Build a simulation from Horizons data
+    sim = make_sim_horizons(object_names=object_names, epoch=epoch)
+
     return sim
 
 # ********************************************************************************************************************* 
-def test_one_asteroid(sim: rebound.Simulation, asteroid_name: str, epoch_mjd: int, verbose: bool = False):
-    """Test whether orbital elements of the named asteroid are recovered vs. Horizons"""
-    # Convert epoch to a datetime
-    epoch_dt: datetime = mjd_to_datetime(epoch_mjd)
-    # Filename for archive
-    file_date = epoch_dt.strftime('%Y-%m-%d_%H-%M')
-    fname: str = f'../data/asteroids/{asteroid_name}_{file_date}.bin'    
+def test_element_recovery(verbose: bool = False):
+    """Test recovery of initial orbital elements for selected asteroids"""
+    # List of asteroids to test: first 25
+    asteroid_names = [
+        'Ceres', 'Pallas', 'Juno', 'Vesta', 'Astraea', 
+        'Hebe', 'Iris', 'Flora', 'Metis', 'Hygiea', 
+        'Parthenope', 'Victoria', 'Egeria', 'Irene', 'Eunomia', 
+        'Psyche', 'Thetis', 'Melpomene', 'Fortuna', 'Massalia',
+        'Lutetia', 'Kalliope', 'Thalia', 'Phocaea']
 
-    # Create simulation using Horizons in automatic mode
-    asteroid_names = [asteroid_name]
-    sim1 = make_sim_asteroids_horizons(fname=fname, asteroid_names=asteroid_names, epoch_mjd=epoch_mjd)
+    # Load asteroid data as DataFrame
+    ast_elt = load_data()
+    
+    # Get the epoch from the DataFrame
+    epoch_mjd: float = ast_elt.epoch_mjd[1]
+    epoch: datetime = mjd_to_datetime(epoch_mjd)
+    
+    # Rebound simulation of the planets and moons on this date
+    sim_base = make_sim_planets(epoch=epoch)
+        
+    # Add selected asteroids
+    sim_ast = make_sim_asteroids(sim_base=sim_base, ast_elt=ast_elt, n0=1, n1=31)
+
+    # Create the reference simulation
+    sim_hrzn = make_sim_asteroids_horizons(asteroid_names=asteroid_names, epoch=epoch)
+
+    # Report the difference
+    object_names = ['Earth'] + asteroid_names
+    report_sim_difference(sim0=sim_hrzn, sim1=sim_ast, object_names=object_names, verbose=True)
+    
+    # Report details of one specific asteroid
+    report_one_asteroid(sim=sim_ast, asteroid_name='Ceres', epoch=epoch, verbose=True)
+
+# ********************************************************************************************************************* 
+def report_one_asteroid(sim: rebound.Simulation, asteroid_name: str, 
+                        epoch: datetime, verbose: bool = False):
+    """Test whether orbital elements of the named asteroid are recovered vs. Horizons"""
+    # Create the reference simulation
+    sim_hrzn = make_sim_asteroids_horizons(asteroid_names=[asteroid_name], epoch=epoch)
+    
+    # Alias the reference simulation to sim1, the input to sim2
+    sim1 = sim_hrzn
+    sim2 = sim
+
+    # Orbit of asteroid in simulation 1
     primary1 = sim1.particles['Sun']
     p1 = sim1.particles[asteroid_name]
     orb1 = p1.calculate_orbit(primary=primary1)
     
-    # The simulation to be tested, which was assembled from the data file
-    sim2 = sim
+    # Orbit of asteroid in simulation 2
     primary2 = sim2.particles['Sun']
     p2 = sim2.particles[asteroid_name]
     orb2 = p2.calculate_orbit(primary=primary2)
@@ -213,7 +244,7 @@ def test_one_asteroid(sim: rebound.Simulation, asteroid_name: str, epoch_mjd: in
     
     # Report errors if requested
     if verbose:
-        print(f'\nErrors in recovered orbital elements for {asteroid_name}:')
+        print(f'\nErrors in recovered configuration and orbital elements for {asteroid_name}:')
         print(f'q    : {q:5.3e}')
         print(f'v    : {v:5.3e}')
         print(f'a    : {a:5.3e}')
@@ -227,101 +258,55 @@ def test_one_asteroid(sim: rebound.Simulation, asteroid_name: str, epoch_mjd: in
     return q, v
 
 # ********************************************************************************************************************* 
-def test_element_recovery(epoch_mjd: float, verbose: bool = False):
-    """Test recovery of initial orbital elements for selected asteroids"""
-    # List of asteroids to test
-    # Started with first 10
-    # Juno has an ambiguous name
-    # Hebe matches to Thebe
-    # Metis matches, but the Horizons orbit has messed up elements with a=-3.025, e=1.245
-    asteroid_names = ['Ceres', 'Pallas', 'Vesta', 'Astraea', 'Flora', 'Hygiea', 'Parthenope', 'Victoria',
-                      'Egeria', 'Irene', 'Eunomia', 'Psyche', 'Thetis', 'Melpomene', 'Fortuna', 'Massalia',
-                      'Lutetia', 'Kalliope', 'Thalia', 'Phocaea']
-
-    # Load data from JPL asteroids file
-    df_in = load_data()
-    # Convert data to rebound format
-    df = convert_data(df_in=df_in)
-    
-    # Convert to a datetime
-    epoch_dt: datetime = mjd_to_datetime(epoch_mjd)
-    
-    # Rebound simulation of the planets and moons on this date
-    sim_base = make_sim_moons(epoch_dt)
-    sim_clean_names(sim_base)
-        
-    # Add selected asteroids
-    sim = make_sim_asteroids(sim_base=sim_base, df=df, n0=1, n1=31)
-
-    # Assemble array of errors in q and v
-    N = len(asteroid_names)
-    q = np.zeros(N)
-    v = np.zeros(N)
-    for i, asteroid_name in enumerate(asteroid_names):
-        # print(f'{asteroid_name}')
-        qi, vi = test_one_asteroid(sim=sim, asteroid_name=asteroid_name, epoch_mjd=epoch_mjd, verbose=verbose)
-        q[i], v[i] = qi, vi
-    
-    # Compute RMS error in position and velocity
-    q_rms = rms(q)
-    v_rms = rms(v)
-
-    # Report results
-    print(f'Testing recovery of orbital elements vs. Horizons for')
-    print(', '.join(asteroid_names))
-    print(f'RMS error over {N} asteroids:')
-    print(f'q: {q_rms:5.3e}')
-    print(f'v: {v_rms:5.3e}')
-
-# ********************************************************************************************************************* 
 def main():
     """Main routine for integrating the orbits of known asteroids"""
     # Process command line arguments
     parser = argparse.ArgumentParser(description='Integrate the orbits of known asteroids from JPL ephemeris file.')
-    parser.add_argument('n0', metavar='n0', type=int, help='the first asteroid number to process')
-    parser.add_argument('-n_ast', metavar='B', type=int, default=20000,
+    parser.add_argument('n0', nargs='?', metavar='n0', type=int,
+                        help='the first asteroid number to process')
+    parser.add_argument('n_ast', nargs='?', metavar='B', type=int, default=10,
                         help='the number of asteroids to process in this batch')
+    parser.add_argument('--test', default=False, action='store_true',
+                        help='run in test mode')
     args = parser.parse_args()
     
+    # If run in test mode, run tests without processing any asteroid trajectories
+    if args.test:
+        test_element_recovery(verbose=True)
+        exit()
+
     # Unpack command line arguments
     n0 = args.n0
     n1 = n0 + args.n_ast
 
-    # Status
-    print(f'Processing asteroids {n0} to {n1}...')
+    # Load asteroid data as DataFrame
+    ast_elt = load_data()
 
-    # Load data from JPL asteroids file
-    df_in = load_data()
-    # Convert data to rebound format
-    ast_elt = convert_data(df_in=df_in)
+    # Get the epoch from the DataFrame
+    epoch_mjd: float = ast_elt.epoch_mjd[1]
+    epoch: datetime = mjd_to_datetime(epoch_mjd)
 
-    # Reference epoch for asteroids file
-    epoch_mjd: float = 58600.0
-    # Convert to a datetime
-    epoch_dt: datetime = mjd_to_datetime(epoch_mjd)
-    
     # Start and end times of simulation
     dt0: datetime = datetime(2000, 1, 1)
     dt1: datetime = datetime(2040,12,31)
     
-    # Rebound simulation of the planets and moons on this date
-    # sim_base = make_sim_planets(epoch_dt)
-    steps_per_day: int = 4
-    sim_base = make_sim_moons(t=epoch_dt, steps_per_day=steps_per_day)
-    sim_clean_names(sim_base)
+    # Rebound simulation of the planets on this date
+    integrator = 'ias15'
+    steps_per_day: int = 16
+    sim_base = make_sim_planets(epoch=epoch, integrator=integrator, steps_per_day=steps_per_day)
         
     # Add selected asteroids
     sim = make_sim_asteroids(sim_base=sim_base, ast_elt=ast_elt, n0=n0, n1=n1)
-    
-    # Test whether initial elements match Horizons on selected asteroids
-    # test_one_asteroid(sim=sim, asteroid_name='Ceres', epoch_mjd=epoch_mjd)
-    # test_element_recovery(epoch_mjd=epoch_mjd, verbose=True)
-    
+
     # Integrate the asteroids from dt0 to dt1 with a time step of 1 day
     fname = f'../data/asteroids/sim_asteroids_n_{n0:06}_{n1:06}.bin'
     time_step = 1
-    make_archive(fname_archive=fname, sim_epoch=sim, epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step)
+    save_step = 32
+    print(f'Processing asteroid trajectories for asteroid numbers {n0} to {n1}...')
+    make_archive(fname_archive=fname, sim_epoch=sim, epoch=epoch, 
+                 dt0=dt0, dt1=dt1, time_step=time_step, save_step=save_step)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
+    pass

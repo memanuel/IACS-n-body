@@ -63,10 +63,17 @@ overrides = {
     'Pluto': '999',
     # Asteroids with ambiguous names
     '52 Europa': 'NAME=Europa',
-    'Juno': 'NAME=Juno',
-    'Iris': 'NAME=Iris',
+    # 'Juno': 'NAME=Juno',
+    # 'Hebe': 'NAME=Hebe',
+    # 'Iris': 'NAME=Iris',    
     'Sila': '79360',
     }
+
+# Overrides for asteroids
+for object_name, object_id in name_to_id.items():
+    if (2000000 < object_id) and (object_id < 3000000) and object_name not in overrides:
+        overrides[object_name] = f'NAME={object_name}'
+
 # Apply the overrides
 for object_name, horizon_name in overrides.items():
     object_to_horizon_name[object_name] = horizon_name
@@ -139,7 +146,8 @@ def add_one_object_hrzn(sim: rebound.Simulation, object_name: str, epoch: dateti
         sim.add(horizon_name, date=horizon_date)
         # Set the mass and hash of this particle
         p: rebound.Particle = sim.particles[-1]
-        p.m = mass_tbl[object_name]
+        # p.m = mass_tbl[object_name]
+        p.m = mass_tbl.get(object_name, 0.0)
         p.hash = rebound.hash(object_name)
         # Create an entry for this particle on the cache
         entry: horizon_entry = horizon_entry(m=p.m, x=p.x, y=p.y, z=p.z, vx=p.vx, vy=p.vy, vz=p.vz, 
@@ -181,7 +189,7 @@ def extend_sim_horizons(sim: rebound.Simulation, object_names: List[str], epoch:
 # ********************************************************************************************************************* 
 try:
     hrzn = load_horizons_cache()
-    print(f'Loaded Horizons cache with {len(hrzn)} entries.')
+    # print(f'Loaded Horizons cache with {len(hrzn)} entries.')
 except:
     hrzn = dict()
-    print(f'Initialized empty Horizons cache.')
+    # print(f'Initialized empty Horizons cache.')

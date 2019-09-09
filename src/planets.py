@@ -10,7 +10,7 @@ Fri Aug 23 16:13:28 2019
 import numpy as np
 import rebound
 import matplotlib.pyplot as plt
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import shutil
 from itertools import chain
@@ -81,7 +81,7 @@ test_objects_dwarfs = test_objects_planets
 
 # Objects in collection 'all'
 object_names_all = object_names_moons + dwarfs
-test_objects_all = test_objects_planets
+test_objects_all = test_objects_moons
 
 # Shared collection of test asteroids to integrate
 test_asteroids = [
@@ -239,15 +239,18 @@ def make_sim_all(epoch: datetime, integrator='ias15', steps_per_day: int = 16):
     return sim
 
 # ********************************************************************************************************************* 
-def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation, 
-                      epoch_dt: datetime, dt0: datetime, dt1: datetime, 
+def make_archive_impl(fname_archive: str, 
+                      sim_epoch: rebound.Simulation, 
+                      object_names: List[str],
+                      epoch: datetime, dt0: datetime, dt1: datetime, 
                       time_step: int, save_step: int):
     """
     Create a rebound simulation archive and save it to disk.
     INPUTS:
         fname_archive: the file name to save the archive to
         sim_epoch: rebound simulation object as of the epoch time; to be integrated in both directions
-        epoch_dt: a datetime corresponding to sim_epoch
+        object_names: the user names of all the objects in the simulation
+        epoch: a datetime corresponding to sim_epoch
         dt0: the earliest datetime to simulate back to
         dt1: the latest datetime to simulate forward to
         time_step: the time step in days for the simulation
@@ -256,7 +259,7 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     
     # Convert epoch, start and end times relative to a base date of the simulation start
     # This way, time is indexed from t0=0 to t1 = (dt1-dt0)
-    epoch_t = datetime_to_mjd(epoch_dt, dt0)
+    epoch_t = datetime_to_mjd(epoch, dt0)
     t0 = datetime_to_mjd(dt0, dt0)
     t1 = datetime_to_mjd(dt1, dt0)
     
@@ -274,6 +277,8 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     ts_fwd = ts[idx:]
     # ts_back = reversed(ts[:idx])
     ts_back = ts[:idx][::-1]
+    # The epochs corresponding to the times in ts
+    epochs = [dt0 + timedelta(t) for t in ts]
 
     # File names for forward and backward integrations
     fname_fwd = fname_archive.replace('.bin', '_fwd.bin')
@@ -305,15 +310,20 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
     # Number of particles
     N = sim_epoch.N
 
-    # Save the object name hashes
-    hashes = np.zeros(N, dtype=np.uint32)
-    sim_epoch.serialize_particle_data(hash=hashes)
-
     # Initialize arrays for the position and velocity
     shape = (M, N, 3)
     q = np.zeros(shape, dtype=np.float64)
     v = np.zeros(shape, dtype=np.float64)
     
+    # Save the epochs as a numpy array
+    epochs_np = np.array(epochs)
+    # Save the object names as a numpy array of strings
+    object_names_np = np.array(object_names)
+
+    # Save the object name hashes
+    hashes = np.zeros(N, dtype=np.uint32)
+    sim_epoch.serialize_particle_data(hash=hashes)
+
     # Combine the forward and backward archives in forward order from t0 to t1
     sims = chain(reversed(sa_back), sa_fwd)
     # Process each simulation snapshot in turn
@@ -326,22 +336,28 @@ def make_archive_impl(fname_archive: str, sim_epoch: rebound.Simulation,
             sim.simulationarchive_snapshot(fname_archive)        
 
     # Save the numpy arrays with the object hashes, position and velocity
-    np.savez(fname_np, hashes=hashes, q=q, v=v)
+    np.savez(fname_np, 
+             q=q, v=v, 
+             ts=ts, epochs_np=epochs_np,
+             hashes=hashes, object_names_np=object_names_np)
     
     # Delete the forward and backward archives
     os.remove(fname_fwd)
     os.remove(fname_back)
     
 # ********************************************************************************************************************* 
-def make_archive(fname_archive: str, sim_epoch: rebound.Simulation, 
-                 epoch_dt: datetime, dt0: datetime, dt1: datetime, 
+def make_archive(fname_archive: str, 
+                 sim_epoch: rebound.Simulation, 
+                 object_names: List[str],
+                 epoch: datetime, dt0: datetime, dt1: datetime, 
                  time_step: int, save_step: int = 1):
     """
     Load a rebound archive if available; otherwise generate it and save it to disk.
     INPUTS:
         fname_archive: the file name to save the archive to
         sim_epoch: rebound simulation object as of the epoch time; to be integrated in both directions
-        epoch_dt: a datetime corresponding to sim_epoch
+        object_names: the user names of all the objects in the simulation
+        epoch: a datetime corresponding to sim_epoch
         dt0: the earliest datetime to simulate back to
         dt1: the latest datetime to simulate forward to
         time_step: the time step in days for the simulation
@@ -354,8 +370,8 @@ def make_archive(fname_archive: str, sim_epoch: rebound.Simulation,
         # If the archive is not on disk, save it to disk
         print(f'Generating archive {fname_archive}\n'
               f'from {dt0} to {dt1}, time_step={time_step}, save_step={save_step}...')
-        make_archive_impl(fname_archive=fname_archive, sim_epoch=sim_epoch,
-                          epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, time_step=time_step, save_step=save_step)
+        make_archive_impl(fname_archive=fname_archive, sim_epoch=sim_epoch, object_names=object_names,
+                          epoch=epoch, dt0=dt0, dt1=dt1, time_step=time_step, save_step=save_step)
         # Load the new archive into memory
         sa = rebound.SimulationArchive(filename=fname_archive)
     return sa
@@ -364,31 +380,17 @@ def make_archive(fname_archive: str, sim_epoch: rebound.Simulation,
 def load_sim_np(fname_np: str):
     """Load numpy arrays for position, velocity, and hashes from the named file"""
     # Load the numpy data file
-    with np.load(fname_np) as npz:
+    with np.load(fname_np, allow_pickle=True) as npz:
         # Extract position, velocity and hashes
         q = npz['q']
         v = npz['v']
+        ts = npz['ts']
+        epochs_np = npz['epochs_np']
+        epochs: List[datetime.datetime] = [nm for nm in epochs_np]
         hashes = npz['hashes']
-    return q, v, hashes
-
-# ********************************************************************************************************************* 
-def sim_elt_array(sim, object_names=None):
-    """Extract the orbital elements of each body in the simulation"""
-    # Allocate array of elements
-    num_objects = sim.N-1 if object_names is None else len(object_names)
-    elts = np.zeros(shape=(num_objects, 9))
-    
-    # Iterate through particles AFTER the primary
-    ps = sim.particles
-    if object_names is None:
-        for i, p in enumerate(ps[1:]):
-            elts[i] = np.array([p.a, p.e, p.inc, p.Omega, p.omega, p.f, p.M, p.pomega, p.l])
-    else:
-        for i, object_name in enumerate(object_names):
-            # look up the particle with this name
-            p = ps[object_name]
-            elts[i] = np.array([p.a, p.e, p.inc, p.Omega, p.omega, p.f, p.M, p.pomega, p.l])
-    return elts
+        object_names_np = npz['object_names_np']
+        object_names: List[str] = [nm for nm in object_names_np]
+    return q, v, ts, epochs, hashes, object_names
 
 # ********************************************************************************************************************* 
 def sim_cfg_array(sim, object_names=None):
@@ -411,6 +413,30 @@ def sim_cfg_array(sim, object_names=None):
         cfgs[i] = np.array([p.x, p.y, p.z, p.vx, p.vy, p.vz])
 
     return cfgs
+
+# ********************************************************************************************************************* 
+def sim_elt_array(sim, object_names=None):
+    """Extract the orbital elements of each body in the simulation"""
+    # Allocate array of elements
+    num_objects = sim.N-1 if object_names is None else len(object_names)
+    elts = np.zeros(shape=(num_objects, 9))
+    
+    # Iterate through particles AFTER the primary
+    ps = sim.particles
+    primary = ps[0]
+    if object_names is None:
+        for i, p in enumerate(ps[1:]):
+            orb = p.calculate_orbit(primary=primary)
+            elts[i] = np.array([orb.a, orb.e, orb.inc, orb.Omega, orb.omega, 
+                                orb.f, orb.M, orb.pomega, orb.l])
+    else:
+        for i, object_name in enumerate(object_names):
+            # look up the particle with this name
+            p = ps[object_name]
+            orb = p.calculate_orbit(primary=primary)
+            elts[i] = np.array([orb.a, orb.e, orb.inc, orb.Omega, orb.omega, 
+                                orb.f, orb.M, orb.pomega, orb.l])
+    return elts
 
 # ********************************************************************************************************************* 
 def report_sim_difference(sim0, sim1, object_names, verbose=False):
@@ -467,7 +493,8 @@ def report_sim_difference(sim0, sim1, object_names, verbose=False):
 
     if verbose:
         print(f'\nPosition difference - absolute & relative')
-        print(f'Body       : ASC     : DEC     : AU      : Rel     : Vel Rel')
+        print(f'(Angle errors in arcseconds, position in AU)')
+        print(f'Body       : Phi     : Theta   : Pos AU  : Pos Rel : Vel Rel')
         object_names_short = [nm.replace(' Barycenter', '') for nm in object_names]
         for i, nm in enumerate(object_names_short):
             print(f'{nm:10} : {asc_err[i]:5.2e}: {dec_err[i]:5.2e}: {pos_err[i]:5.2e}: '
@@ -585,15 +612,15 @@ def test_integration(sa: rebound.SimulationArchive, test_objects: List[str],
     return pos_err_rms, ang_err_rms
        
 # ********************************************************************************************************************* 
-def run_one_sim(sim_name: str, sim_epoch: rebound.Simulation, 
-                epoch_dt: datetime, dt0: datetime, dt1: datetime, 
+def run_one_sim(sim_name: str, sim_epoch: rebound.Simulation, object_names: List[str],
+                epoch: datetime, dt0: datetime, dt1: datetime, 
                 time_step: int, save_step: int, steps_per_day: int):
     """Run one simulation, saving it to a simulation archive"""
     integrator = sim_epoch.integrator
     fname = f'../data/planets/sim_{sim_name}_2000-2040_{integrator}_sf{steps_per_day}.bin'
     fname_gen = f'../data/planets/sim_{sim_name}_2000-2040.bin'
-    sa = make_archive(fname_archive=fname, sim_epoch=sim_epoch,
-                      epoch_dt=epoch_dt, dt0=dt0, dt1=dt1, 
+    sa = make_archive(fname_archive=fname, sim_epoch=sim_epoch, object_names=object_names,
+                      epoch=epoch, dt0=dt0, dt1=dt1, 
                       time_step=time_step, save_step=save_step)
     # Copy file to generically named one
     shutil.copy(fname, fname_gen)
@@ -633,10 +660,13 @@ def main():
     parser.add_argument('type', nargs='?', metavar='T', type=str, default='A',
                         help='type of integration: p- planets; d- dwarfs; m-moons; a-all, '
                              'A-all 4 strategies: n-none')
+    parser.add_argument('steps_per_day', nargs='?', metavar='SPD', type=int, default=-1,
+                        help='the (max) number of steps per day taken by the integrator')
     args = parser.parse_args()
     
     # Unpack command line arguments
     integration_type = args.type
+    steps_per_day: int = args.steps_per_day
     
     # Flags for planets and moons
     run_planets: bool = integration_type in ('p', 'A')
@@ -647,7 +677,7 @@ def main():
     # Reference epoch for asteroids file
     epoch_mjd: float = 58600.0
     # Convert to a datetime
-    epoch_dt: datetime = mjd_to_datetime(epoch_mjd)
+    epoch: datetime = mjd_to_datetime(epoch_mjd)
     # epoch_dt: datetime = datetime(2019,4,27)
     
     # Start and end times of simulation
@@ -661,19 +691,19 @@ def main():
     integrator_all: str = 'ias15'
     
     # Integrator time step
-    steps_per_day_planets: int = 64
-    steps_per_day_moons: int = 64
-    steps_per_day_dwarfs: int = 64
-    steps_per_day_all: int = 64
+    steps_per_day_planets: int = steps_per_day if steps_per_day >= 0 else 16
+    steps_per_day_moons: int = steps_per_day if steps_per_day >= 0 else 16
+    steps_per_day_dwarfs: int = steps_per_day if steps_per_day >= 0 else 16
+    steps_per_day_all: int = steps_per_day if steps_per_day >= 0 else 16
 
     # Initial configuration of planets, moons, and dwarfs
-    sim_planets = make_sim_planets(epoch=epoch_dt, integrator=integrator_planets, 
+    sim_planets = make_sim_planets(epoch=epoch, integrator=integrator_planets, 
                                    steps_per_day=steps_per_day_planets)
-    sim_moons = make_sim_moons(epoch=epoch_dt, integrator=integrator_moons, 
+    sim_moons = make_sim_moons(epoch=epoch, integrator=integrator_moons, 
                                steps_per_day=steps_per_day_moons)
-    sim_dwarfs = make_sim_dwarfs(epoch=epoch_dt, integrator=integrator_dwarfs, 
+    sim_dwarfs = make_sim_dwarfs(epoch=epoch, integrator=integrator_dwarfs, 
                                  steps_per_day=steps_per_day_dwarfs)
-    sim_all = make_sim_all(epoch=epoch_dt, integrator=integrator_all, 
+    sim_all = make_sim_all(epoch=epoch, integrator=integrator_all, 
                            steps_per_day=steps_per_day_all)
 
     # Shared time_step and save_step
@@ -688,7 +718,8 @@ def main():
 
         # Run the planets simulation
         sa_planets = \
-            run_one_sim(sim_name=sim_name, sim_epoch=sim_planets, epoch_dt=epoch_dt, dt0=dt0, dt1=dt1,
+            run_one_sim(sim_name=sim_name, sim_epoch=sim_planets, object_names=object_names_planets,
+                        epoch=epoch, dt0=dt0, dt1=dt1,
                         time_step=time_step, save_step=save_step, steps_per_day=steps_per_day_planets)
 
         # Test the planets simulation
@@ -707,7 +738,8 @@ def main():
 
         # Run the moons simulation
         sa_moons = \
-            run_one_sim(sim_name=sim_name, sim_epoch=sim_moons, epoch_dt=epoch_dt, dt0=dt0, dt1=dt1,
+            run_one_sim(sim_name=sim_name, sim_epoch=sim_moons, object_names=object_names_moons,
+                        epoch=epoch, dt0=dt0, dt1=dt1,
                         time_step=time_step, save_step=save_step, steps_per_day=steps_per_day_moons)
 
         # Test the moons simulation        
@@ -715,8 +747,8 @@ def main():
             test_one_sim(sa=sa_moons, test_objects=test_objects_moons,
                          sim_name=sim_name, test_name=test_name, sim_long_name=sim_long_name, 
                          integrator=integrator_moons, steps_per_day=steps_per_day_moons,
-                         make_plot_internal=False, verbose_internal=False, 
-                         make_plot_asteroids=False, verbose_asteroids=False)
+                         make_plot_internal=True, verbose_internal=False, 
+                         make_plot_asteroids=True, verbose_asteroids=False)
 
        
     # Integrate the planets and dwarf planets from dt0 to dt1
@@ -727,7 +759,8 @@ def main():
 
         # Run the dwarfs simulation
         sa_dwarfs = \
-            run_one_sim(sim_name=sim_name, sim_epoch=sim_dwarfs, epoch_dt=epoch_dt, dt0=dt0, dt1=dt1,
+            run_one_sim(sim_name=sim_name, sim_epoch=sim_dwarfs, object_names=object_names_dwarfs,
+                        epoch=epoch, dt0=dt0, dt1=dt1,
                         time_step=time_step, save_step=save_step, steps_per_day=steps_per_day_dwarfs)
 
         # Test the dwarfs simulation        
@@ -735,18 +768,19 @@ def main():
             test_one_sim(sa=sa_dwarfs, test_objects=test_objects_dwarfs,
                          sim_name=sim_name, test_name=test_name, sim_long_name=sim_long_name, 
                          integrator=integrator_dwarfs, steps_per_day=steps_per_day_dwarfs,
-                         make_plot_internal=False, verbose_internal=False, 
-                         make_plot_asteroids=False, verbose_asteroids=False)
+                         make_plot_internal=True, verbose_internal=False, 
+                         make_plot_asteroids=True, verbose_asteroids=False)
        
     # Integrate all the bodies from dt0 to dt1
     if run_all:
         sim_name = 'all'
         test_name = 'planets'
-        sim_long_name = f'all {len(object_names_moons)} heavy objects in solar system: ' \
+        sim_long_name = f'all {len(object_names_all)} heavy objects in solar system: ' \
                         f'sun, planets, moons, dwarf planets'
         # Run the all simulation
         sa_all = \
-            run_one_sim(sim_name=sim_name, sim_epoch=sim_all, epoch_dt=epoch_dt, dt0=dt0, dt1=dt1,
+            run_one_sim(sim_name=sim_name, sim_epoch=sim_all, object_names=object_names_all,
+                        epoch=epoch, dt0=dt0, dt1=dt1,
                         time_step=time_step, save_step=save_step, steps_per_day=steps_per_day_all)
 
         # Test the all simulation        
@@ -754,13 +788,13 @@ def main():
             test_one_sim(sa=sa_all, test_objects=test_objects_all,
                          sim_name=sim_name, test_name=test_name, sim_long_name=sim_long_name, 
                          integrator=integrator_all, steps_per_day=steps_per_day_all,
-                         make_plot_internal=False, verbose_internal=False, 
-                         make_plot_asteroids=False, verbose_asteroids=False)
+                         make_plot_internal=True, verbose_internal=False, 
+                         make_plot_asteroids=True, verbose_asteroids=False)
         
     # Plot position error
     fig, ax = plt.subplots(figsize=[16,10])
     ax.set_title(f'Position Error on 10 Test Asteroids')
-    ax.set_ylabel('RMS Position Error ')
+    ax.set_ylabel('RMS Position Error in AU')
     ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0,))
     test_years = list(range(2000,2041))
     if run_planets:
@@ -771,11 +805,23 @@ def main():
         ax.plot(test_years, pos_err_dwarfs, label='dwarfs', marker='o', color='red')
     ax.grid()
     ax.legend()
-    fig.savefig(fname=f'../figs/planets_integration/sim_error_comp.png', bbox_inches='tight')
+    fig.savefig(fname=f'../figs/planets_integration/sim_ang_error_comp.png', bbox_inches='tight')
+
+    # Plot angle error
+    fig, ax = plt.subplots(figsize=[16,10])
+    ax.set_title(f'Angle Error on 10 Test Asteroids')
+    ax.set_ylabel('RMS Angle Error vs. Earth in Arcseconds')
+    test_years = list(range(2000,2041))
+    if run_planets:
+        ax.plot(test_years, ang_err_planets, label='planets', marker='+', color='blue')
+    if run_moons:
+        ax.plot(test_years, ang_err_moons, label='moons', marker='x', color='green')
+    if run_dwarfs:
+        ax.plot(test_years, ang_err_dwarfs, label='dwarfs', marker='o', color='red')
+    ax.grid()
+    ax.legend()
+    fig.savefig(fname=f'../figs/planets_integration/sim_pos_error_comp.png', bbox_inches='tight')
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
-#    epoch_dt: datetime = datetime(2019,4,27)
-#    sim_planets = make_sim_planets(epoch=epoch_dt, integrator='ias15', steps_per_day=16)
-#    sim = sim_planets
