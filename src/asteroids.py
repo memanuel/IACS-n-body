@@ -10,19 +10,16 @@ Fri Aug 23 16:13:28 2019
 import numpy as np
 import pandas as pd
 import rebound
-# from jplephem.spk import SPK
 from datetime import datetime
 # from tqdm import tqdm as tqdm_console
 import argparse
-from typing import List, Dict
+from typing import List
 
 # Local imports
-from astro_utils import datetime_to_mjd, mjd_to_datetime
-from horizons import mjd_to_horizons, datetime_to_horizons
-from planets import make_sim_planets, make_sim_horizons, report_sim_difference, make_archive
-
-# Load asteroid kernel
-# kernel = SPK.open('../jpl/asteroids.bsp')
+from astro_utils import mjd_to_datetime
+# from horizons import mjd_to_horizons, datetime_to_horizons
+from planets import make_sim_planets, make_sim_horizons, object_names_planets
+from planets import report_sim_difference, make_archive
 
 # ********************************************************************************************************************* 
 def load_data_impl():
@@ -139,7 +136,7 @@ def make_sim_asteroids(sim_base: rebound.Simulation, ast_elt: pd.DataFrame, n0: 
 
     # Add the specified asteroids one at a time
     mask = (n0 <= ast_elt.Num) & (ast_elt.Num < n1)
-    nums = ast_elt.index[mask]
+    nums = ast_elt.index[mask]    
     for num in nums:
         # Unpack the orbital elements
         a = ast_elt.a[num]
@@ -156,8 +153,11 @@ def make_sim_asteroids(sim_base: rebound.Simulation, ast_elt: pd.DataFrame, n0: 
         # Set the hash to the asteroid's name
         sim.particles[-1].hash = rebound.hash(name)
 
+    # The corresponding list of asteroid names
+    asteroid_names = [name for name in ast_elt.Name[nums]]
+
     # Return the new simulation including the asteroids
-    return sim
+    return sim, asteroid_names
 
 # ********************************************************************************************************************* 
 def make_sim_asteroids_horizons(asteroid_names: List[str], epoch: datetime):
@@ -264,7 +264,7 @@ def main():
     parser = argparse.ArgumentParser(description='Integrate the orbits of known asteroids from JPL ephemeris file.')
     parser.add_argument('n0', nargs='?', metavar='n0', type=int,
                         help='the first asteroid number to process')
-    parser.add_argument('n_ast', nargs='?', metavar='B', type=int, default=10,
+    parser.add_argument('n_ast', nargs='?', metavar='B', type=int, default=1000,
                         help='the number of asteroids to process in this batch')
     parser.add_argument('--test', default=False, action='store_true',
                         help='run in test mode')
@@ -296,15 +296,19 @@ def main():
     sim_base = make_sim_planets(epoch=epoch, integrator=integrator, steps_per_day=steps_per_day)
         
     # Add selected asteroids
-    sim = make_sim_asteroids(sim_base=sim_base, ast_elt=ast_elt, n0=n0, n1=n1)
+    sim, asteroid_names = make_sim_asteroids(sim_base=sim_base, ast_elt=ast_elt, n0=n0, n1=n1)
+    
+    # The list of object names corresponding to this simulation
+    object_names = object_names_planets + asteroid_names
 
     # Integrate the asteroids from dt0 to dt1 with a time step of 1 day
     fname = f'../data/asteroids/sim_asteroids_n_{n0:06}_{n1:06}.bin'
     time_step = 1
     save_step = 32
     print(f'Processing asteroid trajectories for asteroid numbers {n0} to {n1}...')
-    make_archive(fname_archive=fname, sim_epoch=sim, epoch=epoch, 
-                 dt0=dt0, dt1=dt1, time_step=time_step, save_step=save_step)
+    make_archive(fname_archive=fname, sim_epoch=sim, object_names=object_names,
+                 epoch=epoch, dt0=dt0, dt1=dt1, 
+                 time_step=time_step, save_step=save_step)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':

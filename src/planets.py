@@ -275,7 +275,6 @@ def make_archive_impl(fname_archive: str,
     ts = np.arange(t0, t1+time_step, time_step)
     idx = np.searchsorted(ts, epoch_t, side='left')
     ts_fwd = ts[idx:]
-    # ts_back = reversed(ts[:idx])
     ts_back = ts[:idx][::-1]
     # The epochs corresponding to the times in ts
     epochs = [dt0 + timedelta(t) for t in ts]
@@ -284,19 +283,45 @@ def make_archive_impl(fname_archive: str,
     fname_fwd = fname_archive.replace('.bin', '_fwd.bin')
     fname_back = fname_archive.replace('.bin', '_back.bin')
 
+    # Number of snapshots
+    M_back = len(ts_back)
+    M_fwd = len(ts_fwd)
+    M = M_back + M_fwd
+    # Number of particles
+    N = sim_epoch.N
+
+    # Initialize arrays for the position and velocity
+    shape = (M, N, 3)
+    q = np.zeros(shape, dtype=np.float64)
+    v = np.zeros(shape, dtype=np.float64)
+
     # Integrate the simulation forward in time
-    for t in tqdm_console(ts_fwd):
+    idx_fwd= list(enumerate(ts_fwd))
+    for i, t in tqdm_console(idx_fwd):
         # Integrate to the current time step with an exact finish time
         sim_fwd.integrate(t, exact_finish_time=1)
-        # Save a snapshot to the archive file
-        sim_fwd.simulationarchive_snapshot(filename=fname_fwd)
+        # Row index for position data
+        row = M_back + i
+        # Serialize the position and velocity
+        sim_fwd.serialize_particle_data(xyz=q[row])
+        sim_fwd.serialize_particle_data(vxvyvz=v[row])
+        # Save a snapshot on multiples of save_step
+        if (i % save_step == 0) or (row == M-1):
+            sim_fwd.simulationarchive_snapshot(filename=fname_fwd)
 
     # Integrate the simulation backward in time
-    for t in tqdm_console(ts_back):
+    idx_back = list(enumerate(ts_back))
+    for i, t in tqdm_console(idx_back):
         # Integrate to the current time step with an exact finish time
         sim_back.integrate(t, exact_finish_time=1)
-        # Save a snapshot to the archive file
-        sim_back.simulationarchive_snapshot(filename=fname_back)
+        # Row index for position data
+        row = M_back - i
+        # Serialize the position and velocity
+        sim_back.serialize_particle_data(xyz=q[row])
+        sim_back.serialize_particle_data(vxvyvz=v[row])
+        # Save a snapshot on multiples of save_step
+        if (i % save_step == 0) or (row == 0):
+            sim_back.simulationarchive_snapshot(filename=fname_back)
 
     # Load the archives with the forward and backward snapshots
     sa_fwd = rebound.SimulationArchive(fname_fwd)
@@ -305,16 +330,6 @@ def make_archive_impl(fname_archive: str,
     # Filename for numpy arrays of position and velocity
     fname_np = fname_archive.replace('.bin', '.npz')
 
-    # Number of snapshots
-    M = len(sa_back) + len(sa_fwd)
-    # Number of particles
-    N = sim_epoch.N
-
-    # Initialize arrays for the position and velocity
-    shape = (M, N, 3)
-    q = np.zeros(shape, dtype=np.float64)
-    v = np.zeros(shape, dtype=np.float64)
-    
     # Save the epochs as a numpy array
     epochs_np = np.array(epochs)
     # Save the object names as a numpy array of strings
@@ -332,8 +347,7 @@ def make_archive_impl(fname_archive: str,
         sim.serialize_particle_data(xyz=q[i])
         sim.serialize_particle_data(vxvyvz=v[i])
         # Save a snapshot on multiples of save_step
-        if i % save_step == 0:
-            sim.simulationarchive_snapshot(fname_archive)        
+        sim.simulationarchive_snapshot(fname_archive)        
 
     # Save the numpy arrays with the object hashes, position and velocity
     np.savez(fname_np, 
