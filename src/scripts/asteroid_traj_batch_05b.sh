@@ -1,50 +1,43 @@
-python asteroids.py 450000 1000 &
-python asteroids.py 451000 1000 &
-python asteroids.py 452000 1000 &
-python asteroids.py 453000 1000 &
-python asteroids.py 454000 1000 &
-python asteroids.py 455000 1000 &
-python asteroids.py 456000 1000 &
-python asteroids.py 457000 1000 &
-python asteroids.py 458000 1000 &
-python asteroids.py 459000 1000 &
-python asteroids.py 460000 1000 &
-python asteroids.py 461000 1000 &
-python asteroids.py 462000 1000 &
-python asteroids.py 463000 1000 &
-python asteroids.py 464000 1000 &
-python asteroids.py 465000 1000 &
-python asteroids.py 466000 1000 &
-python asteroids.py 467000 1000 &
-python asteroids.py 468000 1000 &
-python asteroids.py 469000 1000 &
-python asteroids.py 470000 1000 &
-python asteroids.py 471000 1000 &
-python asteroids.py 472000 1000 &
-python asteroids.py 473000 1000 &
-python asteroids.py 474000 1000 &
-python asteroids.py 475000 1000 &
-python asteroids.py 476000 1000 &
-python asteroids.py 477000 1000 &
-python asteroids.py 478000 1000 &
-python asteroids.py 479000 1000 &
-python asteroids.py 480000 1000 &
-python asteroids.py 481000 1000 &
-python asteroids.py 482000 1000 &
-python asteroids.py 483000 1000 &
-python asteroids.py 484000 1000 &
-python asteroids.py 485000 1000 &
-python asteroids.py 486000 1000 &
-python asteroids.py 487000 1000 &
-python asteroids.py 488000 1000 &
-python asteroids.py 489000 1000 &
-python asteroids.py 490000 1000 &
-python asteroids.py 491000 1000 &
-python asteroids.py 492000 1000 &
-python asteroids.py 493000 1000 &
-python asteroids.py 494000 1000 &
-python asteroids.py 495000 1000 &
-python asteroids.py 496000 1000 &
-python asteroids.py 497000 1000 &
-python asteroids.py 498000 1000 &
-python asteroids.py 499000 1000 &
+# Input parameters
+batch_size=1000
+num_batch=3
+j0=450
+sleep_time=0.1
+
+# Set up index ranges
+j1=$((j0+num_batch-1))
+n0=$((j0*batch_size))
+n1=$((j1*batch_size))
+echo "Bash is processing asteroids from n0=$n0 to n1=$n1 with batch_size=$batch_size..."
+
+# Run the first block of (batch_size-1) jobs in parallel
+for (( i=0; i<num_batch-1; i++))
+do
+	j=$((j0+i))
+	n=$((j*batch_size))
+	if [$i<$((num_batch-1))]
+	then
+		python asteroids.py $n $batch_size &	
+	fi
+	sleep $sleep_time
+	pids[i]=$!
+	pid=$((pids[i]))
+	echo "i=$i, n=$n, pid=$pid"
+done
+
+# Run the last job with a progress bar
+sleep $sleep_time
+python asteroids.py $n1 $batch_size --progress &
+pids[num_batch-1]=$!
+pid=$((pids[i]))
+echo "i=$i, n=$n, pid=$pid"
+
+# Wait for all outstanding jobs to be completed
+for (( i=0; i<num_batch; i++))
+do
+	pid=$((pids[i]))
+	wait $pid
+	echo "process for i=$i, pid=$pid is complete."
+done
+
+echo "Done! Processed asteroid trajectories from $n0 to $n1."
