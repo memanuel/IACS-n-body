@@ -17,9 +17,9 @@ from typing import List
 
 # Local imports
 from astro_utils import mjd_to_datetime
-# from horizons import mjd_to_horizons, datetime_to_horizons
-from planets import make_sim_planets, make_sim_horizons, object_names_planets
-from planets import report_sim_difference, make_archive
+from rebound_utils import report_sim_difference, make_archive
+from horizons import make_sim_horizons
+from planets import make_sim_planets, object_names_planets
 
 # ********************************************************************************************************************* 
 def load_data_impl():
@@ -266,6 +266,8 @@ def main():
                         help='the first asteroid number to process')
     parser.add_argument('n_ast', nargs='?', metavar='B', type=int, default=1000,
                         help='the number of asteroids to process in this batch')
+    parser.add_argument('--progress', default=False, action='store_true',
+                        help='display progress bar')
     parser.add_argument('--test', default=False, action='store_true',
                         help='run in test mode')
     args = parser.parse_args()
@@ -278,6 +280,7 @@ def main():
     # Unpack command line arguments
     n0 = args.n0
     n1 = n0 + args.n_ast
+    progbar = args.progress
 
     # Load asteroid data as DataFrame
     ast_elt = load_data()
@@ -308,7 +311,7 @@ def main():
     print(f'Processing asteroid trajectories for asteroid numbers {n0} to {n1}...')
     make_archive(fname_archive=fname, sim_epoch=sim, object_names=object_names,
                  epoch=epoch, dt0=dt0, dt1=dt1, 
-                 time_step=time_step, save_step=save_step)
+                 time_step=time_step, save_step=save_step, progbar=progbar)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':

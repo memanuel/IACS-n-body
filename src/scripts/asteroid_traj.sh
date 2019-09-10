@@ -1,0 +1,11 @@
+bash scripts/asteroid_traj_batch_01a.sh;
+bash scripts/asteroid_traj_batch_01b.sh;
+bash scripts/asteroid_traj_batch_02a.sh;
+bash scripts/asteroid_traj_batch_02b.sh;
+bash scripts/asteroid_traj_batch_03a.sh;
+bash scripts/asteroid_traj_batch_03b.sh;
+bash scripts/asteroid_traj_batch_04a.sh;
+bash scripts/asteroid_traj_batch_04b.sh;
+bash scripts/asteroid_traj_batch_05a.sh;
+bash scripts/asteroid_traj_batch_05b.sh;
+bash scripts/asteroid_traj_batch_06a.sh;
