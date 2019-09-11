@@ -24,7 +24,7 @@ do
 	# n is is the asteroid number for the current python job
 	n=$((j*batch_size))
 	# if n is past the largest known asteroid, terminate the loop early
-	if [ $n -gt max_ast_num ]
+	if [ $n -gt $max_ast_num ]
 	then
 		break
 	fi
@@ -57,4 +57,4 @@ done
 
 echo -e "\n********************************************************************************"
 echo "Done! Processed asteroid trajectories from $n0 to $n1."
-echo -e "s********************************************************************************\n"
+echo -e "********************************************************************************\n"
