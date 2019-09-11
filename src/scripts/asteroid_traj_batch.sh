@@ -1,24 +1,19 @@
-# Extract the command line argument: whick chunk of batches to run
-chunk_num=$1
+# Extract the command line argument: the number of this computation job
+job_num=$1
 
 # Input parameters
 batch_size=1000
 num_batch=50
 sleep_time=0.1
-
-# Compute j0 from the command line argument
-# echo "chunk_num = $chunk_num"
-# j0=$((chunk_num*num_batch))
-# echo "j0=$j0"
-# exit
+max_ast_num=541130
 
 # Set up index ranges
-# j is the multiplier of the batch size
-j0=$((chunk_num*num_batch))
+# j is the multiplier of the batch size; ranges from j0 to j1
+j0=$((num_batch*(job_num-1)))
 j1=$((j0+num_batch-1))
-# n is the first asteroid number to process in each call; 
-# n0=$((j0*batch_size))
-# n1=$((j1*batch_size))
+# n is the first asteroid number to process in each call; ranges from n0 to n1
+n0=$((j0*batch_size))
+n1=$((j1*batch_size))
 echo "Bash is processing asteroids from n0=$n0 to n1=$n1 with batch_size=$batch_size..."
 
 # Run all the jobs jobs in parallel
@@ -28,13 +23,20 @@ do
 	j=$((j0+i))
 	# n is is the asteroid number for the current python job
 	n=$((j*batch_size))
-	# run all the jobs except the last one without a progress bar
+	# if n is past the largest known asteroid, terminate the loop early
+	if [ $n -gt max_ast_num ]
+	then
+		break
+	fi
+
+	# run the first job with a progress bar, the rest silently
 	if [ $i -lt $((num_batch-1)) ]
 	then		
 		python asteroids.py $n $batch_size &	
 	else
 		python asteroids.py $n $batch_size --progress &
 	fi
+
 	# Slight pause so the batches will be executed in the specified order
 	sleep $sleep_time
 	# Save the process ID
@@ -53,4 +55,6 @@ do
 	echo "Process for i=$i, n=$n, pid=$pid is complete."
 done
 
+echo -e "\n********************************************************************************"
 echo "Done! Processed asteroid trajectories from $n0 to $n1."
+echo -e "s********************************************************************************\n"
