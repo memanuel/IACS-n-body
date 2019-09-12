@@ -56,5 +56,5 @@ do
 done
 
 echo -e "\n********************************************************************************"
-echo "Done! Processed asteroid trajectories from $n0 to $n1."
+echo "$(date +"%Y-%m-%d %H:%M:%S") Done! Processed asteroid trajectories from $n0 to $n1."
 echo -e "********************************************************************************\n"

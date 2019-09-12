@@ -12,16 +12,10 @@ import matplotlib as mpl
 import pickle
 import zlib
 
-from typing import Dict, Callable
+from typing import Dict, Callable, Optional
 
 # Type aliases
 funcType = Callable[[float], float]
-
-# *************************************************************************************************
-def plot_style() -> None:
-    """Set plot style for the session."""
-    # Set default font size to 20
-    mpl.rcParams.update({'font.size': 20})
 
 # *************************************************************************************************
 def range_inc(x: int, y: int = None, z: int = None) -> range:
@@ -48,6 +42,26 @@ def arange_inc(x: float, y: float = None, z: float = None) -> np.ndarray:
     elif z < 0:
         (start, stop, step) = (x, y - z, z)
     return np.arange(start, stop, step)
+
+# *************************************************************************************************
+def plot_style() -> None:
+    """Set plot style for the session."""
+    # Set default font size to 20
+    mpl.rcParams.update({'font.size': 20})
+
+# *************************************************************************************************
+def print_stars(newline: bool = False):
+    """Print a row of 80 stars"""
+    stars = '********************************************************************************'
+    row = '\n' + stars if newline else stars
+    print(row)
+
+# *************************************************************************************************
+def print_header(msg: str, newline=True):
+    """Print a message wrapped in two layers of stars"""
+    print_stars(newline=newline)
+    print(msg)
+    print_stars(newline=False)
 
 # *************************************************************************************************
 # Generic root mean square of numpy arrays

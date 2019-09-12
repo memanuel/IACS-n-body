@@ -1,0 +1,44 @@
+
+***** Testing integration of sun and 8 planets. *****
+Integrator = ias15, steps per day = 16.
+
+Mean RMS error in planets integration of planets_com test objects:
+AU   : 5.382e-06
+angle: 0.790
+
+Mean RMS error in planets integration of asteroids test objects:
+AU   : 8.726e-06
+angle: 0.372
+
+***** Testing integration of 31 objects in solar system: sun, planets, moons. *****
+Integrator = ias15, steps per day = 16.
+
+Mean RMS error in moons integration of planets test objects:
+AU   : 1.348e-05
+angle: 0.813
+
+Mean RMS error in moons integration of asteroids test objects:
+AU   : 1.078e-05
+angle: 0.508
+
+***** Testing integration of 31 objects in solar system: sun, planets, dwarf planets. *****
+Integrator = ias15, steps per day = 16.
+
+Mean RMS error in dwarfs integration of planets test objects:
+AU   : 5.369e-06
+angle: 0.790
+
+Mean RMS error in dwarfs integration of asteroids test objects:
+AU   : 8.755e-06
+angle: 0.374
+
+***** Testing integration of all 45 heavy objects in solar system: sun, planets, moons, dwarf planets. *****
+Integrator = ias15, steps per day = 16.
+
+Mean RMS error in all integration of planets test objects:
+AU   : 1.351e-05
+angle: 0.813
+
+Mean RMS error in all integration of asteroids test objects:
+AU   : 1.073e-05
+angle: 0.505

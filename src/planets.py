@@ -227,9 +227,9 @@ def main():
     
     # Process command line arguments
     parser = argparse.ArgumentParser(description='Integrate the orbits of planets and moons.')
-    parser.add_argument('type', nargs='?', metavar='T', type=str, default='A',
+    parser.add_argument('type', nargs='?', metavar='type', type=str, default='A',
                         help='type of integration: p- planets; d- dwarfs; m-moons; a-all, '
-                             'A-all 4 strategies: n-none')
+                             'A-run all 4 strategies')
     parser.add_argument('steps_per_day', nargs='?', metavar='SPD', type=int, default=-1,
                         help='the (max) number of steps per day taken by the integrator')
     args = parser.parse_args()
@@ -375,7 +375,7 @@ def main():
         ax.plot(test_years, pos_err_dwarfs, label='dwarfs', marker='o', color='red')
     ax.grid()
     ax.legend()
-    fig.savefig(fname=f'../figs/planets_integration/sim_ang_error_comp.png', bbox_inches='tight')
+    fig.savefig(fname=f'../figs/integration_test/planets/sim_ang_error_comp.png', bbox_inches='tight')
 
     # Plot angle error
     fig, ax = plt.subplots(figsize=[16,10])
@@ -390,7 +390,7 @@ def main():
         ax.plot(test_years, ang_err_dwarfs, label='dwarfs', marker='o', color='red')
     ax.grid()
     ax.legend()
-    fig.savefig(fname=f'../figs/planets_integration/sim_pos_error_comp.png', bbox_inches='tight')
+    fig.savefig(fname=f'../figs/integration_test/planets/sim_pos_error_comp.png', bbox_inches='tight')
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
