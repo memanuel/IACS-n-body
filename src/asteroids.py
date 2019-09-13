@@ -327,7 +327,7 @@ def test_numpy(verbose: bool = False) -> bool:
     fname_np: str = f'../data/asteroids/sim_asteroids_n_{n0:06}_{n1:06}.npz'
     
     # The full array of positions and velocities
-    q, v, catalog = load_sim_np(fname_np=fname_np)
+    q, v, elts, catalog = load_sim_np(fname_np=fname_np)
     # The object names
     object_names = catalog['object_names']
     
@@ -449,10 +449,12 @@ def main():
     fname: str = f'../data/asteroids/sim_asteroids_n_{n0:06}_{n1:06}.bin'
     time_step: int = 1
     save_step: int = 32
+    save_elements: bool = True
     print(f'Processing asteroid trajectories for asteroid numbers {n0} to {n1}...')
     make_archive(fname_archive=fname, sim_epoch=sim, object_names=object_names,
                  epoch=epoch, dt0=dt0, dt1=dt1, 
-                 time_step=time_step, save_step=save_step, progbar=progbar)
+                 time_step=time_step, save_step=save_step, 
+                 save_elements=save_elements, progbar=progbar)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':

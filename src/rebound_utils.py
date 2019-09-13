@@ -9,10 +9,11 @@ Fri Aug 23 16:13:28 2019
 # Library imports
 import numpy as np
 import rebound
-import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
+from collections import namedtuple
 import os
 from itertools import chain
+import matplotlib.pyplot as plt
 from tqdm import tqdm as tqdm_console
 from typing import List, Tuple, Dict, Set, Optional
 
@@ -97,6 +98,7 @@ def make_archive_impl(fname_archive: str,
                       object_names: List[str],
                       epoch: datetime, dt0: datetime, dt1: datetime, 
                       time_step: int, save_step: int,
+                      save_elements: bool,
                       progbar: bool) -> None:
     """
     Create a rebound simulation archive and save it to disk.
@@ -109,6 +111,7 @@ def make_archive_impl(fname_archive: str,
         dt1: the latest datetime to simulate forward to
         time_step: the time step in days for the simulation
         save_step: the interval for saving snapshots to the simulation archive
+        save_elements: flag indiciting whether to save orbital elements
         progbar: flag - whether to display a progress bar
     """
     
@@ -146,41 +149,80 @@ def make_archive_impl(fname_archive: str,
     N: int = sim_epoch.N
 
     # Initialize arrays for the position and velocity
-    shape: Tuple[int] = (M, N, 3)
-    q: np.array = np.zeros(shape, dtype=np.float64)
-    v: np.array = np.zeros(shape, dtype=np.float64)
+    shape_qv: Tuple[int] = (M, N, 3)
+    q: np.array = np.zeros(shape_qv, dtype=np.float64)
+    v: np.array = np.zeros(shape_qv, dtype=np.float64)
+    
+    # Initialize arrays for orbital elements if applicable
+    OrbitalElement = namedtuple('OrbitalElement', 'a e inc Omega omega f')
+    if save_elements:
+        # Arrays for a, e, inc, Omega, omega, f
+        shape_elt: Tuple[int] = (M, N)
+        orb_a: np.array = np.zeros(shape_elt, dtype=np.float64)
+        orb_e: np.array = np.zeros(shape_elt, dtype=np.float64)
+        orb_inc: np.array = np.zeros(shape_elt, dtype=np.float64)
+        orb_Omega: np.array = np.zeros(shape_elt, dtype=np.float64)
+        orb_omega: np.array = np.zeros(shape_elt, dtype=np.float64)
+        orb_f: np.array = np.zeros(shape_elt, dtype=np.float64)
+
+        # Wrap these into a named tuple
+        elts: OrbitalElement = \
+            OrbitalElement(a=orb_a, e=orb_e, inc=orb_inc,
+                           Omega=orb_Omega, omega=orb_omega, f=orb_f)
+    else:
+        elts = OrbitalElement()
+
+    # Subfunction: process one row of the loop    
+    def process_row(sim: rebound.Simulation, fname: str, 
+                    t: float, row: int):
+        # Integrate to the current time step with an exact finish time
+        sim.integrate(t, exact_finish_time=1)
+        
+        # Serialize the position and velocity
+        sim.serialize_particle_data(xyz=q[row])
+        sim.serialize_particle_data(vxvyvz=v[row])
+        
+        # Save a snapshot on multiples of save_step or the first / last row
+        if (i % save_step == 0) or (row in (0, M-1)):
+            sim.simulationarchive_snapshot(filename=fname)
+
+        # Save the orbital elements if applicable
+        if save_elements:
+            # Compute the orbital elements vs. the sun as primary
+            primary = sim.particles['Sun']
+            orbits = sim.calculate_orbits(primary=primary, jacobi_masses=False)
+            # Save the elements on this date as an Nx6 array
+            # This approach only traverses the (slow) Python list orbits one time
+            elt_array = np.array([[orb.a, orb.e, orb.inc, orb.Omega, orb.omega, orb.f] \
+                                  for orb in orbits])
+            # Save the elements into the current row of the named orbital elements arrays
+            # The LHS row mask starts at 1 b/c orbital elements are not computed for the first object (Sun)
+            orb_a[row, 1:] = elt_array[:, 0]
+            orb_e[row, 1:] = elt_array[:, 1]
+            orb_inc[row, 1:] = elt_array[:, 2]
+            orb_Omega[row, 1:] = elt_array[:, 3]
+            orb_omega[row, 1:] = elt_array[:, 4]
+            orb_f[row, 1:] = elt_array[:, 5]
 
     # Integrate the simulation forward in time
     idx_fwd: List[Tuple[int, float]] = list(enumerate(ts_fwd))
     if progbar:
         idx_fwd = tqdm_console(idx_fwd)
     for i, t in idx_fwd:
-        # Integrate to the current time step with an exact finish time
-        sim_fwd.integrate(t, exact_finish_time=1)
         # Row index for position data
         row: int = M_back + i
-        # Serialize the position and velocity
-        sim_fwd.serialize_particle_data(xyz=q[row])
-        sim_fwd.serialize_particle_data(vxvyvz=v[row])
-        # Save a snapshot on multiples of save_step or the last row
-        if (i % save_step == 0) or (row == M-1):
-            sim_fwd.simulationarchive_snapshot(filename=fname_fwd)
-
+        # Process this row
+        process_row(sim=sim_fwd, fname=fname_fwd, t=t, row=row)
+        
     # Integrate the simulation backward in time
     idx_back: List[Tuple[int, float]] = list(enumerate(ts_back))
     if progbar:
         idx_back = tqdm_console(idx_back)
     for i, t in idx_back:
-        # Integrate to the current time step with an exact finish time
-        sim_back.integrate(t, exact_finish_time=1)
         # Row index for position data
         row: int = M_back - (i+1)
-        # Serialize the position and velocity
-        sim_back.serialize_particle_data(xyz=q[row])
-        sim_back.serialize_particle_data(vxvyvz=v[row])
-        # Save a snapshot on multiples of save_step or the first row
-        if (i % save_step == 0) or (row == 0):
-            sim_back.simulationarchive_snapshot(filename=fname_back)
+        # Process this row
+        process_row(sim=sim_back, fname=fname_back, t=t, row=row)
 
     # Load the archives with the forward and backward snapshots
     sa_fwd: rebound.SimulationArchive = rebound.SimulationArchive(fname_fwd)
@@ -207,7 +249,7 @@ def make_archive_impl(fname_archive: str,
 
     # Save the numpy arrays with the object hashes, position and velocity
     np.savez(fname_np, 
-             q=q, v=v, 
+             q=q, v=v, elts=elts,
              ts=ts, epochs_np=epochs_np,
              hashes=hashes, object_names_np=object_names_np)
     
@@ -221,6 +263,7 @@ def make_archive(fname_archive: str,
                  object_names: List[str],
                  epoch: datetime, dt0: datetime, dt1: datetime, 
                  time_step: int, save_step: int = 1,
+                 save_elements: bool = False,
                  progbar: bool = False) -> rebound.SimulationArchive:
     """
     Load a rebound archive if available; otherwise generate it and save it to disk.
@@ -243,8 +286,9 @@ def make_archive(fname_archive: str,
         print(f'Generating archive {fname_archive}\n'
               f'from {dt0} to {dt1}, time_step={time_step}, save_step={save_step}...')
         make_archive_impl(fname_archive=fname_archive, sim_epoch=sim_epoch, object_names=object_names,
-                          epoch=epoch, dt0=dt0, dt1=dt1, time_step=time_step, 
-                          save_step=save_step, progbar=progbar)
+                          epoch=epoch, dt0=dt0, dt1=dt1, 
+                          time_step=time_step, save_step=save_step, 
+                          save_elements=save_elements, progbar=progbar)
         # Load the new archive into memory
         sa = rebound.SimulationArchive(filename=fname_archive)
     return sa
@@ -257,6 +301,7 @@ def load_sim_np(fname_np: str) ->Tuple[np.array, np.array, Dict[str, np.array]]:
         # Extract position, velocity and hashes
         q = npz['q']
         v = npz['v']
+        elts = npz['elts']
         ts = npz['ts']
         epochs_np = npz['epochs_np']
         epochs: List[datetime.datetime] = [nm for nm in epochs_np]
@@ -273,7 +318,7 @@ def load_sim_np(fname_np: str) ->Tuple[np.array, np.array, Dict[str, np.array]]:
         }
 
     # Return the position, velocity, and catalog        
-    return q, v, catalog
+    return q, v, elts, catalog
 
 # ********************************************************************************************************************* 
 def sim_cfg_array(sim: rebound.Simulation, object_names: Optional[List[str]]=None) -> np.array:
@@ -334,20 +379,6 @@ def report_sim_difference(sim0: rebound.Simulation, sim1: rebound.Simulation,
     cfg0 = cfg0 - cfg0[0:1,:]
     cfg1 = cfg1 - cfg1[0:1,:]
 
-    # Compute RMS difference of configuration
-    # cfg_rms = rms(cfg_diff, axis=0)
-    # cfg_err = np.abs(cfg_diff)
-
-    # Names of Cartesian configuration variables
-    # cfg_names = ['qx', 'qy', 'qz', 'vx', 'vy', 'vz']
-
-    # Report RMS Cartesian differences
-    # print(f'\nRMS Difference of configuration:')
-    # for j, var in enumerate(cfg_names):
-    #    idx = np.argmax(np.abs(cfg_diff[:, j]))
-    #    worse = object_names[idx]
-    #    print(f'{var:2} : {cfg_rms[j]:5.2e} : {worse:10}: {cfg_err[idx, j]:+5.2e}')
-    
     # Displacement of each body to earth
     earth_idx: int = object_names.index('Earth')
     q0: np.array = cfg0[:, 0:3] - cfg0[earth_idx, 0:3]
@@ -504,4 +535,3 @@ def test_integration(sa: rebound.SimulationArchive, test_objects: List[str],
     
     # Return summary of errors in position and angles
     return pos_err_rms, ang_err_rms
-
