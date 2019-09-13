@@ -319,9 +319,12 @@ def test_numpy() -> None:
         t = (dt_t - dt0).days
         # The test simulation from the simulation archive
         sim = sa.getSimulation(t=t, mode='exact')
-        # The sim
+        # The position and velocity from the simulation
+        cfg_sim = sim_cfg_array(sim=sim, object_names=object_names)
+        q_sim, v_sim = cfg_sim[:, 0:3], cfg_sim[:, 3:6]
+        # The position and velocity from the numpy arrays
+        q_np = q[t]
         
-
 # ********************************************************************************************************************* 
 def main():
     """Main routine for integrating the orbits of known asteroids"""
