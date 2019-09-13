@@ -299,8 +299,8 @@ def test_numpy() -> None:
     # Load the simulation archive for the first 1000 asteroids
     n0: int = 0
     n1: int = 1000
-    fname: str = f'../data/asteroids/sim_asteroids_n_{n0:06}_{n1:06}.bin'
-    sa: rebound.SimulationArchive = rebound.SimulationArchive(fname)
+    fname_sa: str = f'../data/asteroids/sim_asteroids_n_{n0:06}_{n1:06}.bin'
+    sa: rebound.SimulationArchive = rebound.SimulationArchive(fname_sa)
     
     # Name of the numpy archive
     fname_np: str = f'../data/asteroids/sim_asteroids_n_000000_001000.npz'

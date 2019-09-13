@@ -22,6 +22,21 @@ from horizons import make_sim_horizons, extend_sim_horizons
 from utils import rms
 
 # ********************************************************************************************************************* 
+def extend_sim(sim: rebound.Simulation, 
+               object_names_new: List[str], 
+               epoch: datetime):
+    """Extend an existing simulation"""
+    # Generate list of missing object names
+    hashes_present: Set[int] = set(p.hash.value for p in sim.particles)
+    objects_missing: List[str] = [nm for nm in object_names_new if rebound.hash(nm).value not in hashes_present]
+
+    # Extend the simulation and save it with the augmented bodies
+    if objects_missing:
+        extend_sim_horizons(sim, object_names=objects_missing, epoch=epoch)
+
+    return sim
+
+# ********************************************************************************************************************* 
 def make_sim(sim_name: str, object_names: List[str], epoch: datetime, 
              integrator: str, steps_per_day: int, save_file: bool) -> rebound.Simulation:
     """Create or load simulation with the specified objects at the specified time"""

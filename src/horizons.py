@@ -11,7 +11,7 @@ import rebound
 from datetime import datetime
 import collections
 import pickle
-from typing import List, Dict
+from typing import List, Dict, Set
 
 # Local imports
 from astro_utils import mjd_to_jd
@@ -178,10 +178,13 @@ def make_sim_horizons(object_names: List[str], epoch: datetime) -> rebound.Simul
 # ********************************************************************************************************************* 
 def extend_sim_horizons(sim: rebound.Simulation, object_names: List[str], epoch: datetime) -> None:
     """Extend a rebound simulation with initial data from the NASA Horizons system"""
-    # Add new objects one at a time if not already present
-    for object_name in object_names:
-        if object_name not in sim.particles:
-            add_one_object_hrzn(sim=sim, object_name=object_name, epoch=epoch, hrzn=hrzn)        
+    # Generate list of missing object names
+    hashes_present: Set[int] = set(p.hash.value for p in sim.particles)
+    objects_missing: List[str] = [nm for nm in object_names if rebound.hash(nm).value not in hashes_present]
+    
+    # Add missing objects one at a time if not already present
+    for object_name in objects_missing:
+        add_one_object_hrzn(sim=sim, object_name=object_name, epoch=epoch, hrzn=hrzn)        
     
     # Move to center of mass
     sim.move_to_com()
