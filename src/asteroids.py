@@ -178,7 +178,7 @@ def make_sim_asteroids_horizons(asteroid_names: List[str], epoch: datetime) -> r
     return sim
 
 # ********************************************************************************************************************* 
-def test_element_recovery(verbose: bool = False) -> None:
+def test_element_recovery(verbose: bool = False) -> bool:
     """Test recovery of initial orbital elements for selected asteroids"""
     # List of asteroids to test: first 25
     asteroid_names = [
@@ -206,10 +206,21 @@ def test_element_recovery(verbose: bool = False) -> None:
 
     # Report the difference
     object_names = ['Earth'] + asteroid_names
+    pos_err, ang_err = \
     report_sim_difference(sim0=sim_hrzn, sim1=sim_ast, object_names=object_names, verbose=True)
     
     # Report details of one specific asteroid
     report_one_asteroid(sim=sim_ast, asteroid_name='Ceres', epoch=epoch, verbose=True)
+
+    # Threshold for pass
+    pos_tol: float = 1.0E-5
+    ang_tol: float = 2.0    
+
+    # Test result
+    isOK: bool = all(pos_err < pos_tol) and (ang_err < ang_tol)
+    msg: str = 'PASS' if isOK else 'FAIL'
+    print(f'\n***** {msg} *****')
+    return isOK
 
 # ********************************************************************************************************************* 
 def report_one_asteroid(sim: rebound.Simulation, asteroid_name: str, 
@@ -264,7 +275,7 @@ def report_one_asteroid(sim: rebound.Simulation, asteroid_name: str,
     return q, v
 
 # ********************************************************************************************************************* 
-def test_asteroid_sim(make_plot: bool = False, verbose: bool=False) -> None:
+def test_asteroid_sim(make_plot: bool = False, verbose: bool=False) -> bool:
     """Test the integration of the asteroids against Horizons"""
     # Load the simulation archive for the first 1000 asteroids
     n0: int = 0
@@ -290,12 +301,22 @@ def test_asteroid_sim(make_plot: bool = False, verbose: bool=False) -> None:
                          sim_name=sim_name, test_name='asteroids', 
                          make_plot=make_plot, verbose=verbose)
         
+    # Threshold for pass
+    pos_tol: float = 1.0E-5
+    ang_tol: float = 2.0    
+
+    # Test result
+    isOK: bool = (max(pos_err) < pos_tol) and (max(ang_err) < ang_tol)
+    msg: str = 'PASS' if isOK else 'FAIL'
+    print(f'\n***** {msg} *****')
+    return isOK
+        
 # ********************************************************************************************************************* 
-def test_numpy() -> None:
+def test_numpy(verbose: bool = False) -> bool:
     """Test the numpy output against the simulation archive"""
     # Start time of simulation
     dt0: datetime = datetime(2000, 1, 1)
-
+    
     # Load the simulation archive for the first 1000 asteroids
     n0: int = 0
     n1: int = 1000
@@ -303,17 +324,23 @@ def test_numpy() -> None:
     sa: rebound.SimulationArchive = rebound.SimulationArchive(fname_sa)
     
     # Name of the numpy archive
-    fname_np: str = f'../data/asteroids/sim_asteroids_n_000000_001000.npz'
-
+    fname_np: str = f'../data/asteroids/sim_asteroids_n_{n0:06}_{n1:06}.npz'
+    
     # The full array of positions and velocities
     q, v, catalog = load_sim_np(fname_np=fname_np)
     # The object names
     object_names = catalog['object_names']
-
+    
     # Dates to be tested
     test_years: List[int] = list(range(2000, 2041))
-    test_dates: List[datetime] = [datetime(year, 1, 1) for year in test_years]
-    # Test the dates
+    test_dates: List[datetime] = [datetime(year, mth, 1) for year in test_years for mth in [1]]
+    q_errs: List[float] = []
+    v_errs: List[float] = []
+    
+    # Header row
+    if verbose:
+        print(f'DATE      : q_err     : v_err')
+    # Test the numpy arrays vs. sim archive on these dates
     for dt_t in test_dates:
         # The date to be tested as a time coordinate
         t = (dt_t - dt0).days
@@ -324,6 +351,37 @@ def test_numpy() -> None:
         q_sim, v_sim = cfg_sim[:, 0:3], cfg_sim[:, 3:6]
         # The position and velocity from the numpy arrays
         q_np = q[t]
+        v_np = v[t]
+        # The difference; should be zero
+        q_err = np.linalg.norm(q_np - q_sim)
+        v_err = np.linalg.norm(v_np - v_sim)
+        # Status
+        if verbose:
+            print(f'{dt_t.date()}: {q_err:5.3e} : {v_err:5.3e}.')
+        # Save to list
+        q_errs.append(q_err)
+        v_errs.append(v_err)
+    
+    # Maximum errors
+    q_err_max = max(q_errs)
+    v_err_max = max(v_errs)
+        
+    if verbose:
+        print(f'MAX ERROR : {q_err:5.3e} : {v_err:5.3e}.')
+    else:
+        print(f'Max errors:')
+        print(f'q_err = {q_err_max:5.3e}')
+        print(f'v_err = {v_err_max:5.3e}')
+
+    # Threshold for pass
+    q_tol: float = 1.0E-9
+    v_tol: float = 1.0E-9    
+
+    # Test result
+    isOK: bool = (max(q_errs) < q_tol) and (max(v_errs) < v_tol)
+    msg: str = 'PASS' if isOK else 'FAIL'
+    print(f'\n***** {msg} *****')
+    return isOK
         
 # ********************************************************************************************************************* 
 def main():
@@ -349,6 +407,13 @@ def main():
         # Test the integration vs. Horizons
         print_header(f'Testing asteroid integration vs. Horizons')
         test_asteroid_sim(verbose=True, make_plot=True)
+        
+        # Test numpy arrays
+        print_header(f'Testing Numpy array vs. simulation archive:')
+        test_numpy(verbose=True)
+        
+        # Quit early in test mode: don't want to do any integrations
+        print()
         exit()
 
     # Unpack command line arguments
@@ -392,4 +457,5 @@ def main():
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
+    pass
 

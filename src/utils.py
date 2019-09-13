@@ -79,7 +79,6 @@ def load_vartbl(fname: str) -> Dict:
         vartbl = dict()
     return vartbl
 
-
 def save_vartbl(vartbl: Dict, fname: str) -> None:
     """Save a dictionary of variables to the given file with pickle"""
     with open(fname, 'wb') as fh:

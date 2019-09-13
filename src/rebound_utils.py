@@ -162,7 +162,7 @@ def make_archive_impl(fname_archive: str,
         # Serialize the position and velocity
         sim_fwd.serialize_particle_data(xyz=q[row])
         sim_fwd.serialize_particle_data(vxvyvz=v[row])
-        # Save a snapshot on multiples of save_step
+        # Save a snapshot on multiples of save_step or the last row
         if (i % save_step == 0) or (row == M-1):
             sim_fwd.simulationarchive_snapshot(filename=fname_fwd)
 
@@ -178,7 +178,7 @@ def make_archive_impl(fname_archive: str,
         # Serialize the position and velocity
         sim_back.serialize_particle_data(xyz=q[row])
         sim_back.serialize_particle_data(vxvyvz=v[row])
-        # Save a snapshot on multiples of save_step
+        # Save a snapshot on multiples of save_step or the first row
         if (i % save_step == 0) or (row == 0):
             sim_back.simulationarchive_snapshot(filename=fname_back)
 
@@ -202,9 +202,6 @@ def make_archive_impl(fname_archive: str,
     sims = chain(reversed(sa_back), sa_fwd)
     # Process each simulation snapshot in turn
     for i, sim in enumerate(sims):
-        # Serialize the position and velocity
-        sim.serialize_particle_data(xyz=q[i])
-        sim.serialize_particle_data(vxvyvz=v[i])
         # Save a snapshot on multiples of save_step
         sim.simulationarchive_snapshot(fname_archive)        
 
@@ -422,7 +419,7 @@ def report_sim_difference(sim0: rebound.Simulation, sim1: rebound.Simulation,
     # One summary error statistic
     ang_err: np.array = rms(np.array([asc_err, dec_err]))
     
-    # Return the angle errors and RMS position error
+    # Return the RMS position error and angle errors
     return pos_err, ang_err
     
 # ********************************************************************************************************************* 
