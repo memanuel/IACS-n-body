@@ -18,7 +18,8 @@ from typing import List, Tuple, Dict, Optional
 # Local imports
 from utils import print_header
 from astro_utils import mjd_to_datetime
-from rebound_utils import make_archive, load_sim_np, report_sim_difference, test_integration, sim_cfg_array
+from rebound_utils import make_archive, load_sim_np
+from rebound_utils import report_sim_difference, test_integration, sim_cfg_array, sim_elt_array
 from horizons import make_sim_horizons
 from planets import make_sim_planets, object_names_planets
 
@@ -334,14 +335,17 @@ def test_numpy(verbose: bool = False) -> bool:
     # Dates to be tested
     test_years: List[int] = list(range(2000, 2041))
     test_dates: List[datetime] = [datetime(year, mth, 1) for year in test_years for mth in [1]]
-    q_errs: List[float] = []
-    v_errs: List[float] = []
+    # Errors on these date in q, v and orbital elements
+    N_test: int = len(test_dates)
+    q_errs = np.zeros(N_test)
+    v_errs = np.zeros(N_test)
+    elt_errs = np.zeros(N_test)
     
     # Header row
     if verbose:
-        print(f'DATE      : q_err     : v_err')
+        print(f'DATE      : q_err     : v_err     : elt_err')
     # Test the numpy arrays vs. sim archive on these dates
-    for dt_t in test_dates:
+    for i, dt_t in enumerate(test_dates):
         # The date to be tested as a time coordinate
         t = (dt_t - dt0).days
         # The test simulation from the simulation archive
@@ -349,36 +353,52 @@ def test_numpy(verbose: bool = False) -> bool:
         # The position and velocity from the simulation
         cfg_sim = sim_cfg_array(sim=sim, object_names=object_names)
         q_sim, v_sim = cfg_sim[:, 0:3], cfg_sim[:, 3:6]
-        # The position and velocity from the numpy arrays
+        # The orbital elements from the simulation
+        elts_sim = sim_elt_array(sim=sim, object_names=object_names[1:])
+        # Save just the first six columns and transpose to match shape of numpy
+        elts_sim = elts_sim[:, 0:6]
+        
+        # The position, velocity and orbital elements from the numpy arrays
         q_np = q[t]
         v_np = v[t]
+        # Extract the orbital elements from the numpy
+        # Skip the first row; the sun has no orbital elements
+        elts_np = np.array([elts.a[t, 1:], elts.e[t, 1:], elts.inc[t, 1:],
+                            elts.Omega[t, 1:], elts.omega[t, 1:], elts.f[t, 1:]]).transpose()
+
         # The difference; should be zero
         q_err = np.linalg.norm(q_np - q_sim)
         v_err = np.linalg.norm(v_np - v_sim)
+        elt_err = np.linalg.norm(elts_np - elts_sim)
+
         # Status
         if verbose:
-            print(f'{dt_t.date()}: {q_err:5.3e} : {v_err:5.3e}.')
+            print(f'{dt_t.date()}: {q_err:5.3e} : {v_err:5.3e} : {elt_err:5.3e}')
         # Save to list
-        q_errs.append(q_err)
-        v_errs.append(v_err)
+        q_errs[i] = q_err
+        v_errs[i] = v_err
+        elt_errs[i] = elt_err
     
     # Maximum errors
-    q_err_max = max(q_errs)
-    v_err_max = max(v_errs)
-        
+    q_err_max = np.max(q_errs)
+    v_err_max = np.max(v_errs)
+    elt_err_max = np.max(elt_err)
+
     if verbose:
-        print(f'MAX ERROR : {q_err:5.3e} : {v_err:5.3e}.')
+        print(f'MAX ERROR : {q_err_max:5.3e} : {v_err_max:5.3e} : {elt_err_max:5.3e}')
     else:
         print(f'Max errors:')
-        print(f'q_err = {q_err_max:5.3e}')
-        print(f'v_err = {v_err_max:5.3e}')
+        print(f'q_err   = {q_err_max:5.3e}')
+        print(f'v_err   = {v_err_max:5.3e}')
+        print(f'elt_err = {elt_err_max:5.3e}')
 
     # Threshold for pass
     q_tol: float = 1.0E-9
-    v_tol: float = 1.0E-9    
+    v_tol: float = 1.0E-9
+    elt_tol: float = 1.0E-9
 
     # Test result
-    isOK: bool = (max(q_errs) < q_tol) and (max(v_errs) < v_tol)
+    isOK: bool = (q_err_max < q_tol) and (v_err_max < v_tol) and (elt_err_max < elt_tol)
     msg: str = 'PASS' if isOK else 'FAIL'
     print(f'\n***** {msg} *****')
     return isOK

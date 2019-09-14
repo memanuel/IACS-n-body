@@ -1,11 +1,15 @@
-# Extract the command line argument: the number of this computation job
-job_num=$1
+# Extract command line arguments
+# This is the number of asteroids processed in each Python program, e.g. 1000
+batch_size=$1
+# The number of batches run in parallel in each large job, e.g. 50
+num_batch=$2
+# The largest asteroid number to process
+max_ast_num=$3
+# The number of this job, starting from 1
+job_num=$4
 
-# Input parameters
-batch_size=1000
-num_batch=50
+# Additional parameters
 sleep_time=0.1
-max_ast_num=541130
 
 # Set up index ranges
 # j is the multiplier of the batch size; ranges from j0 to j1
@@ -14,7 +18,7 @@ j1=$((j0+num_batch-1))
 # n is the first asteroid number to process in each call; ranges from n0 to n1
 n0=$((j0*batch_size))
 n1=$((j1*batch_size))
-echo "Bash is processing asteroids from n0=$n0 to n1=$n1 with batch_size=$batch_size..."
+echo "Bash asteroid_traj_batch.sh is processing asteroids from n0=$n0 to n1=$n1 with batch_size=$batch_size..."
 
 # Run all the jobs jobs in parallel
 for (( i=0; i<num_batch; i++))

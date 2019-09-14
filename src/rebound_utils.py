@@ -22,6 +22,9 @@ from astro_utils import datetime_to_mjd, cart_to_sph
 from horizons import make_sim_horizons, extend_sim_horizons
 from utils import rms
 
+# Named tuple data type for orbital elements
+OrbitalElement = namedtuple('OrbitalElement', 'a e inc Omega omega f')
+
 # ********************************************************************************************************************* 
 def extend_sim(sim: rebound.Simulation, 
                object_names_new: List[str], 
@@ -154,7 +157,7 @@ def make_archive_impl(fname_archive: str,
     v: np.array = np.zeros(shape_qv, dtype=np.float64)
     
     # Initialize arrays for orbital elements if applicable
-    OrbitalElement = namedtuple('OrbitalElement', 'a e inc Omega omega f')
+    
     if save_elements:
         # Arrays for a, e, inc, Omega, omega, f
         shape_elt: Tuple[int] = (M, N)
@@ -316,6 +319,10 @@ def load_sim_np(fname_np: str) ->Tuple[np.array, np.array, Dict[str, np.array]]:
         'hashes': hashes,
         'object_names': object_names
         }
+
+    # For some reason, np.save() squishes a namedtuple into an ND array.  Restore it to a named tuple
+    elts = OrbitalElement(a=elts[0], e=elts[1], inc=elts[2], 
+                          Omega=elts[3], omega=elts[4], f=elts[5])
 
     # Return the position, velocity, and catalog        
     return q, v, elts, catalog
