@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import rebound
 from datetime import datetime
-# from tqdm import tqdm as tqdm_console
+from tqdm import tqdm as tqdm_console
 import argparse
 from typing import List, Tuple, Dict, Optional
 
@@ -80,7 +80,7 @@ def convert_data(df_in: pd.DataFrame, epoch_mjd: Optional[float]=None) -> pd.Dat
 
     # Create a mask with only the matching rows
     mask = (df_in.Epoch == epoch_mjd)
-
+    
     # Initialize Dataframe with asteroid numbers
     df = pd.DataFrame(data=df_in.Num[mask])
 
@@ -96,7 +96,7 @@ def convert_data(df_in: pd.DataFrame, epoch_mjd: Optional[float]=None) -> pd.Dat
     df['H'] = df_in.H[mask]
     df['G'] = df_in.G[mask]
     df['Ref'] = df_in.Ref[mask]
-
+    
     # Set the asteroid number field to be the index
     df.set_index(keys=['Num'], drop=False, inplace=True)
 
@@ -118,6 +118,8 @@ def load_data() -> pd.DataFrame:
         df_in = load_data_impl()
         # Convert data to rebound format
         ast_elt = convert_data(df_in=df_in)
+        # Add the calculated orbital elements
+        ast_elt = ast_data_add_calc_elements(ast_elt)
         # Save it to h5
         ast_elt.to_hdf(fname, key='ast_elt', mode='w')
     
@@ -126,7 +128,8 @@ def load_data() -> pd.DataFrame:
 # ********************************************************************************************************************* 
 def make_sim_asteroids(sim_base: rebound.Simulation, 
                        ast_elt: pd.DataFrame, 
-                       n0: int, n1: int) -> Tuple[rebound.Simulation, List[str]]:
+                       n0: int, n1: int,
+                       progbar: bool = False) -> Tuple[rebound.Simulation, List[str]]:
     """
     Create a simulation with the selected asteroids by their ID numbers.
     INPUTS:
@@ -143,8 +146,9 @@ def make_sim_asteroids(sim_base: rebound.Simulation,
 
     # Add the specified asteroids one at a time
     mask = (n0 <= ast_elt.Num) & (ast_elt.Num < n1)
-    nums = ast_elt.index[mask]    
-    for num in nums:
+    nums = ast_elt.index[mask]
+    iters = tqdm_console(nums) if progbar else nums
+    for num in iters:
         # Unpack the orbital elements
         a = ast_elt.a[num]
         e = ast_elt.e[num]
@@ -177,6 +181,70 @@ def make_sim_asteroids_horizons(asteroid_names: List[str], epoch: datetime) -> r
     sim: rebound.Simulation = make_sim_horizons(object_names=object_names, epoch=epoch)
 
     return sim
+
+# ********************************************************************************************************************* 
+def ast_data_add_calc_elements(ast_elt) -> pd.DataFrame:
+    """Add the true anomaly and other calculated orbital elements to the asteroid DataFrame"""
+    
+    # Number of asteroids
+    N: int = len(ast_elt)
+
+    # Initialize empty arrays for computed orbital elements
+    f = np.zeros(N)
+    P = np.zeros(N)
+    mean_motion = np.zeros(N)
+    long = np.zeros(N)
+    theta = np.zeros(N)
+    pomega = np.zeros(N)
+    T_peri = np.zeros(N)
+
+    # Get the epoch from the DataFrame
+    epoch_mjd: float = ast_elt.epoch_mjd[1]
+    epoch: datetime = mjd_to_datetime(epoch_mjd)
+    
+    # Rebound simulation of the planets and moons on this date
+    sim_base = make_sim_planets(epoch=epoch)
+        
+    # Make a gigantic simulation with all these asteroids
+    n0: int = np.min(ast_elt.Num)
+    n1 = np.max(ast_elt.Num) + 1
+    # n1 = 100
+    print(f'Making big simulation with all {n1} asteroids...')
+    sim_ast, asteroid_names = make_sim_asteroids(sim_base=sim_base, ast_elt=ast_elt, n0=n0, n1=n1, progbar=True)
+    
+    # Calculate orbital elements for all particles
+    print(f'Computing orbital elements...')
+    orbits = sim_ast.calculate_orbits()
+    # Slice orbits so it skips the planets and only includes the asteroids
+    orbits = orbits[sim_base.N-1:]
+    
+    # Iterate over all the asteroids in the simulation
+    print(f'Copying additional orbital elements to DataFrame...')
+    mask = (n0 <= ast_elt.Num) & (ast_elt.Num < n1)
+    iters = list(enumerate(ast_elt.Num[mask]))
+    for i, num in tqdm_console(iters):
+        # Look up the orbit of asteroid i
+        orb = orbits[i]
+        # Unpack the additional (calculated) orbital elements
+        f[i] = orb.f
+        P[i] = orb.P
+        mean_motion[i] = orb.n
+        long[i] = orb.l
+        theta[i] = orb.theta
+        pomega[i] = orb.pomega
+        T_peri[i] = orb.T
+
+    # Save computed orbital elements to the DataFrame
+    ast_elt['f'] = f
+    ast_elt['P'] = P
+    ast_elt['n'] = mean_motion
+    ast_elt['long'] = long
+    ast_elt['theta'] = theta
+    ast_elt['pomega'] = pomega
+    ast_elt['T_peri'] = T_peri
+
+    # Return the updated DataFrame 
+    return ast_elt
 
 # ********************************************************************************************************************* 
 def test_element_recovery(verbose: bool = False) -> bool:
@@ -479,5 +547,3 @@ def main():
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
-    pass
-
