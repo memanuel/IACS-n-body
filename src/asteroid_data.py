@@ -10,11 +10,11 @@ Sat Sep 21 10:38:38 2019
 import tensorflow as tf
 # import rebound
 import numpy as np
-# from datetime import datetime
+from datetime import datetime
 from tqdm.auto import tqdm
 
 # Local imports
-# from astro_utils import datetime_to_mjd, mjd_to_datetime
+from astro_utils import datetime_to_mjd
 # from planets import make_sim_planets
 from asteroids import load_data, load_sim_np
 # from utils import arange_inc
@@ -24,7 +24,7 @@ from asteroids import load_data, load_sim_np
 ast_elt = load_data()
 
 # ********************************************************************************************************************* 
-def make_dataset_one_file(n0: int, n1: int) -> tf.data.Dataset:
+def make_dataset_one_file(n0: int, n1: int, include_vel: bool) -> tf.data.Dataset:
     """
     Wrap the data in one file of asteroid trajectory data into a TF Dataset
     INPUTS:
@@ -47,6 +47,10 @@ def make_dataset_one_file(n0: int, n1: int) -> tf.data.Dataset:
 
     # The snapshot times; offset to start time t0=0
     ts = catalog['ts'].astype(dtype)
+    # Convert ts from relative time vs. t0 to MJD
+    dt0 = datetime(2000, 1, 1)
+    t_offset = datetime_to_mjd(dt0)
+    ts += t_offset
     
     # mask for selected asteroids
     mask = (n0 <= ast_elt.Num) & (ast_elt.Num < n1)
@@ -81,59 +85,64 @@ def make_dataset_one_file(n0: int, n1: int) -> tf.data.Dataset:
     # dict with outputs
     outputs = {
         'q': q,
-        'v': v,
     }
-
+    # add velocity to outputs if specified
+    if include_vel:
+        outputs['v'] = v
+    
     # Build and return the dataset
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))    
     return ds
 
 # ********************************************************************************************************************* 
-def make_dataset_n(n: int):
+def make_dataset_n(n: int, include_vel: bool):
     """Convert the nth file, with asteroids (n-1)*1000 to n*1000, to a tf Dataset"""
     batch_size: int = 1000
     n0 = batch_size*n
     n1 = n0 + batch_size
-    return make_dataset_one_file(n0, n1)
+    return make_dataset_one_file(n0, n1, include_vel)
 
 # ********************************************************************************************************************* 
-def combine_datasets(n0: int, n1: int, progbar: bool = False):
+def combine_datasets(n0: int, n1: int, include_vel: bool = False, 
+                     batch_size: int = 64, progbar: bool = False):
     """Combine datasets in [n0, n1) into one large dataset"""
     # Iteration range for adding to the initial dataset
     ns = range(n0+1, n1)
     ns = tqdm(ns) if progbar else ns
     # Initial dataset
-    ds = make_dataset_n(n0)
+    ds = make_dataset_n(n0, include_vel)
     # Extend initial dataset
     for n in ns:
         try:
-            ds_new = make_dataset_n(n)
+            ds_new = make_dataset_n(n, include_vel)
             ds = ds.concatenate(ds_new)
         except:
             pass
-    return ds
+    # Batch the dataset
+    drop_remainder: bool = True    
+    return ds.batch(batch_size, drop_remainder=drop_remainder)
 
 # ********************************************************************************************************************* 
-def make_ast_dataset(n0: int, num_files: int):
+def make_dataset_ast(n0: int, num_files: int, include_vel: bool = False):
     """Create a dataset spanning files [n0, n1); user friendly API for combine_datasets"""
     n1: int = n0 + num_files
     progbar: bool = False
-    return combine_datasets(n0=n0, n1=n1, progbar=progbar)
+    return combine_datasets(n0=n0, n1=n1, include_vel=include_vel, progbar=progbar)
 
 # ********************************************************************************************************************* 
-def gen_batches(n_max: int = 541, batch_size: int = 64):
+def gen_batches(n_max: int = 541, include_vel: bool = False, batch_size: int = 64):
     """Python generator for all the asteroid trajectories"""
     # round up n_max to the next multiple of 8
     n_max = ((n_max+7) // 8) * 8
     # iterate over the combined datasets
     for n in range(0, n_max, 8):
-        ds = combine_datasets(n, n+8)
+        ds = combine_datasets(n0=n, n1=n+8, include_vel=include_vel, batch_size=batch_size)
         # iterate over the batches in the combined dataset
         for batch in ds.batch(batch_size):
             yield batch
 
 # ********************************************************************************************************************* 
-def make_ast_dataset_gen():
+def make_dataset_ast_gen():
     """Wrap the asteroid data into a Dataset using Python generator"""
     # see ds.element_spec()
     output_types = (
@@ -171,7 +180,8 @@ def make_ast_dataset_gen():
 
     # Set arguments for gen_batches
     n_max: int = 8
-    batch_args = (n_max, batch_size)
+    include_vel: bool = False
+    batch_args = (n_max, include_vel, batch_size)
 
     # Build dataset from generator
     ds = tf.data.Dataset.from_generator(
@@ -203,8 +213,11 @@ def _float_vec_feature(values):
   return tf.train.Feature(float_list=tf.train.FloatList(value=values))
 
 # ********************************************************************************************************************* 
-def serialize_ast_traj(it):
+def serialize_ast_traj(ds: tf.data.Dataset):
     """Serialize one asteroid trajectory to a proto message"""
+    # iterator for the dataset
+    it = iter(ds)
+
     # Unpack inputs and outputs from iterator
     inputs, outputs = next(it)
     
@@ -246,39 +259,4 @@ def deserialize_ast_traj(proto_msg):
     """Deserialize an asteroid trajectory stored as a proto message"""
     pass
 
-# ********************************************************************************************************************* 
-# Start and end time of simulation
-# dt0: datetime = datetime(2000, 1, 1)
-# dt1: datetime = datetime(2040, 12, 31)
 
-# Start and end dates as mjd
-# t0: float = datetime_to_mjd(dt0)
-# t1: float = datetime_to_mjd(dt1)
-
-# Load the simulation archive for the first 1000 asteroids
-n0: int = 0
-n1: int = 1000
-
-if 'ds1' not in globals():
-    ds1 = make_dataset_n(0)
-    ds2 = make_dataset_n(1)
-    # combined
-    ds_concat = ds1.concatenate(ds2)
-
-# one item from batch
-batch_in, batch_out = list(ds1.take(1))[0]
-
-# iterator for the dataset
-it = iter(ds1)
-
-# serialize one example
-# msg = serialize_ast_traj(it)
-# recover example
-# example = tf.train.Example.FromString(msg)
-
-# Big dataset
-# ds_16 = combine_datasets(0, 16, progbar=True)
-
-# Build datset from generator
-ds = make_ast_dataset()
-batch = ds.take(1)

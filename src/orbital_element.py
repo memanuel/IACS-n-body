@@ -164,6 +164,54 @@ class ArcCos2(keras.layers.Layer):
         return dict()    
     
 # ********************************************************************************************************************* 
+class OrbitalElementToPosition(keras.layers.Layer):
+    def call(self, inputs):
+        """Compute position q from orbital elements (a, e, inc, Omega, omega, f)"""
+        # Unpack inputs
+        # a: semimajor axis
+        # e: eccentricity
+        # inc: inclination
+        # Omega: longitude of ascending node
+        # omega: argument of pericenter
+        # f: true anomaly
+        # mu: gravitational field strength mu = G * (m0 + m1)
+        a, e, inc, Omega, omega, f, mu = inputs
+
+        # See rebound library tools.c, reb_tools_orbit_to_particle_err
+        
+        # Distance from center
+        one_minus_e2 = tf.constant(1.0) - tf.square(e)
+        one_plus_e_cos_f = tf.constant(1.0) + e * tf.cos(f)
+        r = a * one_minus_e2 / one_plus_e_cos_f
+        
+        # sine and cosine of the angles inc, Omega, omega, and f
+        ci = keras.layers.Activation(activation=tf.cos, name='cos_inc')(inc)
+        si = keras.layers.Activation(activation=tf.sin, name='sin_inc')(inc)
+        cO = keras.layers.Activation(activation=tf.cos, name='cos_Omega')(Omega)
+        sO = keras.layers.Activation(activation=tf.sin, name='sin_Omega')(Omega)
+        co = keras.layers.Activation(activation=tf.cos, name='cos_omega')(omega)
+        so = keras.layers.Activation(activation=tf.sin, name='sin_omega')(omega)
+        cf = keras.layers.Activation(activation=tf.cos, name='cos_f')(f)
+        sf = keras.layers.Activation(activation=tf.sin, name='sin_f')(f)
+
+        # Position
+        # qx = r*(cO*(co*cf-so*sf) - sO*(so*cf+co*sf)*ci)
+        # qy = r*(sO*(co*cf-so*sf) + cO*(so*cf+co*sf)*ci)
+        # qz = r*(so*cf+co*sf)*si
+        # the term cos_omega*cos_f - sin_omega*sin_f appears 2 times
+        # the term sin_omega*cos_f + cos_omega*sin_f appears 3 times
+        cocf_sosf = co*cf-so*sf
+        socf_cosf = so*cf+co*sf
+        qx = r*(cO*cocf_sosf - sO*socf_cosf*ci)
+        qy = r*(sO*cocf_sosf + cO*socf_cosf*ci)
+        qz = r*socf_cosf*si
+        
+        return (qx, qy, qz,)
+
+    def get_config(self):
+        return dict()
+
+# ********************************************************************************************************************* 
 class OrbitalElementToConfig(keras.layers.Layer):
     def __init__(self, include_accel:bool = False, **kwargs):
         super(OrbitalElementToConfig, self).__init__(**kwargs)
@@ -445,8 +493,40 @@ class EccentricToMeanAnomaly(keras.layers.Layer):
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
+def make_model_elt_to_pos(batch_size: int=64, name=None):
+    """Model that transforms from orbital elements to cartesian coordinates (position only)"""
+    # The shape shared by all the inputs
+    input_shape = (1,)
+
+    # Create input layers    
+    a = keras.Input(shape=input_shape, batch_size=batch_size, name='a')
+    e = keras.Input(shape=input_shape, batch_size=batch_size, name='e')
+    inc = keras.Input(shape=input_shape, batch_size=batch_size, name='inc')
+    Omega = keras.Input(shape=input_shape, batch_size=batch_size, name='Omega')
+    omega = keras.Input(shape=input_shape, batch_size=batch_size, name='omega')
+    f = keras.Input(shape=input_shape, batch_size=batch_size, name='f')
+    mu = keras.Input(shape=input_shape, batch_size=batch_size, name='mu')
+    
+    # Wrap these up into one tuple of inputs
+    inputs = (a, e, inc, Omega, omega, f, mu,)
+    
+    # Calculations are in one layer that does all the work...
+    qx, qy, qz = OrbitalElementToPosition(name='orb_elt_to_pos')(inputs)
+    
+    # Assemble the position and velocity vectors
+    q = keras.layers.concatenate(inputs=[qx, qy, qz], axis=-1, name='q')
+
+    # Wrap up the outputs
+    # outputs = q
+
+    # Create a model from inputs to outputs
+    name = name or 'orbital_element_to_cartesian'
+    model = keras.Model(inputs=inputs, outputs=q, name=name)
+    return model
+
+# ********************************************************************************************************************* 
 def make_model_elt_to_cfg(include_accel: bool = False, batch_size: int=64, name=None):
-    """Model that transforms from orbital elements to cartesian coordinates"""
+    """Model that transforms from orbital elements to cartesian coordinates (position and velocity)"""
     # The shape shared by all the inputs
     input_shape = (1,)
 
