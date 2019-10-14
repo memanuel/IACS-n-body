@@ -9,11 +9,12 @@ Sun Oct 13 11:56:50 2019
 
 # Library imports
 import tensorflow as tf
+import numpy as np
 # import rebound
 
 # Local imports
 from tf_utils import Identity
-from orbital_element import make_model_elt_to_pos, MeanToTrueAnomaly
+from orbital_element import make_model_elt_to_pos, MeanToTrueAnomaly, TrueToMeanAnomaly
 from asteroid_data import make_dataset_ast_pos, make_dataset_ast_dir, get_earth_pos
 
 # Aliases
@@ -61,22 +62,12 @@ def make_model_ast_pos(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     mu = tf.constant(G_)
     
     # Compute eccentric anomaly E from f and e
-    # https://en.wikipedia.org/wiki/Eccentric_anomaly
-    cos_f = tf.cos(f)
-    denom = 1.0 + e * cos_f
-    cos_E = (e + cos_f) / denom
-    sin_f = tf.sin(f)
-    sqrt_one_m_e2 = tf.sqrt(1.0 - tf.square(e))
-    sin_E = (sqrt_one_m_e2 * sin_f) / denom
-    E = tf.atan2(y=sin_E, x=cos_E)
-    
-    # Compute mean anomaly M from E using Kepler's Equation
-    # https://en.wikipedia.org/wiki/Mean_anomaly
-    M = E - e * tf.sin(E)
+    M = TrueToMeanAnomaly(name='TrueToMeanAnomaly')([f, e])
     
     # Compute mean motion N from mu and a
-    a3 = a * a * a
-    N = tf.sqrt(mu / a3)
+    a3 = tf.math.pow(a, 3, name='a3')
+    mu_over_a3 = tf.divide(mu, a3, name='mu_over_a3')
+    N = tf.sqrt(mu_over_a3, name='N')
     
     # Reshape t to (batch_size, traj_size, 1)
     t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(ts)
@@ -132,20 +123,29 @@ def make_model_ast_pos(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     model = keras.Model(inputs=inputs, outputs=q, name='model_asteroid_pos')
     return model
 
-# Take a one time snapshot of the earth's position
-q_earth_np = get_earth_pos()
-print(f'q_earth_np loaded, shape = {q_earth_np.shape}')
-traj_size = q_earth_np.shape[0]
-space_dims=3
-#q_earth = keras.backend.constant(q_earth_np.reshape(1, traj_size, space_dims), 
-#                      dtype=tf.float32,
-#                      shape=(1, traj_size, space_dims),
-#                      name='q_earth')
-# print(f'q_earth tf constant created, shape = {q_earth.shape}')
-q_earth = keras.backend.variable(q_earth_np.reshape(1, traj_size, space_dims), 
-                         dtype=tf.float32,
-                         name='q_earth')
-print(f'q_earth tf variable created, shape = {q_earth.shape}')
+
+# ********************************************************************************************************************* 
+class DirectionUnitVector(keras.layers.Layer):
+    """
+    Layer to compute the direction from object 1 (e.g. earth) to object 2 (e.g. asteroid)
+    """
+    
+    # don't declare this tf.function because it breaks when using it with q_earth
+    # still not entirely sure how tf.function works ...
+    # tf.function
+    def call(self, inputs):
+        # Unpack inputs
+        q1, q2 = inputs
+        # Relative displacement from earth to asteroid
+        q_rel = tf.subtract(q2, q1, name='q_rel')
+        # Distance between objects
+        r = tf.norm(q_rel, axis=-1, keepdims=True, name='r')
+        # Unit vector pointing from object 1 to object 2
+        u = tf.divide(q_rel, r, name='q_rel_over_r')
+        return u
+    
+    def get_config(self):
+        return dict()       
 
 # ********************************************************************************************************************* 
 def make_model_ast_dir(traj_size:int =14976, batch_size:int =64) -> keras.Model:
@@ -159,10 +159,6 @@ def make_model_ast_dir(traj_size:int =14976, batch_size:int =64) -> keras.Model:
         traj_size: size of the trajectory; defulat 14976 is 40 years sampled daily
         batch_size: defaults to 64
     """
-    space_dims = 3
-    # Adjust batch size for the number of GPUs
-    # batch_size=batch_size*num_gpus
-    
     # Inputs: 6 orbital elements; epoch; ts (output times as MJD)
     a = keras.Input(shape=(), batch_size=batch_size, name='a')
     e = keras.Input(shape=(), batch_size=batch_size, name='e')
@@ -181,14 +177,23 @@ def make_model_ast_dir(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     # Get the asteroid position with this model
     q = model_ast_pos(inputs)
 
-    # Relative displacement from earth to asteroid
-    # q_rel = q - q_earth
-    q_rel = tf.subtract(q, q_earth, name='q_rel')
-    # Distance to earth
-    # r_earth = tf.norm(q_rel, axis=-1, keepdims=True, name='r_earth')
-    # Unit vector pointing from earth to asteroid
-    # u = tf.divide(q_rel, r_earth, name='q_rel_over_r_earth')
-    u = q_rel
+    # Take a one time snapshot of the earth's position
+    q_earth_np = get_earth_pos()
+    # print(f'q_earth_np loaded, shape = {q_earth_np.shape}')
+    traj_size = q_earth_np.shape[0]
+    space_dims=3
+    q_earth_np = q_earth_np.reshape(1, traj_size, space_dims)
+    q_earth = keras.backend.constant(q_earth_np, 
+                                     dtype=tf.float32,
+                                     shape=(1, traj_size, space_dims),
+                                     name='q_earth')
+    # print(f'q_earth keras.constant created, shape = {q_earth.shape}')
+
+    # Unit displacement vector (direction) from earth to asteroid
+    u = DirectionUnitVector(name='dir_earth_ast')([q_earth, q])
+
+    # Name the outputs
+    u = Identity(name='u')(u)
     
     # Wrap this into a model
     model = keras.Model(inputs=inputs, outputs=u, name='model_asteroid_dir')
@@ -226,11 +231,17 @@ def test_ast_dir() -> bool:
     # Evaluate this model
     mse: float = model.evaluate(ds)
     # Threshold for passing
-    thresh: float = 0.02
+    thresh: float = 0.002
     isOK: bool = (mse < thresh)
+    # Convert error from unit vector to angle
+    mse_rad = 2.0 * np.arcsin(mse / 2.0)
+    mse_deg = np.rad2deg(mse_rad)
+    mse_sec = mse_deg * 3600
+    
     # Report results
     msg: str = 'PASS' if isOK else 'FAIL'
     print(f'MSE for asteroid model on first 1000 asteroids = {mse:8.6f}')
+    print(f'Angle error = {mse_rad:5.3e} rad / {mse_deg:8.6f} degrees / {mse_sec:6.2f} arc seconds')
     print(f'***** {msg} *****')
     return isOK
 
