@@ -11,7 +11,6 @@ import tensorflow as tf
 import numpy as np
 from datetime import datetime
 import os
-import sys
 from tqdm.auto import tqdm
 
 # Local imports
@@ -54,6 +53,9 @@ def make_synthetic_obs_data(n0: int, n1: int, dt0: datetime, dt1: datetime,
     """
     # Seed RNG for reproducible results
     np.random.seed(seed=42)
+    
+    # Data type for floating point
+    dtype = np.float32
 
     # Range of MJDs
     t0: float = datetime_to_mjd(dt0)
@@ -61,8 +63,8 @@ def make_synthetic_obs_data(n0: int, n1: int, dt0: datetime, dt1: datetime,
     
     # Preallocate storage
     num_obs_max: int = int((n1-n0) * (t1-t0) / (1.0 - frac_real))
-    t: np.array = np.zeros(num_obs_max)
-    u: np.array = np.zeros((num_obs_max, space_dims))
+    t: np.array = np.zeros(num_obs_max, dtype=dtype)
+    u: np.array = np.zeros((num_obs_max, space_dims), dtype=dtype)
     ast_num_obs: np.array = np.zeros(num_obs_max, dtype=np.int32)
     
     # Load data pages for selected asteroids
@@ -73,10 +75,10 @@ def make_synthetic_obs_data(n0: int, n1: int, dt0: datetime, dt1: datetime,
     num_obs: int = 0
     # Iterate through pages of asteroid data
     page: int
-    for page in range_inc(page0, page1):
+    for page in tqdm(range_inc(page0, page1)):
         # Load file for this page
-        n0_file: int = page0 * page_size
-        n1_file: int = page1 + page_size
+        n0_file: int = page * page_size
+        n1_file: int = n0_file + page_size
         inputs, outputs = make_data_one_file(n0=n0_file, n1=n1_file)
         # print(f'Loaded file for asteroids {n0_file} to {n1_file}.')
 
@@ -87,12 +89,12 @@ def make_synthetic_obs_data(n0: int, n1: int, dt0: datetime, dt1: datetime,
         
         # Extract positions; times of asteroid positions synchronized to those for earth
         q: np.array = outputs['q']
-        
+
         # Iterate through asteroids in this page
         idx: int
         ast_num_i: int
         # print(f'n0={n0}, n1={n1}')
-        for idx, ast_num_i in tqdm(enumerate(ast_num_page)):
+        for idx, ast_num_i in enumerate(ast_num_page):
             # Only process asteroids in [n0, n1)
             if not (n0 <= ast_num_i and ast_num_i < n1):
                 continue
@@ -117,17 +119,20 @@ def make_synthetic_obs_data(n0: int, n1: int, dt0: datetime, dt1: datetime,
     # Add bogus data points
     num_bogus = int(num_obs * (1.0-frac_real) / frac_real)
     num_total = num_obs + num_bogus
-    t[num_bogus:num_total] = np.random.choice(ts, size=num_bogus)
+    ts_bogus = np.arange(t0, t1)
+    t[num_bogus:num_total] = np.random.choice(ts_bogus, size=num_bogus)
     u[num_bogus:num_total] = random_direction(num_bogus)
     # Use placeholder asteroid number = 0 for bogus observations
     ast_num_obs[num_bogus:num_total] = 0
     
-    # Prune array size down
-    t = t[0:num_total]
-    u = u[0:num_total]
-    ast_num_obs = ast_num_obs[0:num_total]
-    return t, u, ast_num_obs
+    # Prune array size down and sort it by time t
+    idx = np.argsort(t[0:num_total])
+    t = t[idx]
+    u = u[idx]
+    ast_num_obs = ast_num_obs[idx]
     
+    return t, u, ast_num_obs
+
 # ********************************************************************************************************************* 
 def get_synthetic_data_one_asteroid(idx: int, t0: float, t1: float, p: float, noise: float,
                                     q: np.array, ts: np.array):
@@ -189,10 +194,12 @@ def random_direction(num_bogus: int):
     return u
 
 # ********************************************************************************************************************* 
-def load_synthetic_obs(n0: int = 1, n1: int = 1000):
+def load_synthetic_obs(n1: int = 1000):
     """Load synthetic observation data"""
+    # Start from asteroid number n0=1
+    n0: int = 1
     # File name for this data set
-    fname: str = f'../data/observations/synthetic_{n0:06}_{n1:06}.npz'
+    fname: str = f'../data/observations/synthetic_n_{n0:06}_{n1:06}.npz'
     # Load numpy data and unpack into variables
     data = np.load(fname)
     t = data['t']
@@ -207,7 +214,7 @@ def run_batch(n0: int, n1: int) -> None:
     dt0 = datetime(2000,1,1)
     dt1 = datetime(2019,10,1)
     # Acceptance probability of observations; interpolate linearly from n0 to n1
-    p0 = 1.00
+    p0 = 1.0
     p1 = 0.01
     # Noise to add to observations; distance on the unit shpere
     noise = 1.0E-6
@@ -215,11 +222,11 @@ def run_batch(n0: int, n1: int) -> None:
     frac_real = 0.50
     
     # File name for this data set
-    fname: str = f'../data/observations/synthetic_{n0:06}_{n1:06}.npz'
+    fname: str = f'../data/observations/synthetic_n_{n0:06}_{n1:06}.npz'
 
     # Quit early if file already exists
     if os.path.isfile(fname):
-        print(f'File {fname} already exists, exiting.')
+        print(f'File {fname} already exists.')
         return
 
     # Generate the synthetic data if file does not exists
@@ -231,12 +238,39 @@ def run_batch(n0: int, n1: int) -> None:
     np.savez(fname, t=t, u=u, ast_num=ast_num)
 
 # ********************************************************************************************************************* 
+def make_ragged_tensors(t: np.array, u: np.array, ast_num: np.array):
+    """Convert t, u, ast_num into ragged tensors"""
+    # Unique times and their indices
+    # t_unq, inv_idx, obs_on_t = np.unique(t, return_inverse=True, return_counts=True)
+    t_unq, inv_idx, = np.unique(t, return_inverse=True)
+
+    # The row IDs for the ragged tensorflow are what numpy calls the inverse indices    
+    value_rowids = inv_idx    
+
+    # Tensor with distinct times
+    t_ = tf.convert_to_tensor(value=t_unq)    
+    # Ragged tensors for direction u and asteroid number ast_num
+    u_ = tf.RaggedTensor.from_value_rowids(values=u, value_rowids=inv_idx)
+    ast_num_ = tf.RaggedTensor.from_value_rowids(values=ast_num, value_rowids=value_rowids)
+
+    # Return the tensors for t, u, ast_num
+    return t_, u_, ast_num_
+
+# ********************************************************************************************************************* 
 def main():
     # Simulate a few different size ranges with default parameters
     run_batch(1, 10)
+    run_batch(1, 100)
     run_batch(1, 1000)
     # run_batch(1, 100000)
+    pass
+
+# ********************************************************************************************************************* 
+def test_ragged_tensor():
+    t, u, ast_num = load_synthetic_obs(10)
+    t_, u_, ast_num_ = make_ragged_tensors(t, u, ast_num)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
+
