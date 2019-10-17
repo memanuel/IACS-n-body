@@ -36,12 +36,19 @@ def get_earth_pos():
 
     # The object names
     object_names = catalog['object_names']
+
+    # The snapshot times; offset to start time t0=0
+    ts = catalog['ts'].astype(dtype)
+    # Convert ts from relative time vs. t0 to MJD
+    dt0 = datetime(2000, 1, 1)
+    t_offset = datetime_to_mjd(dt0)
+    ts += t_offset
    
     # Extract position of earth
     earth_idx = object_names.index('Earth')
     q_earth = q[:, earth_idx, :].astype(dtype)
-    
-    return q_earth
+
+    return q_earth, ts
 
 # ********************************************************************************************************************* 
 def make_data_one_file(n0: int, n1: int) -> tf.data.Dataset:
@@ -92,7 +99,7 @@ def make_data_one_file(n0: int, n1: int) -> tf.data.Dataset:
     v = np.swapaxes(v, 0, 1)
     
     # Compute relative displacement to earth
-    q_earth = get_earth_pos()
+    q_earth, _ = get_earth_pos()
     traj_size = q_earth.shape[0]
     space_dims = 3
     q_rel = q - q_earth.reshape(1, traj_size, space_dims,)

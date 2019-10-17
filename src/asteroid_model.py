@@ -1,6 +1,6 @@
 """
 Harvard IACS Masters Thesis
-Solar Test: Predict the movement of a test particle in the solar system
+Solar Asteroid Model: Predict the movement of a test particle (e.g. asteroid) in the solar system
 using the Kepler approximation with the sun as a fixed central attractor.
 
 Michael S. Emanuel
@@ -210,12 +210,13 @@ def test_ast_pos() -> bool:
     model.compile(loss='MSE')
     # Evaluate this model
     mse: float = model.evaluate(ds)
+    rmse: float = np.sqrt(mse)
     # Threshold for passing
-    thresh: float = 0.02
-    isOK: bool = (mse < thresh)
+    thresh: float = 0.1
+    isOK: bool = (rmse < thresh)
     # Report results
     msg: str = 'PASS' if isOK else 'FAIL'
-    print(f'MSE for asteroid model on first 1000 asteroids = {mse:8.6f}')
+    print(f'Root MSE for asteroid model on first 1000 asteroids = {rmse:8.6f}')
     print(f'***** {msg} *****')
     return isOK
 
@@ -230,24 +231,25 @@ def test_ast_dir() -> bool:
     model.compile(loss='MSE')
     # Evaluate this model
     mse: float = model.evaluate(ds)
-    # Threshold for passing
-    thresh: float = 0.002
-    isOK: bool = (mse < thresh)
+    rmse: float = np.sqrt(mse)
     # Convert error from unit vector to angle
-    mse_rad = 2.0 * np.arcsin(mse / 2.0)
-    mse_deg = np.rad2deg(mse_rad)
-    mse_sec = mse_deg * 3600
+    rmse_rad = 2.0 * np.arcsin(rmse / 2.0)
+    rmse_deg = np.rad2deg(rmse_rad)
+    rmse_sec = rmse_deg * 3600
+    # Threshold for passing
+    thresh: float = 2.5
+    isOK: bool = (rmse_deg < thresh)
     
     # Report results
     msg: str = 'PASS' if isOK else 'FAIL'
     print(f'MSE for asteroid model on first 1000 asteroids = {mse:8.6f}')
-    print(f'Angle error = {mse_rad:5.3e} rad / {mse_deg:8.6f} degrees / {mse_sec:6.2f} arc seconds')
+    print(f'Angle error = {rmse_rad:5.3e} rad / {rmse_deg:8.6f} degrees / {rmse_sec:6.2f} arc seconds')
     print(f'***** {msg} *****')
     return isOK
 
 # ********************************************************************************************************************* 
 def main():
-    # test_ast_pos()
+    test_ast_pos()
     test_ast_dir()
     
 # ********************************************************************************************************************* 
