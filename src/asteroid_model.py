@@ -178,7 +178,7 @@ def make_model_ast_dir(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     q = model_ast_pos(inputs)
 
     # Take a one time snapshot of the earth's position
-    q_earth_np = get_earth_pos()
+    q_earth_np, _ = get_earth_pos()
     # print(f'q_earth_np loaded, shape = {q_earth_np.shape}')
     traj_size = q_earth_np.shape[0]
     space_dims=3

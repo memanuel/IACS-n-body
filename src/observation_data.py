@@ -194,10 +194,8 @@ def random_direction(num_bogus: int):
     return u
 
 # ********************************************************************************************************************* 
-def load_synthetic_obs(n1: int = 1000):
+def load_synthetic_obs_data(n0: int, n1: int):
     """Load synthetic observation data"""
-    # Start from asteroid number n0=1
-    n0: int = 1
     # File name for this data set
     fname: str = f'../data/observations/synthetic_n_{n0:06}_{n1:06}.npz'
     # Load numpy data and unpack into variables
@@ -238,23 +236,59 @@ def run_batch(n0: int, n1: int) -> None:
     np.savez(fname, t=t, u=u, ast_num=ast_num)
 
 # ********************************************************************************************************************* 
-def make_ragged_tensors(t: np.array, u: np.array, ast_num: np.array):
-    """Convert t, u, ast_num into ragged tensors"""
+def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array):
+    """
+    Convert t, u, ast_num into ragged tensors
+    INPUTS:
+        t_np: A numpy array with observation times as MJDs; size (N,)
+        u_np: A numpy array with directions as MJDs; size (N,3)
+        ast_num_np: A numpy array with the asteroid numbers; size (N,)
+    """
     # Unique times and their indices
-    # t_unq, inv_idx, obs_on_t = np.unique(t, return_inverse=True, return_counts=True)
-    t_unq, inv_idx, = np.unique(t, return_inverse=True)
+    t_unq, inv_idx, = np.unique(t_np, return_inverse=True)
 
     # The row IDs for the ragged tensorflow are what numpy calls the inverse indices    
     value_rowids = inv_idx    
 
     # Tensor with distinct times
-    t_ = tf.convert_to_tensor(value=t_unq)    
+    t = tf.convert_to_tensor(value=t_unq)    
     # Ragged tensors for direction u and asteroid number ast_num
-    u_ = tf.RaggedTensor.from_value_rowids(values=u, value_rowids=inv_idx)
-    ast_num_ = tf.RaggedTensor.from_value_rowids(values=ast_num, value_rowids=value_rowids)
+    u = tf.RaggedTensor.from_value_rowids(values=u_np, value_rowids=inv_idx)
+    ast_num = tf.RaggedTensor.from_value_rowids(values=ast_num_np, value_rowids=value_rowids)
 
     # Return the tensors for t, u, ast_num
-    return t_, u_, ast_num_
+    return t, u, ast_num
+
+# ********************************************************************************************************************* 
+def make_synthetic_obs_dataset(n0: int, n1: int):
+    """Create a tf.Dataset with synthetic data"""
+    # Load data up asteroid number n1
+    t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1)
+    
+    # Convert to tensors (regular for t, ragged for u and ast_num)
+    t, u, ast_num = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np)
+    
+    # Wrap into tensorflow Dataset
+    inputs = {
+        't' : t, 
+        'u': u,
+    }
+    outputs = {
+        'ast_num': ast_num,
+    }
+    ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))    
+    return ds
+
+# ********************************************************************************************************************* 
+def make_synthetic_obs_tensors(n0: int, n1: int):
+    """Create tensors t, u, ast_num for the specified asteroid numbers"""
+    # Load data up asteroid number n1
+    t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1)
+    
+    # Convert to tensors (regular for t, ragged for u and ast_num)
+    t, u, ast_num = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np)
+    
+    return t, u, ast_num
 
 # ********************************************************************************************************************* 
 def main():
@@ -266,11 +300,18 @@ def main():
     pass
 
 # ********************************************************************************************************************* 
-def test_ragged_tensor():
-    t, u, ast_num = load_synthetic_obs(10)
-    t_, u_, ast_num_ = make_ragged_tensors(t, u, ast_num)
+def test_ragged_tensors():
+    t_np, u_np, ast_num_np = load_synthetic_obs_data(n1=10)
+    t, u, ast_num = make_synthetic_obs_tensors(t_np, u_np, ast_num_np)
+
+# ********************************************************************************************************************* 
+def test_synthetic_dataset():
+    n0: int = 1
+    n1: int = 10
+    make_synthetic_obs_dataset(n0=n0, n1=n1)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
 
+test_synthetic_dataset()
