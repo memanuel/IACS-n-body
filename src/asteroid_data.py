@@ -8,6 +8,8 @@ Sat Sep 21 10:38:38 2019
 
 # Library imports
 import tensorflow as tf
+import tensorflow_probability as tfp
+# import scipy
 # import rebound
 import numpy as np
 from datetime import datetime
@@ -22,8 +24,8 @@ from asteroids import load_data, load_sim_np
 ast_elt = load_data()
 
 # ********************************************************************************************************************* 
-def get_earth_pos():
-    """Get the position of earth consistent with the asteroid data"""
+def get_earth_pos_file():
+    """Get the position of earth consistent with the asteroid data; look up from data file"""
     # selected data type for TF tensors
     dtype = np.float32
     
@@ -49,6 +51,20 @@ def get_earth_pos():
     q_earth = q[:, earth_idx, :].astype(dtype)
 
     return q_earth, ts
+
+# ********************************************************************************************************************* 
+def get_earth_pos(ts) -> np.array:
+    """Get position of earth consistent with asteroid data at the specified times (MJDs)"""
+    # Get position of earth at reference dates from file
+    q_earth_ref, t_ref = get_earth_pos_file()
+    # Get min and max of time for linear interp
+    x_ref_min = tf.math.reduce_min(t_ref)
+    x_ref_max = tf.math.reduce_max(t_ref)
+    # Run 1D linear interpolation
+    q_earth = tfp.math.interp_regular_1d_grid(x=ts, x_ref_min=x_ref_min, x_ref_max=x_ref_max,  y_ref=q_earth_ref, axis=0)
+    # interpolator = scipy.interpolate.interp1d(x=t_ref, y=q_earth_ref, kind='linear', axis=0)
+    # q_earth = interpolator(ts)
+    return q_earth
 
 # ********************************************************************************************************************* 
 def make_data_one_file(n0: int, n1: int) -> tf.data.Dataset:
@@ -99,7 +115,7 @@ def make_data_one_file(n0: int, n1: int) -> tf.data.Dataset:
     v = np.swapaxes(v, 0, 1)
     
     # Compute relative displacement to earth
-    q_earth, _ = get_earth_pos()
+    q_earth, _ = get_earth_pos_file()
     traj_size = q_earth.shape[0]
     space_dims = 3
     q_rel = q - q_earth.reshape(1, traj_size, space_dims,)
@@ -385,3 +401,9 @@ def deserialize_ast_traj(proto_msg):
     pass
 
 
+#q_earth_ref, t_ref = get_earth_pos_file()
+#x_ref_min = tf.math.reduce_min(t_ref)
+#x_ref_max = tf.math.reduce_max(t_ref)
+#q_earth = tfp.math.interp_regular_1d_grid(x=ts, x_ref_min=x_ref_min, x_ref_max=x_ref_max, 
+#                                          y_ref=q_earth_ref, axis=0)
+#

@@ -16,7 +16,7 @@ from tqdm.auto import tqdm
 # Local imports
 from utils import range_inc
 from astro_utils import datetime_to_mjd
-from asteroid_data import make_data_one_file, get_earth_pos
+from asteroid_data import make_data_one_file, get_earth_pos_file
 from asteroids import load_data as load_data_asteroids
 
 # Aliases
@@ -28,7 +28,7 @@ ast_elt = load_data_asteroids()
 ast_num_all = ast_elt.Num.to_numpy()
 
 # Load earth position data
-q_earth, ts = get_earth_pos()
+q_earth, ts = get_earth_pos_file()
 space_dims = 3
 
 # ********************************************************************************************************************* 
@@ -271,9 +271,9 @@ def make_synthetic_obs_dataset(n0: int, n1: int):
     # Wrap into tensorflow Dataset
     inputs = {
         't' : t, 
-        'u': u,
     }
     outputs = {
+        'u': u,
         'ast_num': ast_num,
     }
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))    
@@ -296,7 +296,8 @@ def main():
     run_batch(1, 10)
     run_batch(1, 100)
     run_batch(1, 1000)
-    # run_batch(1, 100000)
+    run_batch(1, 10000)
+    run_batch(1, 100000)
     pass
 
 # ********************************************************************************************************************* 

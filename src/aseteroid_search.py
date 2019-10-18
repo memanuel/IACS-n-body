@@ -12,14 +12,11 @@ import numpy as np
 
 # Local imports
 from asteroids import load_data as load_data_asteroids
-from observation_data import make_synthetic_obs_tensors
+from observation_data import make_synthetic_obs_dataset, make_synthetic_obs_tensors
 from asteroid_model import make_model_ast_dir
 
 # Aliases
 keras = tf.keras
-
-# Model predicting asteroid direction
-model = make_model_ast_dir()
 
 # ********************************************************************************************************************* 
 def score_elements(a, e, inc, Omega, omega, f, t, u) -> float:
@@ -44,8 +41,12 @@ ast_elt = load_data_asteroids()
 # Dataset of observations: synthetic data on first 1000 asteroids
 n0: int = 1
 n1: int = 1000
-# ds = make_synthetic_obs_dataset(n0=n0, n1=n1)
+ds = make_synthetic_obs_dataset(n0=n0, n1=n1)
 t, u, ast_num = make_synthetic_obs_tensors(n0=n0, n1=n1)
+traj_size = t.shape[0]
+
+# Model predicting asteroid direction
+model = make_model_ast_dir(traj_size=traj_size)
 
 # Values to try
 ast_num = 1

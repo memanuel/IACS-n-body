@@ -15,7 +15,7 @@ import numpy as np
 # Local imports
 from tf_utils import Identity
 from orbital_element import make_model_elt_to_pos, MeanToTrueAnomaly, TrueToMeanAnomaly
-from asteroid_data import make_dataset_ast_pos, make_dataset_ast_dir, get_earth_pos
+from asteroid_data import make_dataset_ast_pos, make_dataset_ast_dir, get_earth_pos, get_earth_pos_file
 
 # Aliases
 keras = tf.keras
@@ -31,7 +31,7 @@ G_ = 0.00029591220828559104
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_model_ast_pos(traj_size:int =14976, batch_size:int =64) -> keras.Model:
+def make_model_ast_pos(traj_size:int, batch_size:int =None) -> keras.Model:
     """
     Compute orbit positions for asteroids in the solar system from
     the initial orbital elements with the Kepler model.
@@ -39,11 +39,13 @@ def make_model_ast_pos(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     Inputs for the model are 6 orbital elements, the epoch, and the desired times for position outputs.
     Outputs of the model are the position of the asteroid relative to the sun.
     INPUTS;
-        traj_size: size of the trajectory; defulat 14976 is 40 years sampled daily
-        batch_size: defaults to 64
+        traj_size: size of the trajectory
+        batch_size: defaults to None for variable batch size
     """
     # Adjust batch size for the number of GPUs
     # batch_size=batch_size*num_gpus
+    
+    # Infer batch size if not provided
     
     # Inputs: 6 orbital elements; epoch; ts (output times as MJD)
     a = keras.Input(shape=(), batch_size=batch_size, name='a')
@@ -72,7 +74,7 @@ def make_model_ast_pos(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     # Reshape t to (batch_size, traj_size, 1)
     t_vec = keras.layers.Reshape(target_shape=(traj_size, 1), name='t_vec')(ts)
     # Reshape epoch to (batch_size, traj_size, 1)
-    epoch_vec = keras.layers.RepeatVector(n=traj_size, name='epoch_vec')(keras.backend.reshape(epoch, (batch_size,1)))
+    epoch_vec = keras.layers.RepeatVector(n=traj_size, name='epoch_vec')(keras.backend.reshape(epoch, (-1,1)))
     
     # Subtract epoch from t_vec; now it is relative to the epoch
     t_vec = t_vec - epoch_vec
@@ -81,7 +83,7 @@ def make_model_ast_pos(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     # Predict orbital elements over time
     
     # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size)
-    target_shape = (batch_size, 1)
+    target_shape = (-1, 1)
     a_t = keras.layers.RepeatVector(n=traj_size, name='a_t')(keras.backend.reshape(a, target_shape))
     e_t = keras.layers.RepeatVector(n=traj_size, name='e_t')(keras.backend.reshape(e, target_shape))
     inc_t = keras.layers.RepeatVector(n=traj_size, name='inc_t')(keras.backend.reshape(inc, target_shape))
@@ -148,7 +150,7 @@ class DirectionUnitVector(keras.layers.Layer):
         return dict()       
 
 # ********************************************************************************************************************* 
-def make_model_ast_dir(traj_size:int =14976, batch_size:int =64) -> keras.Model:
+def make_model_ast_dir(ts_, batch_size:int =None) -> keras.Model:
     """
     Compute direction from earth to asteroids in the solar system from
     the initial orbital elements with the Kepler model.
@@ -156,9 +158,12 @@ def make_model_ast_dir(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     Inputs for the model are 6 orbital elements, the epoch, and the desired times for position outputs.
     Outputs of the model are the unit vector (direction) pointing from earth to the asteroid
     INPUTS;
-        traj_size: size of the trajectory; defulat 14976 is 40 years sampled daily
-        batch_size: defaults to 64
+        traj_size: size of the trajectory
+        batch_size: defaults to None for variable batch size
     """
+    # Get trajectory size from ts
+    traj_size: int = ts_.shape[0]
+    
     # Inputs: 6 orbital elements; epoch; ts (output times as MJD)
     a = keras.Input(shape=(), batch_size=batch_size, name='a')
     e = keras.Input(shape=(), batch_size=batch_size, name='e')
@@ -177,13 +182,16 @@ def make_model_ast_dir(traj_size:int =14976, batch_size:int =64) -> keras.Model:
     # Get the asteroid position with this model
     q = model_ast_pos(inputs)
 
-    # Take a one time snapshot of the earth's position
-    q_earth_np, _ = get_earth_pos()
+    # Take a one time snapshot of the earth's position at these times
+    # q_earth_np, _ = get_earth_pos_file()
+    q_earth_sym = get_earth_pos(ts_)
+
     # print(f'q_earth_np loaded, shape = {q_earth_np.shape}')
-    traj_size = q_earth_np.shape[0]
+    traj_size = q_earth_sym.shape[1]
     space_dims=3
-    q_earth_np = q_earth_np.reshape(1, traj_size, space_dims)
-    q_earth = keras.backend.constant(q_earth_np, 
+    # q_earth_np = q_earth_np.reshape(1, traj_size, space_dims)
+    q_earth_sym = tf.reshape(q_earth_sym, (1, traj_size, space_dims))
+    q_earth = keras.backend.constant(q_earth_sym, 
                                      dtype=tf.float32,
                                      shape=(1, traj_size, space_dims),
                                      name='q_earth')
@@ -204,15 +212,18 @@ def test_ast_pos() -> bool:
     """Test asteroid position model"""
     # Load data for the first 1000 asteroids
     ds: tf.data.Dataset = make_dataset_ast_pos(0, 1)
+    # Get trajectory size
+    batch_in, batch_out = list(ds.take(1))[0]
+    traj_size = batch_in['ts'].shape[1]
     # Create the model to predict asteroid trajectories
-    model: keras.Model = make_model_ast_pos()
+    model: keras.Model = make_model_ast_pos(traj_size=traj_size)
     # Compile with MSE (mean squared error) loss
     model.compile(loss='MSE')
     # Evaluate this model
     mse: float = model.evaluate(ds)
     rmse: float = np.sqrt(mse)
     # Threshold for passing
-    thresh: float = 0.1
+    thresh: float = 0.125
     isOK: bool = (rmse < thresh)
     # Report results
     msg: str = 'PASS' if isOK else 'FAIL'
@@ -222,11 +233,15 @@ def test_ast_pos() -> bool:
 
 # ********************************************************************************************************************* 
 def test_ast_dir() -> bool:
-    """Test the asteroid direction moddel"""
+    """Test the asteroid direction model"""
     # Load data for the first 1000 asteroids
     ds: tf.data.Dataset = make_dataset_ast_dir(0, 1)
+    # Get trajectory size
+    batch_in, batch_out = list(ds.take(1))[0]
+    ts = batch_in['ts']
+    # traj_size = batch_in['ts'].shape[1]
     # Create the model to predict asteroid trajectories
-    model: keras.Model = make_model_ast_dir()
+    model: keras.Model = make_model_ast_dir(ts=ts)
     # Compile with MSE (mean squared error) loss
     model.compile(loss='MSE')
     # Evaluate this model
