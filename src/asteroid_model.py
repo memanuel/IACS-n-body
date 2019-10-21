@@ -90,7 +90,7 @@ def make_model_ast_pos(ts, batch_size:int =64) -> keras.Model:
     # ******************************************************************
     # Predict orbital elements over time
     
-    # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size)
+    # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size, 1)
     target_shape = (-1, 1)
     a_t = keras.layers.RepeatVector(n=traj_size, name='a_t')(keras.backend.reshape(a, target_shape))
     e_t = keras.layers.RepeatVector(n=traj_size, name='e_t')(keras.backend.reshape(e, target_shape))

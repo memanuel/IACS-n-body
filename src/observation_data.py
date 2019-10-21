@@ -124,7 +124,7 @@ def make_synthetic_obs_data(n0: int, n1: int, dt0: datetime, dt1: datetime,
     t[num_real:num_total] = np.random.choice(ts_bogus, size=num_bogus)
     u[num_real:num_total] = random_direction(num_bogus)
     # Use placeholder asteroid number = 0 for bogus observations
-    ast_num_obs[num_bogus:num_total] = 0
+    ast_num_obs[num_real:num_total] = 0
     
     # Prune array size down and sort it by time t
     idx = np.argsort(t[0:num_total])
@@ -253,7 +253,7 @@ def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array):
     value_rowids = inv_idx    
 
     # Tensor with distinct times
-    t = tf.convert_to_tensor(value=t_unq)    
+    t = tf.convert_to_tensor(value=t_unq)
     # Ragged tensors for direction u and asteroid number ast_num
     u = tf.RaggedTensor.from_value_rowids(values=u_np, value_rowids=inv_idx)
     ast_num = tf.RaggedTensor.from_value_rowids(values=ast_num_np, value_rowids=value_rowids)
@@ -278,7 +278,7 @@ def make_synthetic_obs_dataset(n0: int, n1: int):
         'u': u,
         'ast_num': ast_num,
     }
-    ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))    
+    ds = tf.data.Dataset.from_tensors((inputs, outputs))    
     return ds
 
 # ********************************************************************************************************************* 
@@ -298,8 +298,8 @@ def main():
     run_batch(1, 10)
     run_batch(1, 100)
     run_batch(1, 1000)
-    run_batch(1, 10000)
-    run_batch(1, 100000)
+    # run_batch(1, 10000)
+    # run_batch(1, 100000)
 
 # ********************************************************************************************************************* 
 def test_ragged_tensors():
@@ -316,4 +316,19 @@ def test_synthetic_dataset():
 if __name__ == '__main__':
     main()
 
-# test_synthetic_dataset()
+test_synthetic_dataset()
+
+#t_np, u_np, ast_num_np = load_synthetic_obs_data(1,10)
+#t, u, ast_num = make_ragged_tensors(t_np, u_np, ast_num_np)
+## Wrap into tensorflow Dataset
+#inputs = {
+#    't' : t, 
+#}
+#outputs = {
+#    'u': u,
+#    'ast_num': ast_num,
+#}
+#ds = tf.data.Dataset.from_tensors((inputs, outputs))    
+#
+#for i in range(10):
+#    print(f'{i:2}: {ast_num[i].shape}, {u[i].shape}')

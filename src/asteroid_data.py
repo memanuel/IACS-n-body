@@ -53,18 +53,22 @@ def get_earth_pos_file():
     return q_earth, ts
 
 # ********************************************************************************************************************* 
+# Create 1D linear interpolator for earth positions; just need one instance for the whole module
+
+# Get position of earth at reference dates from file
+q_earth_ref, t_ref = get_earth_pos_file()
+# Build the interpolator
+interpolator = scipy.interpolate.interp1d(x=t_ref, y=q_earth_ref, kind='cubic', axis=0)
+
+# ********************************************************************************************************************* 
 def get_earth_pos(ts) -> np.array:
     """Get position of earth consistent with asteroid data at the specified times (MJDs)"""
     # Get position of earth at reference dates from file
-    q_earth_ref, t_ref = get_earth_pos_file()
-    
-    # Get min and max of time for linear interp
-    # x_ref_min = tf.math.reduce_min(t_ref)
-    # x_ref_max = tf.math.reduce_max(t_ref)
-    # q_earth = tfp.math.interp_regular_1d_grid(x=ts, x_ref_min=x_ref_min, x_ref_max=x_ref_max,  y_ref=q_earth_ref, axis=0)
+    # q_earth_ref, t_ref = get_earth_pos_file()
     
     # Create 1D linear interpolator
-    interpolator = scipy.interpolate.interp1d(x=t_ref, y=q_earth_ref, kind='cubic', axis=0)
+    # interpolator = scipy.interpolate.interp1d(x=t_ref, y=q_earth_ref, kind='cubic', axis=0)
+
     # Compute interpolated position at desired times
     q_earth = interpolator(ts)
     return q_earth
