@@ -117,11 +117,12 @@ def make_synthetic_obs_data(n0: int, n1: int, dt0: datetime, dt1: datetime,
             num_obs += ni
     
     # Add bogus data points
-    num_bogus = int(num_obs * (1.0-frac_real) / frac_real)
-    num_total = num_obs + num_bogus
+    num_real: int = num_obs
+    num_total: int = int(np.round(num_real / frac_real))
+    num_bogus: int = num_total - num_real
     ts_bogus = np.arange(t0, t1)
-    t[num_bogus:num_total] = np.random.choice(ts_bogus, size=num_bogus)
-    u[num_bogus:num_total] = random_direction(num_bogus)
+    t[num_real:num_total] = np.random.choice(ts_bogus, size=num_bogus)
+    u[num_real:num_total] = random_direction(num_bogus)
     # Use placeholder asteroid number = 0 for bogus observations
     ast_num_obs[num_bogus:num_total] = 0
     
@@ -212,12 +213,13 @@ def run_batch(n0: int, n1: int) -> None:
     dt0 = datetime(2000,1,1)
     dt1 = datetime(2019,10,1)
     # Acceptance probability of observations; interpolate linearly from n0 to n1
-    p0 = 1.0
-    p1 = 0.01
-    # Noise to add to observations; distance on the unit shpere
-    noise = 1.0E-6
+    p0: float = 1.0
+    p1: float = 0.10
+    # Noise to add to observations; distance on the unit sphere
+    noise_arcsec: float = 1.0
+    noise: float = np.deg2rad(noise_arcsec / 3600)
     # Fraction of real observations
-    frac_real = 0.50
+    frac_real: float = 0.90
     
     # File name for this data set
     fname: str = f'../data/observations/synthetic_n_{n0:06}_{n1:06}.npz'
@@ -298,7 +300,6 @@ def main():
     run_batch(1, 1000)
     run_batch(1, 10000)
     run_batch(1, 100000)
-    pass
 
 # ********************************************************************************************************************* 
 def test_ragged_tensors():
@@ -315,4 +316,4 @@ def test_synthetic_dataset():
 if __name__ == '__main__':
     main()
 
-test_synthetic_dataset()
+# test_synthetic_dataset()

@@ -150,7 +150,7 @@ class DirectionUnitVector(keras.layers.Layer):
         return dict()       
 
 # ********************************************************************************************************************* 
-def make_model_ast_dir(ts_, batch_size:int =None) -> keras.Model:
+def make_model_ast_dir(ts, batch_size:int =None) -> keras.Model:
     """
     Compute direction from earth to asteroids in the solar system from
     the initial orbital elements with the Kepler model.
@@ -162,7 +162,7 @@ def make_model_ast_dir(ts_, batch_size:int =None) -> keras.Model:
         batch_size: defaults to None for variable batch size
     """
     # Get trajectory size from ts
-    traj_size: int = ts_.shape[0]
+    traj_size: int = ts.shape[0]
     
     # Inputs: 6 orbital elements; epoch; ts (output times as MJD)
     a = keras.Input(shape=(), batch_size=batch_size, name='a')
@@ -172,10 +172,10 @@ def make_model_ast_dir(ts_, batch_size:int =None) -> keras.Model:
     omega = keras.Input(shape=(), batch_size=batch_size, name='omega')
     f = keras.Input(shape=(), batch_size=batch_size, name='f')
     epoch = keras.Input(shape=(), batch_size=batch_size, name='epoch')
-    ts = keras.Input(shape=(traj_size,), batch_size=batch_size, name='ts')
+    ts_input = keras.Input(shape=(traj_size,), batch_size=batch_size, name='ts')
 
     # Wrap these up into one tuple of inputs for the model
-    inputs = (a, e, inc, Omega, omega, f, epoch, ts)
+    inputs = (a, e, inc, Omega, omega, f, epoch, ts_input)
     
     # Model with asteroid position
     model_ast_pos = make_model_ast_pos(traj_size=traj_size, batch_size=batch_size)
@@ -184,7 +184,7 @@ def make_model_ast_dir(ts_, batch_size:int =None) -> keras.Model:
 
     # Take a one time snapshot of the earth's position at these times
     # q_earth_np, _ = get_earth_pos_file()
-    q_earth_sym = get_earth_pos(ts_)
+    q_earth_sym = get_earth_pos(ts)
 
     # print(f'q_earth_np loaded, shape = {q_earth_np.shape}')
     traj_size = q_earth_sym.shape[1]

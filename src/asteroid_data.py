@@ -8,8 +8,8 @@ Sat Sep 21 10:38:38 2019
 
 # Library imports
 import tensorflow as tf
-import tensorflow_probability as tfp
-# import scipy
+# import tensorflow_probability as tfp
+import scipy
 # import rebound
 import numpy as np
 from datetime import datetime
@@ -61,8 +61,8 @@ def get_earth_pos(ts) -> np.array:
     x_ref_min = tf.math.reduce_min(t_ref)
     x_ref_max = tf.math.reduce_max(t_ref)
     # Run 1D linear interpolation
-    q_earth = tfp.math.interp_regular_1d_grid(x=ts, x_ref_min=x_ref_min, x_ref_max=x_ref_max,  y_ref=q_earth_ref, axis=0)
-    # interpolator = scipy.interpolate.interp1d(x=t_ref, y=q_earth_ref, kind='linear', axis=0)
+    # q_earth = tfp.math.interp_regular_1d_grid(x=ts, x_ref_min=x_ref_min, x_ref_max=x_ref_max,  y_ref=q_earth_ref, axis=0)
+    interpolator = scipy.interpolate.interp1d(x=t_ref, y=q_earth_ref, kind='cubic', axis=0)
     # q_earth = interpolator(ts)
     return q_earth
 
