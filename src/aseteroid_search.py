@@ -29,7 +29,7 @@ def score_elements(a, e, inc, Omega, omega, f, t, u) -> float:
         Omega: longitude of the ascending node
         omega: argument of pericenter
         f: true anomaly
-        t: observation times (MJDs)
+        ts: observation times (MJDs)
         u: observation directions (3 vectors)
     """
     pass
@@ -40,13 +40,17 @@ ast_elt = load_data_asteroids()
 
 # Dataset of observations: synthetic data on first 1000 asteroids
 n0: int = 1
-n1: int = 1000
+# n1: int = 1000
+n1: int = 100
 ds = make_synthetic_obs_dataset(n0=n0, n1=n1)
-t, u, ast_num = make_synthetic_obs_tensors(n0=n0, n1=n1)
-traj_size = t.shape[0]
+# Get reference times
+batch_in, batch_out = list(ds.take(1))[0]
+ts = batch_in['ts'][0]
+# t, u, ast_num = make_synthetic_obs_tensors(n0=n0, n1=n1)
+# traj_size = t.shape[0]
 
 # Model predicting asteroid direction
-model = make_model_ast_dir(traj_size=traj_size)
+model = make_model_ast_dir(ts=ts)
 
 # Values to try
 ast_num = 1
@@ -56,4 +60,14 @@ inc = ast_elt.inc[ast_num]
 Omega = ast_elt.Omega[ast_num]
 omega = ast_elt.omega[ast_num]
 f = ast_elt.f[ast_num]
+epoch = ast_elt.epoch_mjd[ast_num]
 
+inputs = {
+    'a': a, 
+    'e': e, 
+    'inc': inc, 
+    'Omega': Omega, 
+    'omega': omega, 
+    'f': f, 
+}
+# u_pred = model()
