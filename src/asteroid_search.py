@@ -41,21 +41,22 @@ def score_elements(a, e, inc, Omega, omega, f, t, u) -> float:
 # ********************************************************************************************************************* 
 class ObservationScore(keras.losses.Loss):
     """Specialized loss for predicted asteroid directions."""
-    def __init__(self, A=1.0, **kwargs):
-        super(ObservationScore, self).__init__(**kwargs)
-        self.A_inv = tf.constant(1.0 / A)
-
-    def call(self, u_obs, u_pred):
-        # Error between predicted and observed directions
-        u_diff = (u_obs - u_pred)
-        # Scaled by resolution parameter
-        u_diff_scaled = self.A_inv * u_diff
-        # Argument is -1/2 square of scaled difference
-        arg = -0.5 * math_ops.square(u_diff_scaled)
-        # Score contribution is e^(0.5 * scaled_diff)
-        score_contrib = math_ops.exp(arg)
-        return K.sum(score_contrib, axis=-1)
-
+    def call(self, preds, obs):
+        # Unpack inputs
+        x, R = preds
+        y = obs
+        # The difference in directions; size (batch_size, traj_size, max_obs, 3)
+        z = y-x
+        # Get the 
+        A_np = -0.5 / R**2
+        A = K.constant(A_np.reshape((batch_size, 1, 1,)))
+        # Argument to the exponential
+        arg = tf.multiply(A, tf.linalg.norm(z, axis=-1))
+        # The score function
+        score = K.sum(tf.exp(arg), axis=(1,2))
+        #The loss is negative of the score
+        return tf.multiply(-1.0, score)
+    
 # ********************************************************************************************************************* 
 # Load asteroid names and orbital elements
 ast_elt = load_data_asteroids()
@@ -80,6 +81,7 @@ space_dims: int = 3
 model_1 = make_model_ast_dir(ts=ts, batch_size=1)
 model_64 = make_model_ast_dir(ts=ts, batch_size=64)
 model = model_64
+batch_size: int = 64
 
 # Values to try: first 64 asteroids
 dtype = np.float32
@@ -96,6 +98,12 @@ omega = ast_elt.omega[mask].astype(dtype).to_numpy()
 f = ast_elt.f[mask].astype(dtype).to_numpy()
 epoch = ast_elt.epoch_mjd[mask].astype(dtype).to_numpy()
 
+# The resolution factor in degrees and radians
+R_deg: float = 10.0
+R_rad: float = np.deg2rad(R_deg)
+# Wrap resolution R into a numpy array
+R = R_rad * np.ones(shape=batch_size, dtype=dtype)
+
 # Wrap inputs
 inputs = {
     'a': a, 
@@ -104,19 +112,30 @@ inputs = {
     'Omega': Omega, 
     'omega': omega, 
     'f': f, 
-    'epoch': epoch
+    'epoch': epoch,
+    'R': R
 }
 
 # Predicted asteroid positions
 u_pred = model.predict(inputs)
 
-# Get difference between observed and predicted
-y = u_obs
-x = u_pred[0]
-x2 = tf.reshape(x, (traj_size, 1, space_dims))
-u_diff = y - x2
+# Total number of observations
+num_obs: float = np.sum(u_obs.row_lengths())
 
-# ragged tensor compoments of observations
-u_obs_tensor = u_obs.to_tensor()
-rowids = u_obs.value_rowids()
-row_starts = u_obs.row_starts()
+# Pad u_obs into a regular tensor
+pad_default = np.array([0.0, 0.0, 65536.0])
+u_ = u_obs.to_tensor(default_value=pad_default)
+max_obs: int  = u_.shape[1]
+
+# The observations; broadcast to shape (1, traj_size, max_obs, 3)
+y = tf.broadcast_to(u_, (1, traj_size, max_obs, space_dims))
+# The predicted directions; reshape to (batch_size, traj_size, 1, 3)
+x = tf.reshape(u_pred, (batch_size, traj_size, 1, space_dims))
+# The difference in directions; size (batch_size, traj_size, max_obs, 3)
+z = y-x
+A_np = -0.5 / R**2
+A = K.constant(A_np.reshape((batch_size, 1, 1,)))
+# Argument to the exponential
+arg = tf.multiply(A, tf.linalg.norm(z, axis=-1))
+# The score function
+score = K.sum(tf.exp(arg), axis=(1,2))
