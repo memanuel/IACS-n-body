@@ -23,6 +23,9 @@ from tf_utils import Identity
 # Aliases
 keras = tf.keras
 
+# Constants
+space_dims = 3
+
 # ********************************************************************************************************************* 
 def score_mean(A: np.array):
     """
@@ -201,6 +204,10 @@ class DirectionDifference(keras.layers.Layer):
 # ********************************************************************************************************************* 
 class TrajectoryScore(keras.layers.Layer):
     """Score candidate trajectories"""
+    def __init__(self, batch_size: int, **kwargs):
+        super(TrajectoryScore, self).__init__(**kwargs)
+        self.batch_size = batch_size
+
     def call(self, z: tf.Tensor, R: tf.Tensor, num_obs: float):
         """
         Score candidate trajectories in current batch based on how well they match observations
@@ -213,7 +220,7 @@ class TrajectoryScore(keras.layers.Layer):
         A = 1.0 / R**2
         
         # The coefficient that multiplies epsilon^2
-        B = tf.reshape(-0.5 * A, (batch_size, 1, 1,))
+        B = tf.reshape(-0.5 * A, (self.batch_size, 1, 1,))
         # print(f'B.shape = {B.shape}')
         
         # Argument to the exponential
@@ -263,77 +270,113 @@ class TrajectoryLoss(keras.losses.Loss):
         return -K.sum(t_score)
 
 # ********************************************************************************************************************* 
-def make_search_model(ts, max_obs: int, batch_size: int):
-    """
-    Make a model to search for asteroids.
-    INPUTS:
-        ts: times to evaluate asteroid position in heliocentric coordinates
-        ast_elt: DataFrame of known asteroid positions; for initialization of guesses
-    """
-    # Get trajectory size from ts
-    traj_size: int = ts.shape[0]
-    space_dims: int  = 3
+class AsteroidSearchModel(keras.Model):
+    def __init__(self, ts: np.array, row_lens, 
+                 batch_size: int = 64, R_deg: float=10.0, **kwargs):
+        super(AsteroidSearchModel, self).__init__(**kwargs)
 
-    # Inputs; batch_size for the observed directions is traj_size; one batch with all the observation times
-    u_obs = keras.Input(shape=(max_obs, space_dims), batch_size=traj_size, name='u_obs')
+        # Save input arguments
+        # self.ts = ts
+        self.batch_size = batch_size
+        self.R_deg = R_deg
+        self.row_lens = row_lens
+        
+        # The trajectory size
+        self.traj_size = ts.shape[0]
+        # Total number of observations; cast to tf.float32 type for compatibility with score
+        self.num_obs = tf.cast(tf.reduce_sum(row_lens), tf.float32)
+        
+        # Load asteroid names and orbital elements
+        self.ast_elt = load_data_asteroids()
+        # Placeholder for orbital elements
+        elt_placeholder = np.zeros(shape=(batch_size,), dtype=np.float32)
+
+        # Create trainable variables for the 6 orbital elements
+        self.a = tf.Variable(initial_value=elt_placeholder, trainable=True, name='a')
+        self.e = tf.Variable(initial_value=elt_placeholder, trainable=True, name='e')
+        self.inc = tf.Variable(initial_value=elt_placeholder, trainable=True, name='inc')
+        self.Omega = tf.Variable(initial_value=elt_placeholder, trainable=True, name='Omega')
+        self.omega = tf.Variable(initial_value=elt_placeholder, trainable=True, name='omega')
+        self.f = tf.Variable(initial_value=elt_placeholder, trainable=True, name='f')
+        
+        # Create a non-trainable variable for the epoch
+        self.epoch = tf.Variable(initial_value=elt_placeholder, trainable=False, name='epoch')
+        
+        # Initialize the orbital elements to the first 64 asteroids
+        self.set_orbital_elements_asteroids(1)
+        
+        # Dictionary wrapping inputs for the asteroid direction model
+        self.inputs_ast_dir = {
+            'a': self.a,
+            'e': self.e,
+            'inc': self.inc,
+            'Omega': self.Omega,
+            'omega': self.omega,
+            'f': self.f,
+            'epoch': self.epoch,        
+        }                
+
+        # Create trainable variable for resolution factor
+        R_np = np.deg2rad(self.R_deg) * np.ones(shape=batch_size, dtype=np.float32)
+        self.R = tf.Variable(initial_value=R_np, trainable=True, name='R')
+        
+        # Create a layer to compute directions from orbital elements at these times
+        self.model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
+        
+        # Create variable to store the predicted directions
+        # u_pred_shape = shape=(batch_size, traj_size, space_dims)
+        self.u_pred = tf.Variable(initial_value=self.model_ast_dir.predict(self.inputs_ast_dir),
+                                  trainable=False, name='u_pred')
+        
+        # Create layer to score trajectories
+        self.traj_score = TrajectoryScore(batch_size=self.batch_size, name='traj_score')
+
+    def set_orbital_elements_asteroids(self, n0: int):
+        """Set a batch of orbital elements with data for a block of asteroids starting at n0"""
+        # Get start and end index location of this asteroid number
+        i0: int = ast_elt.index.get_loc(n0)
+        i1: int = i0 + self.batch_size
+        # Assign the orbital elements and epoch
+        self.a.assign(ast_elt.a[i0:i1])
+        self.e.assign(ast_elt.e[i0:i1])
+        self.inc.assign(ast_elt.inc[i0:i1])
+        self.Omega.assign(ast_elt.Omega[i0:i1])
+        self.omega.assign(ast_elt.omega[i0:i1])
+        self.f.assign(ast_elt.f[i0:i1])
+        self.epoch.assign(ast_elt.epoch_mjd[i0:i1])
+
+    def set_R(self, R_deg: float):
+        """Update the resolution factor"""
+        R_np = np.deg2rad(R_deg) * np.ones(shape=self.batch_size, dtype=np.float32)
+        self.R.assign(R_np)
+
+    def predict_directions(self):
+        """
+        Compute orbits and implied directions for one batch of orbital element parameters.
+        """
+        # Predict asteroid positions and directions from earth;
+        # update u_pred in place with the results
+        self.u_pred.assign(self.model_ast_dir.predict(self.inputs_ast_dir))
+
+    def __call__(self, inputs):
+        """
+        Compute orbits and implied directions for one batch of orbital element parameters.
+        Score the predicted directions with the current resolution settings.
+        """
+        # Unpack the inputs
+        u_obs = inputs
+        
+        # Predicted asteroid positions
+        self.predict_directions()
+
+        # Difference in between observed and predicted directions
+        z = DirectionDifference(name='direction_difference')(u_obs, self.u_pred)
+
+        # raw and t score
+        score, t_score = self.traj_score(z, self.R, self.num_obs)
     
-#    # Load asteroid names and orbital elements
-#    ast_elt = load_data_asteroids()
-#    
-#    # Values to try: first 64 asteroids
-#    dtype = np.float32
-#    n0: int = 1
-#    n1: int = 64
-#    mask = (n0 <= ast_elt.Num) & (ast_elt.Num <= n1)
-#    
-#    # Make input batch
-#    a = tf.convert_to_tensor(ast_elt.a[mask].astype(dtype))
-#    e = tf.convert_to_tensor(ast_elt.e[mask].astype(dtype))
-#    inc = tf.convert_to_tensor(ast_elt.inc[mask].astype(dtype))
-#    Omega = tf.convert_to_tensor(ast_elt.Omega[mask].astype(dtype))
-#    omega = tf.convert_to_tensor(ast_elt.omega[mask].astype(dtype))
-#    f = tf.convert_to_tensor(ast_elt.f[mask].astype(dtype))
-#    epoch = tf.convert_to_tensor(ast_elt.epoch_mjd[mask].astype(dtype))
-#    
-#    # Wrap these into inputs for the direction model
-#    inputs_ast_dir = {
-#        'a': a,
-#        'e': e,
-#        'inc': inc,
-#        'Omega': Omega,
-#        'omega': omega,
-#        'f': f,
-#        'epoch': epoch,        
-#    }
-#    
-#    # Model predicting asteroid direction
-#    model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
-#
-#    # Predicted asteroid positions
-#    u_pred = model_ast_dir.predict(inputs_ast_dir)
-#    u_pred = Identity(name='u_pred')(u_pred)
-#    
-    # The resolution factor in degrees and radians
-    R_deg: float = 10.0
-    R_rad: float = np.deg2rad(R_deg)
-    # Wrap resolution R into a numpy array
-    R_np = R_rad * np.ones(shape=batch_size, dtype=dtype)
-    # R = tf.convert_to_tensor(R_np, name='R')
-    # R = tf.Variable(R_np, name='R')
-    # R = keras.backend.variable(R_np, name='R')
-    R = Identity(name='R')(R_np)
-    
-    # Wrap inputs and outputs
-    inputs = (u_obs)
-    # outputs = (u_pred, R)
-    outputs = (R)
-    
-    # Wrap this into a model
-    model = keras.Model(inputs=inputs, outputs=outputs, name='model_asteroid_search')
-    # Add loss function
-    # traj_loss = TrajectoryLoss(name='traj_loss')
-    # model.add_loss()
-    return model
+        # Return 
+        return score, t_score
 
 # ********************************************************************************************************************* 
 # Load asteroid names and orbital elements
@@ -355,88 +398,102 @@ ast_num = batch_out['ast_num']
 traj_size: int = ts.shape[0]
 space_dims: int = 3
 
-# Model predicting asteroid direction with batch size 1
-model_1 = make_model_ast_dir(ts=ts, batch_size=1)
-model_64 = make_model_ast_dir(ts=ts, batch_size=64)
-model = model_64
-batch_size: int = 64
-
-# Values to try: first 64 asteroids
-dtype = np.float32
-n0: int = 1
-n1: int = 64
-mask = (n0 <= ast_elt.Num) & (ast_elt.Num <= n1)
-
-# Make input batch
-a = ast_elt.a[mask].astype(dtype).to_numpy()
-e = ast_elt.e[mask].astype(dtype).to_numpy()
-inc = ast_elt.inc[mask].astype(dtype).to_numpy()
-Omega = ast_elt.Omega[mask].astype(dtype).to_numpy()
-omega = ast_elt.omega[mask].astype(dtype).to_numpy()
-f = ast_elt.f[mask].astype(dtype).to_numpy()
-epoch = ast_elt.epoch_mjd[mask].astype(dtype).to_numpy()
-
-# The resolution factor in degrees and radians
-R_deg: float = 10.0
-R_rad: float = np.deg2rad(R_deg)
-# Wrap resolution R into a numpy array
-R_np = R_rad * np.ones(shape=batch_size, dtype=dtype)
-R = tf.convert_to_tensor(R_np)
-
-# Wrap inputs
-inputs = {
-    'a': a, 
-    'e': e, 
-    'inc': inc, 
-    'Omega': Omega, 
-    'omega': omega, 
-    'f': f, 
-    'epoch': epoch,
-    'R': R
-}
-
-# Predicted asteroid positions
-u_pred = model.predict(inputs)
-
+# Row lengths
+row_lens = u_obs_ragged.row_lengths()
 # Total number of observations
-num_obs: float = float(np.sum(u_obs_ragged.row_lengths()))
+num_obs: float = float(np.sum(row_lens))
 
 # Pad u_obs into a regular tensor
 pad_default = np.array([0.0, 0.0, 65536.0])
 u_obs = u_obs_ragged.to_tensor(default_value=pad_default)
 max_obs: float  = float(u_obs.shape[1])
 
-## The observations; broadcast to shape (1, traj_size, max_obs, 3)
-#y = tf.broadcast_to(u_obs, (1, traj_size, max_obs, space_dims))
-## The predicted directions; reshape to (batch_size, traj_size, 1, 3)
-#x = tf.reshape(u_pred, (batch_size, traj_size, 1, space_dims))
-## The difference in directions; size (batch_size, traj_size, max_obs, 3)
-#z = y-x
-## The scaling coefficient for scores; score = exp(-1/2 A epsilon^2)
-# A_np = 1.0 / R_np**2
-## The coefficient that multiplies epsilon^2
-#B_np = -0.5 * A_np
-#B = K.constant(B_np.reshape((batch_size, 1, 1,)))
-## Argument to the exponential
-#arg = tf.multiply(B, tf.linalg.norm(z, axis=-1))
-## The score function
-#score = K.sum(tf.exp(arg), axis=(1,2))
-# The expected score
-# mu = num_obs * score_mean(A_np)
-# The expected variance
-# sigma2 = num_obs * score_var(A_np)
-# sigma = np.sqrt(sigma2)
-## The t-score
-#t_score = (score - mu) / sigma
-
-# Test custom layers
-# Difference in between observed and predicted directions
-z = DirectionDifference(name='direction_difference')(u_obs, u_pred)
-# raw and t score
-score, t_score = TrajectoryScore(name='traj_score')(z, R, num_obs)
-# loss function
-loss_layer = TrajectoryLoss(num_obs=num_obs, name='traj_loss')
-loss = loss_layer(z, R)
-
 # Build model
-model_search = make_search_model(ts=ts, max_obs=max_obs, batch_size=64)
+model = AsteroidSearchModel(ts=ts, row_lens=row_lens)
+
+
+def test_manual():
+    # Model predicting asteroid direction with batch size 1
+    model_1 = make_model_ast_dir(ts=ts, batch_size=1)
+    model_64 = make_model_ast_dir(ts=ts, batch_size=64)
+    model = model_64
+    batch_size: int = 64
+    
+    # Values to try: first 64 asteroids
+    dtype = np.float32
+    n0: int = 1
+    n1: int = 64
+    mask = (n0 <= ast_elt.Num) & (ast_elt.Num <= n1)
+    
+    # Make input batch
+    a = ast_elt.a[mask].astype(dtype).to_numpy()
+    e = ast_elt.e[mask].astype(dtype).to_numpy()
+    inc = ast_elt.inc[mask].astype(dtype).to_numpy()
+    Omega = ast_elt.Omega[mask].astype(dtype).to_numpy()
+    omega = ast_elt.omega[mask].astype(dtype).to_numpy()
+    f = ast_elt.f[mask].astype(dtype).to_numpy()
+    epoch = ast_elt.epoch_mjd[mask].astype(dtype).to_numpy()
+    
+    # The resolution factor in degrees and radians
+    R_deg: float = 10.0
+    R_rad: float = np.deg2rad(R_deg)
+    # Wrap resolution R into a numpy array
+    R_np = R_rad * np.ones(shape=batch_size, dtype=dtype)
+    R = tf.convert_to_tensor(R_np)
+    
+    # Wrap inputs
+    inputs = {
+        'a': a, 
+        'e': e, 
+        'inc': inc, 
+        'Omega': Omega, 
+        'omega': omega, 
+        'f': f, 
+        'epoch': epoch,
+        'R': R
+    }
+    
+    # Predicted asteroid positions
+    u_pred = model.predict(inputs)
+    
+    # Total number of observations
+    num_obs: float = float(np.sum(u_obs_ragged.row_lengths()))
+    
+    # Pad u_obs into a regular tensor
+    pad_default = np.array([0.0, 0.0, 65536.0])
+    u_obs = u_obs_ragged.to_tensor(default_value=pad_default)
+    max_obs: float  = float(u_obs.shape[1])
+
+    ## The observations; broadcast to shape (1, traj_size, max_obs, 3)
+    #y = tf.broadcast_to(u_obs, (1, traj_size, max_obs, space_dims))
+    ## The predicted directions; reshape to (batch_size, traj_size, 1, 3)
+    #x = tf.reshape(u_pred, (batch_size, traj_size, 1, space_dims))
+    ## The difference in directions; size (batch_size, traj_size, max_obs, 3)
+    #z = y-x
+    ## The scaling coefficient for scores; score = exp(-1/2 A epsilon^2)
+    # A_np = 1.0 / R_np**2
+    ## The coefficient that multiplies epsilon^2
+    #B_np = -0.5 * A_np
+    #B = K.constant(B_np.reshape((batch_size, 1, 1,)))
+    ## Argument to the exponential
+    #arg = tf.multiply(B, tf.linalg.norm(z, axis=-1))
+    ## The score function
+    #score = K.sum(tf.exp(arg), axis=(1,2))
+    # The expected score
+    # mu = num_obs * score_mean(A_np)
+    # The expected variance
+    # sigma2 = num_obs * score_var(A_np)
+    # sigma = np.sqrt(sigma2)
+    ## The t-score
+    #t_score = (score - mu) / sigma
+    
+    # Test custom layers
+    # Difference in between observed and predicted directions
+    z = DirectionDifference(name='direction_difference')(u_obs, u_pred)
+    # raw and t score
+    score, t_score = TrajectoryScore(name='traj_score')(z, R, num_obs)
+    # loss function
+    loss_layer = TrajectoryLoss(num_obs=num_obs, name='traj_loss')
+    loss = loss_layer(z, R)
+    print(f'loss = {loss}')
+
