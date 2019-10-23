@@ -15,9 +15,10 @@ import numpy as np
 
 # Local imports
 from asteroids import load_data as load_data_asteroids
-from observation_data import make_synthetic_obs_dataset
+from observation_data import make_synthetic_obs_dataset, random_direction
 # from observation_data import make_synthetic_obs_tensors
 from asteroid_model import make_model_ast_dir
+from tf_utils import Identity
 
 # Aliases
 keras = tf.keras
@@ -56,6 +57,21 @@ def score_var(A: np.array):
     return B * mean * mean
 
 # ********************************************************************************************************************* 
+def score_std(A: np.array):
+    """
+    Standard deviation of the score function 
+    f(epsilon) = exp(-1/2 A epsilon^2)
+    This can be integrated symbolically.
+    """
+    # The variance is (A*Coth(A)) * E[f]^2
+    # The std deviation is sqrt(A*Coth(A)) * E[f]
+    # Calculate the leading factor
+    B: np.array = np.sqrt(A / np.tanh(A) - 1.0)
+    # Calculate the mean
+    mean: np.array = score_mean(A)
+    return B * mean
+
+# ********************************************************************************************************************* 
 def test_score_moments_one(A: float, mean_exp: float, var_exp: float) -> bool:
     """Test the mean and variance for the score function with three known values"""
     # Test the mean
@@ -89,25 +105,70 @@ def test_score_moments():
     
     # Report results
     msg: str = 'PASS' if isOK else 'FAIL'
-    print(f'Test score moments: ***** {msg} *****')
-    
+    print(f'Test score moments: ***** {msg} *****')    
     return isOK
 
 # ********************************************************************************************************************* 
-class ObservationScore(keras.losses.Loss):
-    """Specialized loss for predicted asteroid directions."""
-    def call(self, u_obs, u_pred_in):
+def test_score_mean_num(N: int, R_deg: float):
+    """
+    Numerical test of score_mean
+    INPUTS:
+        N: number of points to test
+        R_deg: resolution factor in degrees
+    """
+    # Convert resolution factor to A
+    R: float = np.deg2rad(R_deg)
+    A: float = 1.0 / R**2
+    # Calculated mean and variance
+    mean_calc: float = score_mean(A)
+    std_calc: float = score_std(A)
+
+    # Numerical samples
+    directions: np.array = random_direction(N)
+    # Difference with north pole    
+    north_pole = np.array([0.0, 0.0, 1.0])
+    epsilon = directions- north_pole
+    epsilon2 = np.sum(epsilon*epsilon, axis=-1)
+
+    # Simulated mean and stdev
+    scores = np.exp(-0.5 * A * epsilon2)
+    mean_num: float = np.mean(scores)
+    mean_error_rel = np.abs(mean_num-mean_calc) / mean_calc
+    std_num: float = np.std(scores)
+    std_error_rel = np.abs(std_num-std_calc) / std_calc
+
+    # Test the mean
+    rtol: float = 2.0 / N**0.4
+    isOK: bool = np.isclose(mean_calc, mean_num, rtol=rtol)
+    print(f'Test score function with N={N}, R={R_deg} degrees:')
+    print(f'Mean:')
+    print(f'calc      = {mean_calc:10.8f}')
+    print(f'num       = {mean_num:10.8f}')
+    print(f'error_rel = {mean_error_rel:10.8f}')
+    
+    # Test the standard deviation
+    rtol = 2.0 / N**0.4
+    isOK = isOK and np.isclose(mean_calc, mean_num, rtol=rtol)
+    print(f'Standard Deviation:')
+    print(f'calc      = {std_calc:10.8f}')
+    print(f'num       = {std_num:10.8f}')
+    print(f'error_rel = {std_error_rel:10.8f}')
+    
+    # Summary results    
+    msg: str = 'PASS' if isOK else 'FAIL'
+    print(f'***** {msg} *****')
+    return isOK
+
+# ********************************************************************************************************************* 
+class DirectionDifference(keras.layers.Layer):
+    """Compute the difference in direction between observed and predicted directions"""
+    def call(self, u_obs, u_pred):
         """
         Loss is the negative of the total t-score summed over all points with non-negative scores
         INPUTS:
             u_obs: observed directions, PADDED to a regular tensor; shape (traj_size, max_obs, 3,)
-            u_pred_in: tuple (u_pred, R)
-                u_pred: predicted directions; shape (batch_size, traj_size, 3,)
-                R: resolution factor in radians for score function
+            u_pred: predicted directions; shape (batch_size, traj_size, 3,)
         """
-        # Unpack inputs; y_pred includes both predicted direction AND resolution factor R in radians
-        u_pred, R = u_pred_in
-
         # Get sizes
         batch_size: int
         traj_size: int
@@ -134,7 +195,20 @@ class ObservationScore(keras.losses.Loss):
         # The difference in directions; size (batch_size, traj_size, max_obs, 3)
         z = y-x
         # print(f'z.shape = {z.shape}')
-        
+
+        return z
+
+# ********************************************************************************************************************* 
+class TrajectoryScore(keras.layers.Layer):
+    """Score candidate trajectories"""
+    def call(self, z: tf.Tensor, R: tf.Tensor, num_obs: float):
+        """
+        Score candidate trajectories in current batch based on how well they match observations
+        INPUTS:
+            z: difference in direction between u_pred and u_obs
+            R: resolution factor in radians for score function
+            num_obs: total number of observations (real, not padded!)
+        """
         # The scaling coefficient for scores; score = exp(-1/2 A epsilon^2)
         A = 1.0 / R**2
         
@@ -160,19 +234,106 @@ class ObservationScore(keras.losses.Loss):
         # print(f'sigma.shape = {sigma.shape}')
         
         # The t-score for each sample
-        t_score = (score - mu) / sigma
+        # This is a modified t-score with an extra penalty for overly large R
+        mu_factor: float = 1.10
+        t_score = (score - mu_factor * mu) / sigma
         # print(f't_score.shape = {t_score.shape}')
+
+        # Return both the raw and t scores
+        return score, t_score
+
+# ********************************************************************************************************************* 
+class TrajectoryLoss(keras.losses.Loss):    
+    """Specialized loss for predicted asteroid directions."""
+    def __init__(self, num_obs: float, **kwargs):
+        super(TrajectoryLoss, self).__init__(**kwargs)
+        self.num_obs = tf.constant(num_obs)
         
-        # Sum the non-negative scores; put a negative sign because TF minimizes losses
-        # return -K.sum(tf.nn.relu(t_score))
+    def call(self, z, R):
+        """
+        Loss is the negative of the total t-score summed over all points with non-negative scores
+        INPUTS:
+            z: difference in direction between u_pred and u_obs
+            R: resolution factor in radians for score function
+        """
+        # Evaluate the scores
+        score, t_score = TrajectoryScore(name='traj_score')(z, R, self.num_obs)
         
         # Sum the scores
         return -K.sum(t_score)
 
 # ********************************************************************************************************************* 
-def make_search_model():
-    """Make a model to search for asteroids."""
-    pass
+def make_search_model(ts, max_obs: int, batch_size: int):
+    """
+    Make a model to search for asteroids.
+    INPUTS:
+        ts: times to evaluate asteroid position in heliocentric coordinates
+        ast_elt: DataFrame of known asteroid positions; for initialization of guesses
+    """
+    # Get trajectory size from ts
+    traj_size: int = ts.shape[0]
+    space_dims: int  = 3
+
+    # Inputs; batch_size for the observed directions is traj_size; one batch with all the observation times
+    u_obs = keras.Input(shape=(max_obs, space_dims), batch_size=traj_size, name='u_obs')
+    
+#    # Load asteroid names and orbital elements
+#    ast_elt = load_data_asteroids()
+#    
+#    # Values to try: first 64 asteroids
+#    dtype = np.float32
+#    n0: int = 1
+#    n1: int = 64
+#    mask = (n0 <= ast_elt.Num) & (ast_elt.Num <= n1)
+#    
+#    # Make input batch
+#    a = tf.convert_to_tensor(ast_elt.a[mask].astype(dtype))
+#    e = tf.convert_to_tensor(ast_elt.e[mask].astype(dtype))
+#    inc = tf.convert_to_tensor(ast_elt.inc[mask].astype(dtype))
+#    Omega = tf.convert_to_tensor(ast_elt.Omega[mask].astype(dtype))
+#    omega = tf.convert_to_tensor(ast_elt.omega[mask].astype(dtype))
+#    f = tf.convert_to_tensor(ast_elt.f[mask].astype(dtype))
+#    epoch = tf.convert_to_tensor(ast_elt.epoch_mjd[mask].astype(dtype))
+#    
+#    # Wrap these into inputs for the direction model
+#    inputs_ast_dir = {
+#        'a': a,
+#        'e': e,
+#        'inc': inc,
+#        'Omega': Omega,
+#        'omega': omega,
+#        'f': f,
+#        'epoch': epoch,        
+#    }
+#    
+#    # Model predicting asteroid direction
+#    model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
+#
+#    # Predicted asteroid positions
+#    u_pred = model_ast_dir.predict(inputs_ast_dir)
+#    u_pred = Identity(name='u_pred')(u_pred)
+#    
+    # The resolution factor in degrees and radians
+    R_deg: float = 10.0
+    R_rad: float = np.deg2rad(R_deg)
+    # Wrap resolution R into a numpy array
+    R_np = R_rad * np.ones(shape=batch_size, dtype=dtype)
+    # R = tf.convert_to_tensor(R_np, name='R')
+    # R = tf.Variable(R_np, name='R')
+    # R = keras.backend.variable(R_np, name='R')
+    R = Identity(name='R')(R_np)
+    
+    # Wrap inputs and outputs
+    inputs = (u_obs)
+    # outputs = (u_pred, R)
+    outputs = (R)
+    
+    # Wrap this into a model
+    model = keras.Model(inputs=inputs, outputs=outputs, name='model_asteroid_search')
+    # Add loss function
+    # traj_loss = TrajectoryLoss(name='traj_loss')
+    # model.add_loss()
+    return model
 
 # ********************************************************************************************************************* 
 # Load asteroid names and orbital elements
@@ -238,38 +399,44 @@ inputs = {
 u_pred = model.predict(inputs)
 
 # Total number of observations
-num_obs: float = np.sum(u_obs_ragged.row_lengths())
+num_obs: float = float(np.sum(u_obs_ragged.row_lengths()))
 
 # Pad u_obs into a regular tensor
 pad_default = np.array([0.0, 0.0, 65536.0])
 u_obs = u_obs_ragged.to_tensor(default_value=pad_default)
-max_obs: int  = u_obs.shape[1]
+max_obs: float  = float(u_obs.shape[1])
 
-# The observations; broadcast to shape (1, traj_size, max_obs, 3)
-y = tf.broadcast_to(u_obs, (1, traj_size, max_obs, space_dims))
-# The predicted directions; reshape to (batch_size, traj_size, 1, 3)
-x = tf.reshape(u_pred, (batch_size, traj_size, 1, space_dims))
-# The difference in directions; size (batch_size, traj_size, max_obs, 3)
-z = y-x
-# The scaling coefficient for scores; score = exp(-1/2 A epsilon^2)
-A_np = 1.0 / R_np**2
-# The coefficient that multiplies epsilon^2
-B_np = -0.5 * A_np
-B = K.constant(B_np.reshape((batch_size, 1, 1,)))
-# Argument to the exponential
-arg = tf.multiply(B, tf.linalg.norm(z, axis=-1))
-# The score function
-score = K.sum(tf.exp(arg), axis=(1,2))
+## The observations; broadcast to shape (1, traj_size, max_obs, 3)
+#y = tf.broadcast_to(u_obs, (1, traj_size, max_obs, space_dims))
+## The predicted directions; reshape to (batch_size, traj_size, 1, 3)
+#x = tf.reshape(u_pred, (batch_size, traj_size, 1, space_dims))
+## The difference in directions; size (batch_size, traj_size, max_obs, 3)
+#z = y-x
+## The scaling coefficient for scores; score = exp(-1/2 A epsilon^2)
+# A_np = 1.0 / R_np**2
+## The coefficient that multiplies epsilon^2
+#B_np = -0.5 * A_np
+#B = K.constant(B_np.reshape((batch_size, 1, 1,)))
+## Argument to the exponential
+#arg = tf.multiply(B, tf.linalg.norm(z, axis=-1))
+## The score function
+#score = K.sum(tf.exp(arg), axis=(1,2))
 # The expected score
-mu = num_obs * score_mean(A_np)
+# mu = num_obs * score_mean(A_np)
 # The expected variance
-sigma2 = num_obs * score_var(A_np)
-sigma = np.sqrt(sigma2)
-# The t-score
-t_score = (score - mu) / sigma
+# sigma2 = num_obs * score_var(A_np)
+# sigma = np.sqrt(sigma2)
+## The t-score
+#t_score = (score - mu) / sigma
 
-# Test custom loss layer
-score_layer = ObservationScore()
-u_pred_in = u_pred, R
-loss = score_layer(u_obs, u_pred_in)
+# Test custom layers
+# Difference in between observed and predicted directions
+z = DirectionDifference(name='direction_difference')(u_obs, u_pred)
+# raw and t score
+score, t_score = TrajectoryScore(name='traj_score')(z, R, num_obs)
+# loss function
+loss_layer = TrajectoryLoss(num_obs=num_obs, name='traj_loss')
+loss = loss_layer(z, R)
 
+# Build model
+model_search = make_search_model(ts=ts, max_obs=max_obs, batch_size=64)
