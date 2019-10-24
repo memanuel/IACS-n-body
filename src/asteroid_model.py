@@ -31,7 +31,7 @@ G_ = 0.00029591220828559104
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_model_ast_pos(ts, batch_size:int =64) -> keras.Model:
+def make_model_ast_pos(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     """
     Compute orbit positions for asteroids in the solar system from
     the initial orbital elements with the Kepler model.
@@ -158,7 +158,7 @@ class DirectionUnitVector(keras.layers.Layer):
         return dict()       
 
 # ********************************************************************************************************************* 
-def make_model_ast_dir(ts, batch_size:int =64) -> keras.Model:
+def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     """
     Compute direction from earth to asteroids in the solar system from
     the initial orbital elements with the Kepler model.
@@ -220,8 +220,6 @@ def test_ast_pos() -> bool:
     # Get reference times
     batch_in, batch_out = list(ds.take(1))[0]
     ts = batch_in['ts'][0]
-    # Get trajectory size
-    # traj_size = batch_in['ts'].shape[1]
     # Create the model to predict asteroid trajectories
     model: keras.Model = make_model_ast_pos(ts=ts)
     # Compile with MSE (mean squared error) loss

@@ -17,7 +17,7 @@ from tqdm.auto import tqdm
 from utils import range_inc
 from astro_utils import datetime_to_mjd
 from asteroid_data import make_data_one_file, get_earth_pos_file
-from asteroids import load_data as load_data_asteroids
+from asteroid_integrate import load_data as load_data_asteroids
 
 # Aliases
 keras = tf.keras
@@ -268,18 +268,34 @@ def make_synthetic_obs_dataset(n0: int, n1: int):
     t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1)
     
     # Convert to tensors (regular for t, ragged for u and ast_num)
-    t, u, ast_num = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np)
+    t, u_r, ast_num_r = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np)
+    
+    # Get row lengths
+    row_len = u_r.row_lengths()
+    
+    # Pad u_r into a regular tensor
+    pad_default = np.array([0.0, 0.0, 65536.0])
+    u = u_r.to_tensor(default_value=pad_default)
+    
+    # Alias array of times to ts; it is a separate output
+    ts = t
+    
+    # Pad ast_num_r into a regular tensor; use default -1 to indicate padded observation
+    ast_num = ast_num_r.to_tensor(default_value=-1)
     
     # Wrap into tensorflow Dataset
     inputs = {
         't' : t, 
-        'u': u,
+        'u': u, 
+        'row_len': row_len,
     }
     outputs = {
         'ast_num': ast_num,
     }
-    ds = tf.data.Dataset.from_tensors((inputs, outputs))    
-    return ds
+    ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))
+    
+    # Return the dataset as well as the time array
+    return ds, ts
 
 # ********************************************************************************************************************* 
 def make_synthetic_obs_tensors(n0: int, n1: int):
@@ -316,19 +332,6 @@ def test_synthetic_dataset():
 if __name__ == '__main__':
     main()
 
-test_synthetic_dataset()
+# test_synthetic_dataset()
 
-#t_np, u_np, ast_num_np = load_synthetic_obs_data(1,10)
-#t, u, ast_num = make_ragged_tensors(t_np, u_np, ast_num_np)
-## Wrap into tensorflow Dataset
-#inputs = {
-#    't' : t, 
-#}
-#outputs = {
-#    'u': u,
-#    'ast_num': ast_num,
-#}
-#ds = tf.data.Dataset.from_tensors((inputs, outputs))    
-#
-#for i in range(10):
-#    print(f'{i:2}: {ast_num[i].shape}, {u[i].shape}')
+ds, ts = make_synthetic_obs_dataset(1, 10)
