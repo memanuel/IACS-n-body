@@ -33,16 +33,12 @@ mu = tf.constant(G_)
 
 class AsteroidPosition(keras.layers.Layer):
     """
-    Compute orbit positions for asteroids in the solar system from
-    the initial orbital elements with the Kepler model.
-    Custom layer.
+    Compute orbit positions for asteroids in the solar system from the initial orbital elements with the Kepler model.
     Inputs for the model are 6 orbital elements, the epoch, and the desired times for position outputs.
-    Outputs of the model are the position of the asteroid relative to the sun.
-    INPUTS;
-        ts: times to evaluate asteroid position in heliocentric coordinates
-        batch_size: defaults to None for variable batch size
+    Outputs of the model are the position of the asteroid relative to the sun.    
     """
     def __init__(self, batch_size: int, **kwargs):
+        """Constructor; batch_size is the number of elements to simulate at a time, e.g. 64."""
         super(AsteroidPosition, self).__init__(**kwargs)
         # Get trajectory size from ts
         self.batch_size = batch_size
@@ -51,6 +47,11 @@ class AsteroidPosition(keras.layers.Layer):
         self.model_e2c = make_model_elt_to_pos(batch_size=batch_size)
 
     def call(self, t, a, e, inc, Omega, omega, f, epoch):
+        """
+        Simulate the orbital trajectories.  
+        Snapshot times t shared by all the input elements.  
+        The inputs orbital elements and reference epoch should all have size (batch_size,).
+        """
         # Alias traj_size, batch_size
         traj_size = t.shape[0]
         batch_size = self.batch_size
@@ -117,6 +118,45 @@ class AsteroidPosition(keras.layers.Layer):
         return q
 
 # ********************************************************************************************************************* 
+class DirectionUnitVector(keras.layers.Layer):
+    """
+    Layer to compute the direction from object 1 (e.g. earth) to object 2 (e.g. asteroid)
+    """
+    
+    # don't declare this tf.function because it breaks when using it with q_earth
+    # still not entirely sure how tf.function works ...
+    # tf.function
+    def call(self, inputs):
+        # Unpack inputs
+        q1, q2 = inputs
+        # Relative displacement from earth to asteroid
+        q_rel = tf.subtract(q2, q1, name='q_rel')
+        # Distance between objects
+        r = tf.norm(q_rel, axis=-1, keepdims=True, name='r')
+        # Unit vector pointing from object 1 to object 2
+        u = tf.divide(q_rel, r, name='q_rel_over_r')
+        return u
+    
+    def get_config(self):
+        return dict()       
+
+
+## ********************************************************************************************************************* 
+#class AsteroidDirection(keras.layers.Layer):
+#    """
+#    Layer to compute the direction from earth to asteroid.
+#    """
+#    def __init__(self, batch_size: int, **kwargs):
+#        """Constructor; batch_size is the number of elements to simulate at a time, e.g. 64."""
+#        super(AsteroidPosition, self).__init__(**kwargs)
+#        # Get trajectory size from ts
+#        self.batch_size = batch_size
+#
+#        # Layer mapping orbital elements to cartesian coordinates
+#        self.model_e2c = make_model_elt_to_pos(batch_size=batch_size)
+#
+
+# ********************************************************************************************************************* 
 # Functional API Models
 # ********************************************************************************************************************* 
 
@@ -161,29 +201,6 @@ def make_model_ast_pos(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     model = keras.Model(inputs=inputs, outputs=outputs, name='model_asteroid_pos')
     return model
 
-
-# ********************************************************************************************************************* 
-class DirectionUnitVector(keras.layers.Layer):
-    """
-    Layer to compute the direction from object 1 (e.g. earth) to object 2 (e.g. asteroid)
-    """
-    
-    # don't declare this tf.function because it breaks when using it with q_earth
-    # still not entirely sure how tf.function works ...
-    # tf.function
-    def call(self, inputs):
-        # Unpack inputs
-        q1, q2 = inputs
-        # Relative displacement from earth to asteroid
-        q_rel = tf.subtract(q2, q1, name='q_rel')
-        # Distance between objects
-        r = tf.norm(q_rel, axis=-1, keepdims=True, name='r')
-        # Unit vector pointing from object 1 to object 2
-        u = tf.divide(q_rel, r, name='q_rel_over_r')
-        return u
-    
-    def get_config(self):
-        return dict()       
 
 # ********************************************************************************************************************* 
 def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:

@@ -238,7 +238,7 @@ def run_batch(n0: int, n1: int) -> None:
     np.savez(fname, t=t, u=u, ast_num=ast_num)
 
 # ********************************************************************************************************************* 
-def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array, batch_size: int = 64):
+def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array, batch_size: int):
     """
     Convert t, u, ast_num into ragged tensors
     INPUTS:
@@ -252,9 +252,10 @@ def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array, ba
     
     # Pad t_unq with extra times so it has an even multiple of batch_size
     data_size: int = t_unq.shape[0]
-    num_pad: int = -data_size % batch_size
-    t_unq = np.pad(t_unq, pad_width=(0,num_pad), mode='constant')
-    t_unq[data_size:] = t_unq[data_size-1] + np.arange(num_pad)
+    if batch_size is not None:
+        num_pad: int = -data_size % batch_size
+        t_unq = np.pad(t_unq, pad_width=(0,num_pad), mode='constant')
+        t_unq[data_size:] = t_unq[data_size-1] + np.arange(num_pad)
 
     # The row IDs for the ragged tensorflow are what numpy calls the inverse indices    
     value_rowids = inv_idx 
@@ -269,13 +270,17 @@ def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array, ba
     return t, u, ast_num
 
 # ********************************************************************************************************************* 
-def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int = 64):
+def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int= None):
     """Create a tf.Dataset with synthetic data"""
     # Load data between asteroid numbers n0 and n1
     t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1)
     
     # Convert to tensors (regular for t, ragged for u and ast_num)
-    t, u_r, ast_num_r = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np)
+    t, u_r, ast_num_r = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np, batch_size=batch_size)
+    
+    # Set batch_size to all the times if it was not specified
+    if batch_size is None:
+        batch_size = u_r.shape[0]
 
     # Number of entries to pad at the end so batches all divisible by batch_size    
     num_pad = t.shape[0] - u_r.shape[0]
@@ -349,12 +354,10 @@ def test_ragged_tensors():
 def test_synthetic_dataset():
     n0: int = 1
     n1: int = 10
-    make_synthetic_obs_dataset(n0=n0, n1=n1)
+    ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1)
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
 
 # test_synthetic_dataset()
-
-ds, ts, row_len = make_synthetic_obs_dataset(1, 10)

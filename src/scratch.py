@@ -13,7 +13,7 @@ from asteroid_integrate import load_data as load_data_asteroids
 from observation_data import make_synthetic_obs_dataset, random_direction
 # from observation_data import make_synthetic_obs_tensors
 from asteroid_data import orbital_element_batch
-from asteroid_model import make_model_ast_dir, make_model_ast_pos
+from asteroid_model import AsteroidPosition, make_model_ast_dir, make_model_ast_pos
 from tf_utils import Identity
 
 # Aliases
