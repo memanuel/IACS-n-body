@@ -9,7 +9,7 @@ Thu Oct 17 15:24:10 2019
 # Library imports
 import tensorflow as tf
 # from tensorflow.python.framework import ops
-from tensorflow.python.ops import math_ops
+# from tensorflow.python.ops import math_ops
 from tensorflow.python.keras import backend as K
 import numpy as np
 
@@ -252,21 +252,17 @@ class TrajectoryScore(keras.layers.Layer):
 # ********************************************************************************************************************* 
 class TrajectoryLoss(keras.losses.Loss):    
     """Specialized loss for predicted asteroid directions."""
-    def __init__(self, num_obs: float, **kwargs):
+    def __init__(self, **kwargs):
         super(TrajectoryLoss, self).__init__(**kwargs)
-        self.num_obs = tf.constant(num_obs)
         
-    def call(self, z, R):
+    def call(self, t_score):
         """
         Loss is the negative of the total t-score summed over all points with non-negative scores
         INPUTS:
-            z: difference in direction between u_pred and u_obs
-            R: resolution factor in radians for score function
+            t_score: (score - mu) / sigma; mu, sigma are theoretical mean and variance for num_obs
+                     observations uniformly distributed on the unit sphere.
         """
-        # Evaluate the scores
-        score, t_score = TrajectoryScore(name='traj_score')(z, R, self.num_obs)
-        
-        # Sum the scores
+        # Sum the scores with a negative sign
         return -K.sum(t_score)
 
 # ********************************************************************************************************************* 
@@ -330,6 +326,13 @@ class AsteroidSearchModel(keras.Model):
         
         # Create layer to score trajectories
         self.traj_score = TrajectoryScore(batch_size=self.batch_size, name='traj_score')
+        
+        # Variable to save the raw and t scores
+        self.score = tf.Variable(initial_value=elt_placeholder, trainable=False, name='score')
+        self.t_score = tf.Variable(initial_value=elt_placeholder, trainable=False, name='t_score')
+        
+        # Create layer to accumulate losses
+        self.traj_loss= TrajectoryLoss()
 
     def set_orbital_elements_asteroids(self, n0: int):
         """Set a batch of orbital elements with data for a block of asteroids starting at n0"""
@@ -374,9 +377,14 @@ class AsteroidSearchModel(keras.Model):
 
         # raw and t score
         score, t_score = self.traj_score(z, self.R, self.num_obs)
+        self.score.assign(score)
+        self.t_score.assign(t_score)        
+        
+        # add negative t_score to the loss
+        # self.add_loss(self.traj_loss, inputs=self.t_score)
     
-        # Return 
-        return score, t_score
+        # Return
+        return t_score
 
 # ********************************************************************************************************************* 
 # Load asteroid names and orbital elements
@@ -391,7 +399,8 @@ ds = make_synthetic_obs_dataset(n0=n0, n1=n1)
 batch_in, batch_out = list(ds.take(1))[0]
 ts = batch_in['t']
 # Get observed directions
-u_obs_ragged = batch_out['u']
+u_obs_ragged = batch_in['u']
+# Get asteroid numbers for these observations
 ast_num = batch_out['ast_num']
 
 # Get trajectory size
@@ -411,89 +420,4 @@ max_obs: float  = float(u_obs.shape[1])
 # Build model
 model = AsteroidSearchModel(ts=ts, row_lens=row_lens)
 
-
-def test_manual():
-    # Model predicting asteroid direction with batch size 1
-    model_1 = make_model_ast_dir(ts=ts, batch_size=1)
-    model_64 = make_model_ast_dir(ts=ts, batch_size=64)
-    model = model_64
-    batch_size: int = 64
-    
-    # Values to try: first 64 asteroids
-    dtype = np.float32
-    n0: int = 1
-    n1: int = 64
-    mask = (n0 <= ast_elt.Num) & (ast_elt.Num <= n1)
-    
-    # Make input batch
-    a = ast_elt.a[mask].astype(dtype).to_numpy()
-    e = ast_elt.e[mask].astype(dtype).to_numpy()
-    inc = ast_elt.inc[mask].astype(dtype).to_numpy()
-    Omega = ast_elt.Omega[mask].astype(dtype).to_numpy()
-    omega = ast_elt.omega[mask].astype(dtype).to_numpy()
-    f = ast_elt.f[mask].astype(dtype).to_numpy()
-    epoch = ast_elt.epoch_mjd[mask].astype(dtype).to_numpy()
-    
-    # The resolution factor in degrees and radians
-    R_deg: float = 10.0
-    R_rad: float = np.deg2rad(R_deg)
-    # Wrap resolution R into a numpy array
-    R_np = R_rad * np.ones(shape=batch_size, dtype=dtype)
-    R = tf.convert_to_tensor(R_np)
-    
-    # Wrap inputs
-    inputs = {
-        'a': a, 
-        'e': e, 
-        'inc': inc, 
-        'Omega': Omega, 
-        'omega': omega, 
-        'f': f, 
-        'epoch': epoch,
-        'R': R
-    }
-    
-    # Predicted asteroid positions
-    u_pred = model.predict(inputs)
-    
-    # Total number of observations
-    num_obs: float = float(np.sum(u_obs_ragged.row_lengths()))
-    
-    # Pad u_obs into a regular tensor
-    pad_default = np.array([0.0, 0.0, 65536.0])
-    u_obs = u_obs_ragged.to_tensor(default_value=pad_default)
-    max_obs: float  = float(u_obs.shape[1])
-
-    ## The observations; broadcast to shape (1, traj_size, max_obs, 3)
-    #y = tf.broadcast_to(u_obs, (1, traj_size, max_obs, space_dims))
-    ## The predicted directions; reshape to (batch_size, traj_size, 1, 3)
-    #x = tf.reshape(u_pred, (batch_size, traj_size, 1, space_dims))
-    ## The difference in directions; size (batch_size, traj_size, max_obs, 3)
-    #z = y-x
-    ## The scaling coefficient for scores; score = exp(-1/2 A epsilon^2)
-    # A_np = 1.0 / R_np**2
-    ## The coefficient that multiplies epsilon^2
-    #B_np = -0.5 * A_np
-    #B = K.constant(B_np.reshape((batch_size, 1, 1,)))
-    ## Argument to the exponential
-    #arg = tf.multiply(B, tf.linalg.norm(z, axis=-1))
-    ## The score function
-    #score = K.sum(tf.exp(arg), axis=(1,2))
-    # The expected score
-    # mu = num_obs * score_mean(A_np)
-    # The expected variance
-    # sigma2 = num_obs * score_var(A_np)
-    # sigma = np.sqrt(sigma2)
-    ## The t-score
-    #t_score = (score - mu) / sigma
-    
-    # Test custom layers
-    # Difference in between observed and predicted directions
-    z = DirectionDifference(name='direction_difference')(u_obs, u_pred)
-    # raw and t score
-    score, t_score = TrajectoryScore(name='traj_score')(z, R, num_obs)
-    # loss function
-    loss_layer = TrajectoryLoss(num_obs=num_obs, name='traj_loss')
-    loss = loss_layer(z, R)
-    print(f'loss = {loss}')
 

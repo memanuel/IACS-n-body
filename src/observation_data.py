@@ -273,9 +273,9 @@ def make_synthetic_obs_dataset(n0: int, n1: int):
     # Wrap into tensorflow Dataset
     inputs = {
         't' : t, 
+        'u': u,
     }
     outputs = {
-        'u': u,
         'ast_num': ast_num,
     }
     ds = tf.data.Dataset.from_tensors((inputs, outputs))    
