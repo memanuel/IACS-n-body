@@ -238,19 +238,26 @@ def run_batch(n0: int, n1: int) -> None:
     np.savez(fname, t=t, u=u, ast_num=ast_num)
 
 # ********************************************************************************************************************* 
-def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array):
+def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array, batch_size: int = 64):
     """
     Convert t, u, ast_num into ragged tensors
     INPUTS:
         t_np: A numpy array with observation times as MJDs; size (N,)
         u_np: A numpy array with directions as MJDs; size (N,3)
         ast_num_np: A numpy array with the asteroid numbers; size (N,)
+        batch_size: Used to pad end of data set with times having zero observations
     """
     # Unique times and their indices
     t_unq, inv_idx, = np.unique(t_np, return_inverse=True)
+    
+    # Pad t_unq with extra times so it has an even multiple of batch_size
+    data_size: int = t_unq.shape[0]
+    num_pad: int = -data_size % batch_size
+    t_unq = np.pad(t_unq, pad_width=(0,num_pad), mode='constant')
+    t_unq[data_size:] = t_unq[data_size-1] + np.arange(num_pad)
 
     # The row IDs for the ragged tensorflow are what numpy calls the inverse indices    
-    value_rowids = inv_idx    
+    value_rowids = inv_idx 
 
     # Tensor with distinct times
     t = tf.convert_to_tensor(value=t_unq)
@@ -262,31 +269,44 @@ def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array):
     return t, u, ast_num
 
 # ********************************************************************************************************************* 
-def make_synthetic_obs_dataset(n0: int, n1: int):
+def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int = 64):
     """Create a tf.Dataset with synthetic data"""
-    # Load data up asteroid number n1
+    # Load data between asteroid numbers n0 and n1
     t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1)
     
     # Convert to tensors (regular for t, ragged for u and ast_num)
     t, u_r, ast_num_r = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np)
-    
+
+    # Number of entries to pad at the end so batches all divisible by batch_size    
+    num_pad = t.shape[0] - u_r.shape[0]
+
     # Get row lengths
-    row_len = u_r.row_lengths()
+    row_len = tf.cast(u_r.row_lengths(), tf.int32)
+    # Pad row len with zeros for the last batch
+    row_len = tf.pad(row_len, paddings=[[0,num_pad]], mode='CONSTANT', constant_values=0)
     
     # Pad u_r into a regular tensor
     pad_default = np.array([0.0, 0.0, 65536.0])
     u = u_r.to_tensor(default_value=pad_default)
     
+    # Pad u with entries for the last batch
+    pad_shape_u = [[0,num_pad], [0,0], [0,0]]
+    u = tf.pad(u, paddings=pad_shape_u, mode='CONSTANT', constant_values=65536.0)
+        
     # Alias array of times to ts; it is a separate output
     ts = t
     
     # Pad ast_num_r into a regular tensor; use default -1 to indicate padded observation
     ast_num = ast_num_r.to_tensor(default_value=-1)
     
+    # Pad ast_num with entries for the last batch
+    pad_shape_ast_num = [[0,num_pad],[0,0]]
+    ast_num = tf.pad(ast_num, paddings=pad_shape_ast_num, mode='CONSTANT', constant_values=-1)
+    
     # Wrap into tensorflow Dataset
     inputs = {
-        't' : t, 
-        'u': u, 
+        't': t, 
+        'u_obs': u, 
         'row_len': row_len,
     }
     outputs = {
@@ -294,19 +314,22 @@ def make_synthetic_obs_dataset(n0: int, n1: int):
     }
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))
     
-    # Return the dataset as well as the time array
-    return ds, ts
+    # Batch the dataset
+    drop_remainder: bool = True    
+    ds = ds.batch(batch_size, drop_remainder=drop_remainder)
+    # Return the dataset as well as tensors with the time snapshots and row lengths
+    return ds, ts, row_len
 
-# ********************************************************************************************************************* 
-def make_synthetic_obs_tensors(n0: int, n1: int):
-    """Create tensors t, u, ast_num for the specified asteroid numbers"""
-    # Load data up asteroid number n1
-    t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1)
-    
-    # Convert to tensors (regular for t, ragged for u and ast_num)
-    t, u, ast_num = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np)
-    
-    return t, u, ast_num
+## ********************************************************************************************************************* 
+#def make_synthetic_obs_tensors(n0: int, n1: int):
+#    """Create tensors t, u, ast_num for the specified asteroid numbers"""
+#    # Load data up asteroid number n1
+#    t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1)
+#    
+#    # Convert to tensors (regular for t, ragged for u and ast_num)
+#    t, u, ast_num = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np)
+#    
+#    return t, u, ast_num
 
 # ********************************************************************************************************************* 
 def main():
@@ -320,7 +343,7 @@ def main():
 # ********************************************************************************************************************* 
 def test_ragged_tensors():
     t_np, u_np, ast_num_np = load_synthetic_obs_data(n1=10)
-    t, u, ast_num = make_synthetic_obs_tensors(t_np, u_np, ast_num_np)
+    # t, u, ast_num = make_synthetic_obs_tensors(t_np, u_np, ast_num_np)
 
 # ********************************************************************************************************************* 
 def test_synthetic_dataset():
@@ -334,4 +357,4 @@ if __name__ == '__main__':
 
 # test_synthetic_dataset()
 
-ds, ts = make_synthetic_obs_dataset(1, 10)
+ds, ts, row_len = make_synthetic_obs_dataset(1, 10)

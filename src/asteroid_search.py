@@ -14,10 +14,11 @@ from tensorflow.python.keras import backend as K
 import numpy as np
 
 # Local imports
-from asteroids import load_data as load_data_asteroids
+from asteroid_integrate import load_data as load_data_asteroids
 from observation_data import make_synthetic_obs_dataset, random_direction
 # from observation_data import make_synthetic_obs_tensors
-from asteroid_model import make_model_ast_dir
+from asteroid_data import orbital_element_batch
+from asteroid_model import make_model_ast_dir, make_model_ast_pos
 from tf_utils import Identity
 
 # Aliases
@@ -267,20 +268,20 @@ class TrajectoryLoss(keras.losses.Loss):
 
 # ********************************************************************************************************************* 
 class AsteroidSearchModel(keras.Model):
-    def __init__(self, ts: np.array, row_lens, 
+    def __init__(self, ts: np.array, row_len, 
                  batch_size: int = 64, R_deg: float=10.0, **kwargs):
         super(AsteroidSearchModel, self).__init__(**kwargs)
 
         # Save input arguments
-        # self.ts = ts
+        self.ts = ts
         self.batch_size = batch_size
         self.R_deg = R_deg
-        self.row_lens = row_lens
+        self.row_len = row_len
         
         # The trajectory size
         self.traj_size = ts.shape[0]
         # Total number of observations; cast to tf.float32 type for compatibility with score
-        self.num_obs = tf.cast(tf.reduce_sum(row_lens), tf.float32)
+        self.num_obs = tf.cast(tf.reduce_sum(row_len), tf.float32)
         
         # Load asteroid names and orbital elements
         self.ast_elt = load_data_asteroids()
@@ -320,19 +321,18 @@ class AsteroidSearchModel(keras.Model):
         self.model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
         
         # Create variable to store the predicted directions
-        # u_pred_shape = shape=(batch_size, traj_size, space_dims)
-        self.u_pred = tf.Variable(initial_value=self.model_ast_dir.predict(self.inputs_ast_dir),
-                                  trainable=False, name='u_pred')
+        u_pred_shape = shape=(batch_size, traj_size, space_dims)
+        self.u_pred = tf.Variable(initial_value=self.model_ast_dir.predict(self.inputs_ast_dir), trainable=False, name='u_pred')
         
         # Create layer to score trajectories
-        self.traj_score = TrajectoryScore(batch_size=self.batch_size, name='traj_score')
+        # self.traj_score = TrajectoryScore(batch_size=self.batch_size, name='traj_score')
         
         # Variable to save the raw and t scores
-        self.score = tf.Variable(initial_value=elt_placeholder, trainable=False, name='score')
-        self.t_score = tf.Variable(initial_value=elt_placeholder, trainable=False, name='t_score')
+        # self.score = tf.Variable(initial_value=elt_placeholder, trainable=False, name='score')
+        # self.t_score = tf.Variable(initial_value=elt_placeholder, trainable=False, name='t_score')
         
         # Create layer to accumulate losses
-        self.traj_loss= TrajectoryLoss()
+        # self.traj_loss= TrajectoryLoss()
 
     def set_orbital_elements_asteroids(self, n0: int):
         """Set a batch of orbital elements with data for a block of asteroids starting at n0"""
@@ -359,32 +359,148 @@ class AsteroidSearchModel(keras.Model):
         """
         # Predict asteroid positions and directions from earth;
         # update u_pred in place with the results
-        self.u_pred.assign(self.model_ast_dir.predict(self.inputs_ast_dir))
+        u_pred = self.model_ast_dir.predict_on_batch(self.inputs_ast_dir)
+        # self.u_pred.assign(u_pred)
+        
+        # Predict asteroid directions from earth with current orbital elements
+        # return self.model_ast_dir.predict_on_batch(self.inputs_ast_dir)
+        # return self.model_ast_dir.predict_on_batch((self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch))
 
-    def __call__(self, inputs):
+    def call(self, inputs):
         """
         Compute orbits and implied directions for one batch of orbital element parameters.
         Score the predicted directions with the current resolution settings.
         """
         # Unpack the inputs
-        u_obs = inputs
+        # t, u_obs, row_len = inputs
+        t = inputs['t']
+        u_obs = inputs['u_obs']
+        row_len = inputs['row_len']
+                
+        # Debug problem in predict_directions()
+        self.predict_directions()
+        
+        # model_ast_dir = make_model_ast_dir(ts=self.ts, batch_size=self.batch_size)
+        # inputs_ast_dir = self.inputs_ast_dir  
+        # u_pred = model_ast_dir.predict_directions(inputs_ast_dir)
+        
+        # **** original calculation
         
         # Predicted asteroid positions
-        self.predict_directions()
+        # self.predict_directions()
 
         # Difference in between observed and predicted directions
-        z = DirectionDifference(name='direction_difference')(u_obs, self.u_pred)
+        # z = DirectionDifference(name='direction_difference')(u_obs, self.u_pred)
 
         # raw and t score
-        score, t_score = self.traj_score(z, self.R, self.num_obs)
-        self.score.assign(score)
-        self.t_score.assign(t_score)        
+        # score, t_score = self.traj_score(z, self.R, self.num_obs)
+        # self.score.assign(score)
+        # self.t_score.assign(t_score)        
         
         # add negative t_score to the loss
         # self.add_loss(self.traj_loss, inputs=self.t_score)
     
         # Return
-        return t_score
+        # return t_score
+        return t
+
+# ********************************************************************************************************************* 
+class PredictedDirection(keras.layers.Layer):
+    """Custom layer to predict directions from orbital elements."""
+    def __init__(self, ts, elts_np: dict, batch_size: int, **kwargs):
+        super(PredictedDirection, self).__init__(**kwargs)
+        self.a = tf.Variable(initial_value=elts_np['a'], trainable=True, name='a')
+        self.e = tf.Variable(initial_value=elts_np['e'], trainable=True, name='e')
+        self.inc = tf.Variable(initial_value=elts_np['inc'], trainable=True, name='inc')
+        self.Omega = tf.Variable(initial_value=elts_np['Omega'], trainable=True, name='Omega')
+        self.omega = tf.Variable(initial_value=elts_np['omega'], trainable=True, name='omega')
+        self.f = tf.Variable(initial_value=elts_np['f'], trainable=True, name='f')
+
+        # The epoch is not trainable
+        self.epoch = tf.Variable(initial_value=elts_np['epoch'], trainable=False, name='epoch')
+
+        # Dictionary wrapping inputs for the asteroid direction model
+        self.inputs_ast_dir = {
+            'a': self.a,
+            'e': self.e,
+            'inc': self.inc,
+            'Omega': self.Omega,
+            'omega': self.omega,
+            'f': self.f,
+            'epoch': self.epoch,        
+        }                
+
+        # Create a layer to compute directions from orbital elements at these times
+        self.model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
+        
+    def call(self, inputs):
+        """Predict directions with the current orbital elements"""
+        return self.model_ast_dir(self.inputs_ast_dir)
+        
+# ********************************************************************************************************************* 
+class OrbitalElements(keras.layers.Layer):
+    """Custom layer to maintain state of orbital elements."""
+    def __init__(self, elts_np: dict, batch_size: int, **kwargs):
+        super(OrbitalElements, self).__init__(**kwargs)
+        self.a = tf.Variable(initial_value=elts_np['a'], trainable=True, name='a')
+        self.e = tf.Variable(initial_value=elts_np['e'], trainable=True, name='e')
+        self.inc = tf.Variable(initial_value=elts_np['inc'], trainable=True, name='inc')
+        self.Omega = tf.Variable(initial_value=elts_np['Omega'], trainable=True, name='Omega')
+        self.omega = tf.Variable(initial_value=elts_np['omega'], trainable=True, name='omega')
+        self.f = tf.Variable(initial_value=elts_np['f'], trainable=True, name='f')
+
+        # The epoch is not trainable
+        self.epoch = tf.Variable(initial_value=elts_np['epoch'], trainable=False, name='epoch')
+
+    def call(self, inputs):
+        """Predict directions with the current orbital elements"""
+        return self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch
+
+# ********************************************************************************************************************* 
+def make_model_asteroid_search(ts: tf.Tensor, max_obs: int, batch_size: int = 64):
+    """Make functional API model for scoring elements"""
+    traj_size: int = ts.shape[0]
+    space_dims: int = 3
+    
+    # Inputs
+    t = keras.Input(shape=(1,), name='t')
+    u_obs = keras.Input(shape=(max_obs, space_dims), name='u_obs')
+
+    # Direction model
+    model_ast_pos = make_model_ast_dir(ts=ts, batch_size=batch_size)
+    model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
+    
+    # Orbital elements to try
+    elts_np = orbital_element_batch(1)
+    
+    # Change to elements
+    # da = keras.layers.Dense(units=1, use_bias=False, kernel_initializer='ones', name='a')(1.0)
+
+    # Orbital elements layer
+    elts = OrbitalElements(elts_np=elts_np, batch_size=batch_size, name='elts')(t)
+    # Unpack orbital elements
+    a, e, inc, Omega, omega, f, epoch = elts
+    # Name the elements
+    a = Identity(name='a')(a)
+    e = Identity(name='e')(e)
+    inc = Identity(name='inc')(inc)
+    Omega = Identity(name='Omega')(Omega)
+    omega = Identity(name='omega')(omega)
+    f = Identity(name='f')(f)
+    epoch = Identity(name='epoch')(epoch)
+   
+    # Compute asteroid directions
+    # u_pred = model_ast_dir.predict_on_batch((a, e, inc, Omega, omega, f, epoch))
+    q_pred = model_ast_pos.predict_on_batch((a, e, inc, Omega, omega, f, epoch))
+
+    # Wrap inputs and outputs
+    inputs = (t, u_obs,)
+    outputs = (q_pred,)
+
+    # Create model with functional API    
+    model = keras.Model(inputs=inputs, outputs=outputs)
+
+    return model
 
 # ********************************************************************************************************************* 
 # Load asteroid names and orbital elements
@@ -393,31 +509,45 @@ ast_elt = load_data_asteroids()
 # Dataset of observations: synthetic data on first 1000 asteroids
 n0: int = 1
 # n1: int = 1000
-n1: int = 100
-ds = make_synthetic_obs_dataset(n0=n0, n1=n1)
-# Get reference times
+n1: int = 10
+ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1)
+# Get example batch
 batch_in, batch_out = list(ds.take(1))[0]
-ts = batch_in['t']
-# Get observed directions
-u_obs_ragged = batch_in['u']
-# Get asteroid numbers for these observations
-ast_num = batch_out['ast_num']
+# Contents of this batch
+t = batch_in['t']
+u_obs = batch_in['u_obs']
+row_len = batch_in['row_len']
 
 # Get trajectory size
+batch_size: int = t.shape[0]
 traj_size: int = ts.shape[0]
+max_obs: int = u_obs.shape[1]
 space_dims: int = 3
 
-# Row lengths
-row_lens = u_obs_ragged.row_lengths()
 # Total number of observations
-num_obs: float = float(np.sum(row_lens))
+num_obs: float = float(np.sum(row_len))
 
-# Pad u_obs into a regular tensor
-pad_default = np.array([0.0, 0.0, 65536.0])
-u_obs = u_obs_ragged.to_tensor(default_value=pad_default)
-max_obs: float  = float(u_obs.shape[1])
+# Direction model
+# model_ast_pos = make_model_ast_pos(ts=ts, batch_size=batch_size)
+# model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
 
 # Build model
-model = AsteroidSearchModel(ts=ts, row_lens=row_lens)
+# model = AsteroidSearchModel(ts=ts, row_len=row_len)
+# mt = TestModel(ts=ts, row_len=row_len)
 
+# debug asteroid direction calculation
+# model.predict_directions()
+# u_pred = model.u_pred
 
+# Predict real model
+# pred_batch = model.predict_on_batch(batch_in)
+# pred = model.predict(ds)
+
+# Build functional model for asteroid score
+elts_np = orbital_element_batch(1)
+model = make_model_asteroid_search(ts, max_obs, batch_size)
+u_pred_batch = model.predict_on_batch(batch_in)
+u_pred = model.predict(ds)
+
+# model.compile(loss={'a':tf.losses.MeanSquaredError()})
+# model.evaluate(ds)

@@ -274,6 +274,36 @@ def make_dataset_ast_dir(n0: int, num_files: int):
     return combine_datasets_dir(n0=n0, n1=n1, progbar=progbar)
 
 # ********************************************************************************************************************* 
+def orbital_element_batch(n0: int, batch_size: int=64):
+    """Return a batch of orbital elements"""
+    # Get start and end index location of this asteroid number
+    i0: int = ast_elt.index.get_loc(n0)
+    i1: int = i0 + batch_size
+    
+    # The orbital elements and epoch
+    dtype = np.float32
+    a = ast_elt.a[i0:i1].to_numpy().astype(dtype)
+    e = ast_elt.e[i0:i1].to_numpy().astype(dtype)
+    inc = ast_elt.inc[i0:i1].to_numpy().astype(dtype)
+    Omega = ast_elt.Omega[i0:i1].to_numpy().astype(dtype)
+    omega = ast_elt.omega[i0:i1].to_numpy().astype(dtype)
+    f = ast_elt.f[i0:i1].to_numpy().astype(dtype)
+    epoch = ast_elt.epoch_mjd[i0:i1].to_numpy().astype(dtype)
+    
+    # Wrap into dictionary
+    elts = {
+        'a': a,
+        'e': e,
+        'inc': inc,
+        'Omega': Omega,
+        'omega': omega,
+        'f': f,
+        'epoch': epoch
+    }
+    
+    return elts
+
+# ********************************************************************************************************************* 
 # Attempts to get the entire dataset into one object
 # ********************************************************************************************************************* 
 

@@ -153,7 +153,7 @@ class ArcCos2(keras.layers.Layer):
     Follows function acos2 in rebound tools.c
     """
     
-    @tf.function
+    # @tf.function
     def call(self, inputs):
         # Unpack inputs
         x, r, y = inputs
@@ -434,7 +434,7 @@ class MeanToEccentricAnomaly(keras.layers.Layer):
     Use iterative method with 10 steps of Newton-Raphson.
     """
     
-    @tf.function
+    # @tf.function
     def call(self, inputs):
         # Unpack inputs
         M, e = inputs
@@ -464,7 +464,7 @@ class MeanToTrueAnomaly(keras.layers.Layer):
     Convert the mean anomaly M to the true anomaly f given the eccentricity e.
     """
     
-    @tf.function
+    # @tf.function
     def call(self, inputs):
         # Unpack inputs
         M, e = inputs
@@ -494,7 +494,7 @@ class EccentricToMeanAnomaly(keras.layers.Layer):
     Convert the eccentric anomaly E to the true anomaly M given the eccentricity e.
     """
     
-    @tf.function
+    # @tf.function
     def call(self, inputs):
         # Unpack inputs
         E, e = inputs
@@ -516,7 +516,7 @@ class TrueToEccentricAnomaly(keras.layers.Layer):
     Convert the true anomaly f to the eccentric anomaly E given the eccentricity e.
     """
     
-    @tf.function
+    # @tf.function
     def call(self, inputs):
         # Unpack inputs
         f, e = inputs
@@ -544,7 +544,7 @@ class TrueToMeanAnomaly(keras.layers.Layer):
     Convert the true anomaly f to the mean anomaly M given the eccentricity e.
     """
     
-    @tf.function
+    # @tf.function
     def call(self, inputs):
         # Unpack inputs
         f, e = inputs
