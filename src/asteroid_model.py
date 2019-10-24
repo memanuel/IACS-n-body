@@ -15,7 +15,7 @@ import numpy as np
 # Local imports
 from tf_utils import Identity
 from orbital_element import make_model_elt_to_pos, MeanToTrueAnomaly, TrueToMeanAnomaly
-from asteroid_data import make_dataset_ast_pos, make_dataset_ast_dir, get_earth_pos
+from asteroid_data import make_dataset_ast_pos, make_dataset_ast_dir, get_earth_pos, orbital_element_batch
 
 # Aliases
 keras = tf.keras
@@ -67,7 +67,7 @@ class AsteroidPosition(keras.layers.Layer):
         target_shape = (-1, 1)
         # print(f'ts.shape = {ts.shape}')
         # First repeat ts batch_size times; now size is (traj_size, batch_size, 1)
-        t_rep= keras.layers.RepeatVector(n=batch_size, name='ts_rep')(keras.backend.reshape(ts, target_shape))
+        t_rep= keras.layers.RepeatVector(n=batch_size, name='ts_rep')(keras.backend.reshape(t, target_shape))
         # print(f't_rep.shape = {t_rep.shape}')
         # Transpose axes to make shape (batch_size, traj_size, 1)
         t_vec = tf.transpose(t_rep, perm=(1,0,2))
@@ -132,13 +132,7 @@ def make_model_ast_pos(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
         ts: times to evaluate asteroid position in heliocentric coordinates
         batch_size: defaults to None for variable batch size
     """
-    # Adjust batch size for the number of GPUs
-    # batch_size=batch_size*num_gpus
-    
-    # Get trajectory size from ts
-    traj_size: int = ts.shape[0]
-
-    # Inputs: 6 orbital elements; epoch; ts (output times as MJD)
+    # Inputs: 6 orbital elements; epoch;
     a = keras.Input(shape=(), batch_size=batch_size, name='a')
     e = keras.Input(shape=(), batch_size=batch_size, name='e')
     inc = keras.Input(shape=(), batch_size=batch_size, name='inc')
@@ -150,76 +144,21 @@ def make_model_ast_pos(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     # Wrap these up into one tuple of inputs for the model
     inputs = (a, e, inc, Omega, omega, f, epoch)
     
-    # The gravitational field strength
-    mu = tf.constant(G_)
-    
-    # Compute eccentric anomaly E from f and e
-    M = TrueToMeanAnomaly(name='TrueToMeanAnomaly')([f, e])
-    
-    # Compute mean motion N from mu and a
-    a3 = tf.math.pow(a, 3, name='a3')
-    mu_over_a3 = tf.divide(mu, a3, name='mu_over_a3')
-    N = tf.sqrt(mu_over_a3, name='N')
-    
-    # Reshape t to (batch_size, traj_size, 1)
-    target_shape = (-1, 1)
-    # print(f'ts.shape = {ts.shape}')
-    # First repeat ts batch_size times; now size is (traj_size, batch_size, 1)
-    t_rep= keras.layers.RepeatVector(n=batch_size, name='ts_rep')(keras.backend.reshape(ts, target_shape))
-    # print(f't_rep.shape = {t_rep.shape}')
-    # Transpose axes to make shape (batch_size, traj_size, 1)
-    t_vec = tf.transpose(t_rep, perm=(1,0,2))
-    # print(f't_vec.shape = {t_vec.shape}')
-    # Reshape epoch to (batch_size, traj_size, 1)
-    epoch_vec = keras.layers.RepeatVector(n=traj_size, name='epoch_vec')(keras.backend.reshape(epoch, target_shape))
-    
-    # Subtract epoch from t_vec; now it is relative to the epoch
-    t_vec = t_vec - epoch_vec
-    
-    # ******************************************************************
-    # Predict orbital elements over time
-    
-    # Repeat the constant orbital elements to be vectors of shape (batch_size, traj_size, 1)
-    target_shape = (-1, 1)
-    a_t = keras.layers.RepeatVector(n=traj_size, name='a_t')(keras.backend.reshape(a, target_shape))
-    e_t = keras.layers.RepeatVector(n=traj_size, name='e_t')(keras.backend.reshape(e, target_shape))
-    inc_t = keras.layers.RepeatVector(n=traj_size, name='inc_t')(keras.backend.reshape(inc, target_shape))
-    Omega_t = keras.layers.RepeatVector(n=traj_size, name='Omega_t')(keras.backend.reshape(Omega, target_shape))
-    omega_t = keras.layers.RepeatVector(n=traj_size, name='omega_t')(keras.backend.reshape(omega, target_shape))
-    # Repeat the gravitational field strength to vector of shape (batch_size, traj_size)
-    mu_t = keras.layers.RepeatVector(n=traj_size, name='mu_t')(keras.backend.reshape(mu, (1, 1)))
-    
-    # Repeat initial mean anomaly M0 and mean motion N0 to match shape of outputs
-    M0_t = keras.layers.RepeatVector(n=traj_size, name='M0_t')(keras.backend.reshape(M, target_shape))
-    N0_t = keras.layers.RepeatVector(n=traj_size, name='N0_t')(keras.backend.reshape(N, target_shape))
-    # Compute the mean anomaly M(t) as a function of time
-    N_mult_t = keras.layers.multiply(inputs=[N0_t, t_vec])
-    M_t = keras.layers.add(inputs=[M0_t, N_mult_t])
+    # Output times are a constant
+    t = keras.backend.constant(ts, name='t')
 
-    # Compute the true anomaly from the mean anomly and eccentricity
-    f_t = MeanToTrueAnomaly(name='mean_to_true_anomaly')([M_t, e_t])
-
-    # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
-    elt_t = (a_t, e_t, inc_t, Omega_t, omega_t, f_t, mu_t,)
-    
-    # ******************************************************************
-    # Convert orbital elements to cartesian coordinates 
-    
-    # Model mapping orbital elements to cartesian coordinates
-    model_e2c = make_model_elt_to_pos(batch_size=batch_size)
-
-    # Convert from orbital elements to cartesian coordinates (position only)
-    q = model_e2c(elt_t)
+    # Call asteroid position layer
+    q = AsteroidPosition(batch_size)(t, a, e, inc, Omega, omega, f, epoch)
     
     # Name the outputs
     q = Identity(name='q')(q)
     # v = Identity(name='v')(v)
     
     # Wrap up the outputs
-    # outputs = (q,)
+    outputs = (q,)
 
     # Wrap this into a model
-    model = keras.Model(inputs=inputs, outputs=q, name='model_asteroid_pos')
+    model = keras.Model(inputs=inputs, outputs=outputs, name='model_asteroid_pos')
     return model
 
 
@@ -296,9 +235,20 @@ def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     # Name the outputs
     u = Identity(name='u')(u)
     
+    # Wrap the outputs
+    outputs = (u,)
+    
     # Wrap this into a model
-    model = keras.Model(inputs=inputs, outputs=u, name='model_asteroid_dir')
+    model = keras.Model(inputs=inputs, outputs=outputs, name='model_asteroid_dir')
     return model
+
+# ********************************************************************************************************************* 
+def test_ast_pos_layer():
+    """Test custom layer for asteroid positions"""
+    ast_pos_layer = AsteroidPosition(batch_size=64)
+    ts = np.arange(51544, 58744, dtype=np.float32)
+    a,e,inc,Omega,omega,f, epoch = orbital_element_batch(1).values()
+    q_ast = ast_pos_layer(ts,a,e,inc,Omega,omega,f,epoch)
 
 # ********************************************************************************************************************* 
 def test_ast_pos() -> bool:
@@ -362,10 +312,4 @@ def main():
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
-    pass
 
-#ast_pos_layer = AsteroidPosition(batch_size=64)
-#from asteroid_data import orbital_element_batch
-#ts = np.arange(51544, 58744, dtype=np.float32)
-#a,e,inc,Omega,omega,f, epoch = orbital_element_batch(1).values()
-#q_ast = ast_pos_layer(ts,a,e,inc,Omega,omega,f,epoch)
