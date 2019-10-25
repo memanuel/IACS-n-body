@@ -311,10 +311,10 @@ def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int= None):
     # Wrap into tensorflow Dataset
     inputs = {
         't': t, 
-        'u_obs': u, 
         'row_len': row_len,
     }
     outputs = {
+        'u': u, 
         'ast_num': ast_num,
     }
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))

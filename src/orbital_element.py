@@ -13,7 +13,12 @@ import rebound
 import numpy as np
 
 # Local imports
+from utils import range_inc
 from tf_utils import Identity
+
+# ********************************************************************************************************************* 
+# Set autograph logging verbosity
+tf.autograph.set_verbosity(0)
 
 # ********************************************************************************************************************* 
 # The gravitational constant in unit system (years, AU, Msun)
@@ -153,12 +158,11 @@ class ArcCos2(keras.layers.Layer):
     Follows function acos2 in rebound tools.c
     """
     
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         # Unpack inputs
         x, r, y = inputs
         # Return the arc cosine with the appropriate sign
-        # return tf.acos(x / r) * tf.math.sign(y)
         cosine = tf.clip_by_value(x / r, -1.0, 1.0)
         return tf.acos(cosine) * tf.math.sign(y)
 
@@ -167,7 +171,12 @@ class ArcCos2(keras.layers.Layer):
     
 # ********************************************************************************************************************* 
 class OrbitalElementToPosition(keras.layers.Layer):
-    
+    """
+    Convert 6 orbital elements to a position.  
+    There is a similar layer ElementToPosition in asteroid_model.py.
+    It's separate for historical reasons to avoid breaking dependencies.
+    This version outputs 3 separate components; that version outputs a vector with 3 in its last axis.
+    """
     def call(self, inputs):
         """Compute position q from orbital elements (a, e, inc, Omega, omega, f)"""
         # Unpack inputs
@@ -216,6 +225,9 @@ class OrbitalElementToPosition(keras.layers.Layer):
 
 # ********************************************************************************************************************* 
 class OrbitalElementToConfig(keras.layers.Layer):
+    """
+    Convert 6 orbital elements to a configuration (position, velocity); acceleration is an optional output.  
+    """
     def __init__(self, include_accel:bool = False, **kwargs):
         super(OrbitalElementToConfig, self).__init__(**kwargs)
         self.include_accel = include_accel
@@ -428,13 +440,51 @@ class ConfigToOrbitalElement(keras.layers.Layer):
         return dict()
 
 # ********************************************************************************************************************* 
+class MeanToEccentricAnomalyIteration(keras.layers.Layer):
+    """
+    Perform a single iteration in solving Kepler's Equation for E given M and e
+    Inputs are (M, E, f, e)
+    """
+    
+    def __init__(self, shape, **kwargs):
+        super(MeanToEccentricAnomalyIteration, self).__init__(**kwargs)
+        self.shape = shape
+
+    @tf.function
+    def call(self, M, e, E, F):
+        """Inputs: (M, e, E, F)"""
+        # Unpack inputs
+        # M, e, E, F = inputs
+        
+        # One step of Newton's Method
+        # E = E - F / (1.0 - e * tf.cos(E))
+        cos_E = keras.layers.Activation(activation=tf.cos, name='cos_E')(E)
+        e_cos_E = keras.layers.multiply([e, cos_E], name='e_cos_E')
+        one = tf.broadcast_to(1.0, self.shape)
+        one_minus_e_cos_E = keras.layers.subtract([one, e_cos_E], name='one_minus_e_cos_E')
+        delta_E = tf.divide(F, one_minus_e_cos_E, name='delta_E')
+        E = keras.layers.subtract([E, delta_E], name='E')
+
+        # The new error term
+        # F = E - e * tf.sin(E) - M
+        sin_E = keras.layers.Activation(activation=tf.sin, name='sin_E')(E)
+        e_sin_E = keras.layers.multiply([e, sin_E], name='e_sin_E')
+        e_sin_E_plus_M = keras.layers.add([e_sin_E, M], name='e_sin_E_plus_M')
+        F = keras.layers.subtract([E, e_sin_E_plus_M], name='F')
+
+        return E, F
+        
+    def get_config(self):
+        return dict()
+
+# ********************************************************************************************************************* 
 class MeanToEccentricAnomaly(keras.layers.Layer):
     """
     Convert the mean anomaly M to the eccentric anomaly E given the eccentricity e.
     Use iterative method with 10 steps of Newton-Raphson.
     """
     
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         # Unpack inputs
         M, e = inputs
@@ -445,29 +495,27 @@ class MeanToEccentricAnomaly(keras.layers.Layer):
         # Initial error; from Kepler's equation M = E - e sin(E)
         # F = E - e * tf.sin(E) - M
         sin_E = keras.layers.Activation(activation=tf.sin, name='sin_E')(E)
-        e_sin_E = tf.multiply(e, sin_E, name='e_sin_E')
-        e_sin_E_plus_M = tf.add(e_sin_E, M, name='e_sin_E_plus_M')
-        F = tf.subtract(E, e_sin_E_plus_M, name='F')
-        
-        # Iterate to improve E; trial and error shows 10 enough for single precision convergence
-        for i in range(1, 11):
-            # One step of Newton's Method
-            # E = E - F / (1.0 - e * tf.cos(E))
-            cos_E = tf.cos(E, name='cos_E')
-            e_cos_E = tf.multiply(e, cos_E, name='e_cos_E')
-            one_minus_e_cos_E = tf.subtract(tf.constant(1.0), e_cos_E, name=f'one_minus_e_cos_E_it_{i}')
-            delta_E = tf.divide(F, one_minus_e_cos_E, name=f'delta_E_it_{i}')
-            E = tf.subtract(E, delta_E, name=f'E_it_{i}')
+        e_sin_E = keras.layers.multiply([e, sin_E], name='e_sin_E')
+        e_sin_E_plus_M = keras.layers.add([e_sin_E, M], name='e_sin_E_plus_M')
+        F = keras.layers.subtract([E, e_sin_E_plus_M], name='F')
 
-            # The new error term
-            # F = E - e * tf.sin(E) - M
-            sin_E = keras.layers.Activation(activation=tf.sin, name=f'sin_E_it{i}')(E)
-            e_sin_E = tf.multiply(e, sin_E, name=f'e_sin_E_it_{i}')
-            e_sin_E_plus_M = tf.add(e_sin_E, M, name=f'e_sin_E_plus_M_it_{i}')
-            F = tf.subtract(E, e_sin_E_plus_M, name=f'F_it_{i}')
+        # Iterate to improve E; trial and error shows 10 iterations enough for single precision convergence
+        # Put the iterations inline so AutoGraph can convert it to a graph
+        shape = M.shape
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_1')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_2')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_3')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_4')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_5')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_6')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_7')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_8')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_9')(M, e, E, F)
+        E, F = MeanToEccentricAnomalyIteration(shape=shape, name='M2E_it_10')(M, e, E, F)
 
         return E
-        
+
+
     def get_config(self):
         return dict()
 
@@ -477,7 +525,7 @@ class MeanToTrueAnomaly(keras.layers.Layer):
     Convert the mean anomaly M to the true anomaly f given the eccentricity e.
     """
     
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         # Unpack inputs
         M, e = inputs
@@ -487,17 +535,20 @@ class MeanToTrueAnomaly(keras.layers.Layer):
         
         # Compute the true anomaly from E
         # return 2.0*tf.math.atan(tf.sqrt((1.0+e)/(1.0-e))*tf.math.tan(0.5*E))
-        one_plus_e = tf.add(tf.constant(1.0), e, name='one_plus_e')
-        one_minus_e = tf.subtract(tf.constant(1.0), e, name='one_minus_e')
+        one = tf.broadcast_to(1.0, M.shape)
+        one_plus_e = keras.layers.add([one, e], name='one_plus_e')
+        one_minus_e = keras.layers.subtract([one, e], name='one_minus_e')
         ecc_ratio = tf.divide(one_plus_e, one_minus_e, name='ecc_ratio')
-        sqrt_ecc_ratio = tf.sqrt(ecc_ratio, name='sqrt_ecc_ratio')
-        half_E = tf.multiply(tf.constant(0.5), E, name='half_E')
-        tan_half_E = tf.math.tan(half_E, name='tan_half_E')
-        tan_half_theta = tf.multiply(sqrt_ecc_ratio, tan_half_E, name='tan_half_theta')
-        half_theta = tf.math.atan(tan_half_theta, name='half_theta')
-        theta = tf.multiply(tf.constant(2.0), half_theta, name='theta')
+        sqrt_ecc_ratio = keras.layers.Activation(activation=tf.sqrt, name='sqrt_ecc_ratio') (ecc_ratio)
+        half = tf.broadcast_to(0.5, M.shape)
+        half_E = keras.layers.multiply([half, E], name='half_E')
+        tan_half_E = keras.layers.Activation(activation=tf.math.tan, name='tan_half_E')(half_E)
+        tan_half_theta = keras.layers.multiply([sqrt_ecc_ratio, tan_half_E], name='tan_half_theta')
+        half_theta = keras.layers.Activation(activation=tf.math.atan, name='half_theta')(tan_half_theta)
+        two = tf.broadcast_to(2.0, M.shape)
+        theta = keras.layers.multiply([two, half_theta], name='theta')
         return theta
-        
+
     def get_config(self):
         return dict()
 
@@ -507,17 +558,16 @@ class EccentricToMeanAnomaly(keras.layers.Layer):
     Convert the eccentric anomaly E to the true anomaly M given the eccentricity e.
     """
     
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         # Unpack inputs
         E, e = inputs
         
         # Compute the mean anomaly from E using Kepler's Equation
         # M = E - e sin(E)
-        # M = E - e * tf.sin(E)
-        sin_E = tf.sin(E, name='sin_E')
-        e_sin_E = tf.multiply(e, sin_E, name='e_sin_E')
-        M = tf.subtract(E, e_sin_E, name='M')
+        sin_E = keras.layers.Activation(activation=tf.sin, name='sin_E')(E)
+        e_sin_E = keras.layers.multiply([e, sin_E], name='e_sin_E')
+        M = keras.layers.subtract([E, e_sin_E], name='M')
         return M
         
     def get_config(self):
@@ -529,21 +579,24 @@ class TrueToEccentricAnomaly(keras.layers.Layer):
     Convert the true anomaly f to the eccentric anomaly E given the eccentricity e.
     """
     
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         # Unpack inputs
         f, e = inputs
         # Compute the eccentric anomaly E
         # https://en.wikipedia.org/wiki/Eccentric_anomaly
-        cos_f = tf.cos(f, name = 'cos_f')
-        e_cos_f = tf.multiply(e, cos_f, name = 'e_cos_f')
-        denom = tf.add(tf.constant(1.0), e_cos_f, name = 'denom')
-        cos_E_num = tf.add(e, cos_f, name = 'cos_E_num')
+        cos_f = keras.layers.Activation(activation=tf.cos, name='cos_f')(f)
+        e_cos_f = keras.layers.multiply([e, cos_f], name = 'e_cos_f')
+        one = tf.broadcast_to(1.0, f.shape)
+        denom = keras.layers.add([one, e_cos_f], name = 'denom')
+
+        cos_E_num = keras.layers.add([e, cos_f], name = 'cos_E_num')
         cos_E = tf.divide(cos_E_num, denom, name = 'cos_E')
-        sin_f = tf.sin(f)
-        one_minus_e2 = tf.subtract(tf.constant(1.0), tf.square(e), name='one_minus_e2')
-        sqrt_one_minus_e2 = tf.sqrt(one_minus_e2, name = 'sqrt_one_minus_e2')
-        sin_E_num = tf.multiply(sqrt_one_minus_e2, sin_f, name='sin_E_num')
+        sin_f = keras.layers.Activation(activation=tf.sin, name='sin_f')(f)
+        e2 = keras.layers.multiply([e,e], name='e2')
+        one_minus_e2 = keras.layers.subtract([one, e2], name='one_minus_e2')
+        sqrt_one_minus_e2 = keras.layers.Activation(activation=tf.sqrt, name = 'sqrt_one_minus_e2')(one_minus_e2)
+        sin_E_num = keras.layers.multiply([sqrt_one_minus_e2, sin_f], name='sin_E_num')
         sin_E = tf.divide(sin_E_num, denom, name='sin_E')
         E = tf.atan2(y=sin_E, x=cos_E, name='E')
         return E
@@ -557,7 +610,7 @@ class TrueToMeanAnomaly(keras.layers.Layer):
     Convert the true anomaly f to the mean anomaly M given the eccentricity e.
     """
     
-    # @tf.function
+    @tf.function
     def call(self, inputs):
         # Unpack inputs
         f, e = inputs
@@ -568,10 +621,12 @@ class TrueToMeanAnomaly(keras.layers.Layer):
         # M = E - e * tf.sin(E)
         # sin_E = tf.sin(E, name='sin_E')
         sin_E = keras.layers.Activation(activation=tf.sin, name='sin_E_')(E)
-        e_sin_E = tf.multiply(e, sin_E, name='e_sin_E')
-        M = tf.subtract(E, e_sin_E, name='M')
+        # e_sin_E = tf.multiply(e, sin_E, name='e_sin_E')
+        e_sin_E = keras.layers.multiply([e, sin_E], name='e_sin_E')
+        # M = tf.subtract(E, e_sin_E, name='M')
+        M = keras.layers.subtract([E, e_sin_E], name='M')
         return M
-        
+
     def get_config(self):
         return dict()
 
