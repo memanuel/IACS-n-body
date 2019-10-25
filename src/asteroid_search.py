@@ -18,6 +18,7 @@ from asteroid_integrate import load_data as load_data_asteroids
 from observation_data import make_synthetic_obs_dataset, random_direction
 # from observation_data import make_synthetic_obs_tensors
 from asteroid_data import get_earth_pos, orbital_element_batch
+from asteroid_model import AsteroidDirection
 from asteroid_model import AsteroidPosition, DirectionUnitVector
 # from asteroid_model make_model_ast_dir, make_model_ast_pos
 from tf_utils import Identity
@@ -178,42 +179,42 @@ def test_score_mean_num(N: int, R_deg: float):
 # ********************************************************************************************************************* 
 class DirectionDifference(keras.layers.Layer):
     """Compute the difference in direction between observed and predicted directions"""
-    # def __init__(self, **kwargs):
-    #    super(DirectionDifference, self).__init__(**kwargs)
+    def __init__(self, batch_size: int, traj_size: int, max_obs: int, **kwargs):
+        super(DirectionDifference, self).__init__(**kwargs)
+        # Save sizes
+        self.batch_size = batch_size
+        self.traj_size = traj_size
+        self.max_obs = max_obs
     
     def call(self, u_obs, u_pred):
         """
-        Loss is the negative of the total t-score summed over all points with non-negative scores
         INPUTS:
             u_obs: observed directions, PADDED to a regular tensor; shape (traj_size, max_obs, 3,)
             u_pred: predicted directions; shape (batch_size, traj_size, 3,)
         """
         # Get sizes
-        batch_size: int
-        traj_size: int
-        max_obs: int
-        batch_size, traj_size = u_pred.shape[0:2]
-        max_obs = u_obs.shape[1]
+        # batch_size: int
+        # traj_size: int
+        # batch_size, traj_size = u_pred.shape[0:2]
+        # max_obs: int = u_obs.shape[-1]
+        batch_size = self.batch_size
+        traj_size = self.traj_size
+        max_obs = self.max_obs
 
         # Debug
-        print(f'u_obs.shape = {u_obs.shape}')
-        print(f'u_pred.shape = {u_pred.shape}')
-        print(f'batch_size={batch_size}, traj_size={traj_size}, max_obs={max_obs}.')
+        # print(f'u_obs.shape = {u_obs.shape}')
+        # print(f'u_pred.shape = {u_pred.shape}')
+        # print(f'batch_size={batch_size}, traj_size={traj_size}, max_obs={max_obs}.')
 
         # The observations; broadcast to shape (1, traj_size, max_obs, 3)
         y = tf.broadcast_to(u_obs, (1, traj_size, max_obs, space_dims))
-        print(f'y.shape = {y.shape}')
+        # print(f'y.shape = {y.shape}')
         # The predicted directions; reshape to (batch_size, traj_size, 1, 3)
         x = tf.reshape(u_pred, (batch_size, traj_size, 1, space_dims))
-        print(f'x.shape = {x.shape}')
-        
-        # Debug
-        # print(f'y.shape = {y.shape}')
         # print(f'x.shape = {x.shape}')
-        # print(f'R.shape = {R.shape}')
-
+        
         # The difference in directions; size (batch_size, traj_size, max_obs, 3)
-        z = y-x
+        z = tf.subtract(y, x, name='z')
         # print(f'z.shape = {z.shape}')
 
         return z
@@ -269,23 +270,47 @@ class TrajectoryScore(keras.layers.Layer):
 # ********************************************************************************************************************* 
 class TrajectoryLoss(keras.losses.Loss):    
     """Specialized loss for predicted asteroid directions."""
-    def __init__(self, **kwargs):
+    def __init__(self, batch_size: int, traj_size: int, max_obs: int, num_obs: float, **kwargs):
         super(TrajectoryLoss, self).__init__(**kwargs)
+        self.num_obs = num_obs
         
-    def call(self, t_score):
+        # The direction difference layer
+        self.dir_diff_layer = DirectionDifference(batch_size=batch_size, traj_size=traj_size, 
+                                                  max_obs=max_obs, name='z')
+        # The trajectory score layer
+        self.traj_score_layer = TrajectoryScore(batch_size=batch_size, name='traj_score')
+        
+
+    def call(self, y_true, y_pred, sample_weight=None):
         """
-        Loss is the negative of the total t-score summed over all points with non-negative scores
+        Loss is the negative of the total t-score summed over all pointss
         INPUTS:
             t_score: (score - mu) / sigma; mu, sigma are theoretical mean and variance for num_obs
                      observations uniformly distributed on the unit sphere.
         """
+        # Alias inputs
+        u_obs = y_true
+        u_pred = y_pred
+        
+        # Compute the difference in direction
+        z = self.dir_diff_layer(u_obs, u_pred)
+        
+        # TODO: Make R flow through
+        # Placeholder: ignore R
+        R = tf.ones(u_pred.shape[0])*np.deg2rad(10.0)
+        
+        # Compute the scores from z and R
+        score, t_score = self.traj_score_layer(z, R, self.num_obs)
+        score = Identity(name='score')(score)
+        t_score = Identity(name='t_score')(t_score)
+
         # Sum the scores with a negative sign
         return -K.sum(t_score)
 
 # ********************************************************************************************************************* 
 class PredictedDirection(keras.layers.Layer):
     """Custom layer to predict directions from orbital elements."""
-    def __init__(self, ts, elts_np: dict, batch_size: int, **kwargs):
+    def __init__(self, ts, elts_np: dict, batch_size: int, R_deg: float, **kwargs):
         super(PredictedDirection, self).__init__(**kwargs)
         self.a = tf.Variable(initial_value=elts_np['a'], trainable=True, name='a')
         self.e = tf.Variable(initial_value=elts_np['e'], trainable=True, name='e')
@@ -297,30 +322,28 @@ class PredictedDirection(keras.layers.Layer):
         # The epoch is not trainable
         self.epoch = tf.Variable(initial_value=elts_np['epoch'], trainable=False, name='epoch')
 
-        # Dictionary wrapping inputs for the asteroid direction model
-        self.inputs_ast_dir = {
-            'a': self.a,
-            'e': self.e,
-            'inc': self.inc,
-            'Omega': self.Omega,
-            'omega': self.omega,
-            'f': self.f,
-            'epoch': self.epoch,        
-        }                
+        # The resolution factor
+        R_np  = np.deg2rad(R_deg) * np.ones_like(elts_np['a'])
+        self.R = tf.Variable(initial_value=R_np, trainable=True, name='R')
 
-        # Create a layer to compute directions from orbital elements at these times
-        self.model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
+        # Output times are a constant
+        ts = keras.backend.constant(ts, name='ts')
+    
+        # Layer to compute asteroid direction from elements
+        self.ast_dir_layer = AsteroidDirection(ts=ts, batch_size=batch_size, name='u')
         
     def call(self, inputs):
-        """Predict directions with the current orbital elements"""
-        return self.model_ast_dir(self.inputs_ast_dir)
+        """Predict directions with the current orbital elements; also current resolution"""
+        u = self.ast_dir_layer(self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch)
+
+        return u, self.R
         
 # ********************************************************************************************************************* 
-class OrbitalElements(keras.layers.Layer):
+class SearchCandidates(keras.layers.Layer):
     """Custom layer to maintain state of orbital elements."""
 
-    def __init__(self, elts_np: dict, batch_size: int, **kwargs):
-        super(OrbitalElements, self).__init__(**kwargs)
+    def __init__(self, elts_np: dict, batch_size: int, R_deg: float, **kwargs):
+        super(SearchCandidates, self).__init__(**kwargs)
         self.a = tf.Variable(initial_value=elts_np['a'], trainable=True, name='a')
         self.e = tf.Variable(initial_value=elts_np['e'], trainable=True, name='e')
         self.inc = tf.Variable(initial_value=elts_np['inc'], trainable=True, name='inc')
@@ -330,97 +353,110 @@ class OrbitalElements(keras.layers.Layer):
 
         # The epoch is not trainable
         self.epoch = tf.Variable(initial_value=elts_np['epoch'], trainable=False, name='epoch')
+        
+        # The resolution factor
+        R_np  = np.deg2rad(R_deg) * np.ones_like(elts_np['a'])
+        self.R = tf.Variable(initial_value=R_np, trainable=True, name='R')
 
     def call(self, inputs):
-        """Predict directions with the current orbital elements"""
-        return self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch
+        """Return the current settings"""
+        return self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch, self.R
 
 # ********************************************************************************************************************* 
-def make_model_asteroid_search(ts: tf.Tensor, max_obs: int, elt_batch_size: int=64, time_batch_size: int=None):
+# Functional API models
+# ********************************************************************************************************************* 
+
+# ********************************************************************************************************************* 
+def make_model_asteroid_search(ts: tf.Tensor, max_obs: int, 
+                               elt_batch_size: int=64, time_batch_size: int=None):
     """Make functional API model for scoring elements"""
     traj_size: int = ts.shape[0]
-    space_dims: int = 3
     if time_batch_size is None:
         time_batch_size = traj_size
-    
-    # Inputs
-    t = keras.Input(shape=(), name='t', batch_size=elt_batch_size, dtype=tf.float32)
-    u_obs = keras.Input(shape=(max_obs, space_dims), name='u_obs', batch_size=elt_batch_size, dtype=tf.float32)
 
-    # Direction model
-    # model_ast_pos = make_model_ast_dir(ts=ts, batch_size=batch_size)
-    # model_ast_dir = make_model_ast_dir(ts=ts, batch_size=batch_size)
+    # Inputs
+    t = keras.Input(shape=(), name='t', batch_size=time_batch_size, dtype=tf.float32)
+    idx = keras.Input(shape=(), name='idx', batch_size=time_batch_size, dtype=tf.int32)
+    row_len = keras.Input(shape=(), name='idx', batch_size=time_batch_size)
     
+    # Output times are a constant
+    ts = keras.backend.constant(ts, name='ts')
+
     # Orbital elements to try
     elts_np = orbital_element_batch(1)
+    R_deg = 10.0
     
-    # Orbital elements layer
-    elts = OrbitalElements(elts_np=elts_np, batch_size=elt_batch_size, name='elts')(t)
-    # Unpack orbital elements
-    a, e, inc, Omega, omega, f, epoch = elts
+    # The predicted direction and resolution
+    # u, R = PredictedDirection(ts=ts, elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='pred_dir')(idx)
 
-    # Name the orbital elements
-    a = Identity(name='a')(a)
-    e = Identity(name='e')(e)
-    inc = Identity(name='inc')(inc)
-    Omega = Identity(name='Omega')(Omega)
-    omega = Identity(name='omega')(omega)
-    f = Identity(name='f')(f)
-    epoch = Identity(name='epoch')(epoch)
-   
-    # Compute asteroid positions
-    q_pred = AsteroidPosition(batch_size=elt_batch_size, name='q_pred')(ts, a, e, inc, Omega, omega, f, epoch)
+    # Name the direction and resolution
+    # u = Identity(name='u')(u)
+    # R = Identity(name='R')(R)
 
-#    # Take a one time snapshot of the earth's position at these times
-#    q_earth_np = get_earth_pos(ts).reshape(1, -1, space_dims)
-#    q_earth = keras.backend.constant(q_earth_np, 
-#                                     dtype=tf.float32,
-#                                     shape=q_earth_np.shape,
-#                                     name='q_earth')
-#
-#    # Unit displacement vector (direction) from earth to asteroid
-#    u_pred = DirectionUnitVector(name='u_pred')([q_earth, q_pred])
-#    
-#    # Difference between observed and predicted directions
-#    z = DirectionDifference(name='z')(u_obs, u_pred)
-#    
+    a, e, inc, Omega, omega, f, epoch, R = \
+        SearchCandidates(elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='candidates')(idx)
+    R = Identity(name='R')(R)
+
+    # The predicted direction
+    u = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u')(a, e, inc, Omega, omega, f, epoch)
+
     # Wrap inputs and outputs
-    inputs = (t, u_obs,)
-    outputs = (q_pred)
+    inputs = (t, idx,)
+    outputs = (u, R)
 
     # Create model with functional API    
     model = keras.Model(inputs=inputs, outputs=outputs)
-
+    
+    # Instantiate custom loss layer
+    # traj_loss = TrajectoryLoss(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, num_obs=num_obs)
+    
+    
+    # model.add_loss()
     return model
 
 # ********************************************************************************************************************* 
 # Dataset of observations: synthetic data on first 1000 asteroids
 n0: int = 1
-# n1: int = 1000
 n1: int = 10
-ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1, batch_size=64)
+time_batch_size = None
+# Build the dataset
+ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1, batch_size=time_batch_size)
 # Get example batch
 batch_in, batch_out = list(ds.take(1))[0]
 # Contents of this batch
 t = batch_in['t']
+idx = batch_in['idx']
 row_len = batch_in['row_len']
 u_obs = batch_out['u']
 
-# Get trajectory size
-batch_size: int = t.shape[0]
+# Get trajectory size and max_obs
 traj_size: int = ts.shape[0]
 max_obs: int = u_obs.shape[1]
-space_dims: int = 3
+
+# Build functional model for asteroid score
+R_deg: float = 10.0
+elts_np = orbital_element_batch(1)
+elt_batch_size = 64
+model = make_model_asteroid_search(ts=ts, max_obs=max_obs, 
+                                   elt_batch_size=elt_batch_size, time_batch_size=time_batch_size)
+
+
+# pred_dir = PredictedDirection(ts=ts, elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='pred_dir')
 
 # Total number of observations
 num_obs: float = float(np.sum(row_len))
+# pred = model.predict_on_batch(batch_in)
+u_pred, R = model.predict_on_batch(batch_in)
 
-# Build functional model for asteroid score
-elts_np = orbital_element_batch(1)
-model = make_model_asteroid_search(ts, max_obs, batch_size)
-# u_pred, z = model.predict_on_batch(batch_in)
+z = DirectionDifference(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, name='z')(u_obs, u_pred)
+score, t_score = TrajectoryScore(batch_size=elt_batch_size)(z, R, num_obs)
 
-# model.compile(loss={'a':tf.losses.MeanSquaredError()})
-# model.evaluate(ds)
-y = tf.zeros((1, 7232, 12, 3))
-x = tf.zeros((64, 7232, 1, 3))
+traj_loss = TrajectoryLoss(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, num_obs=num_obs)
+batch_loss = traj_loss(u_obs, u_pred)
+
+loss_dict = {
+        'R': tf.losses.MeanSquaredError(),
+        }
+model.compile(loss=loss_dict)
+# model.compile(loss={'u':traj_loss})
+model.evaluate(ds)

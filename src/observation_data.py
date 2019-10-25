@@ -298,8 +298,8 @@ def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int= None):
     pad_shape_u = [[0,num_pad], [0,0], [0,0]]
     u = tf.pad(u, paddings=pad_shape_u, mode='CONSTANT', constant_values=65536.0)
         
-    # Alias array of times to ts; it is a separate output
-    ts = t
+    # Index associated with time points
+    idx = tf.range(t.shape[0], dtype=tf.int32)
     
     # Pad ast_num_r into a regular tensor; use default -1 to indicate padded observation
     ast_num = ast_num_r.to_tensor(default_value=-1)
@@ -310,12 +310,14 @@ def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int= None):
     
     # Wrap into tensorflow Dataset
     inputs = {
-        't': t, 
+        't': t,
+        'idx': idx,
         'row_len': row_len,
     }
     outputs = {
         'u': u, 
         'ast_num': ast_num,
+        'R': tf.zeros_like(t)
     }
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))
     
@@ -323,7 +325,7 @@ def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int= None):
     drop_remainder: bool = True    
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
     # Return the dataset as well as tensors with the time snapshots and row lengths
-    return ds, ts, row_len
+    return ds, t, row_len
 
 ## ********************************************************************************************************************* 
 #def make_synthetic_obs_tensors(n0: int, n1: int):
