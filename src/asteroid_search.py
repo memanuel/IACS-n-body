@@ -37,7 +37,7 @@ ast_elt = load_data_asteroids()
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def score_mean(A: np.array):
+def score_mean(A: tf.Tensor):
     """
     Expected value of the score function 
     f(epsilon) = exp(-1/2 A epsilon^2)
@@ -52,11 +52,13 @@ def score_mean(A: np.array):
     """
     # The expected value is (1 - e^-2A) / 2A
     # return (1.0 - np.exp(-2.0*A)) / (2*A)
-    minus_two_A: np.array = -2.0*A
-    return np.expm1(minus_two_A) / minus_two_A
+    minus_two_A = tf.multiply(A, -2.0, name='minus_two_A')
+    expm1_m2a = tf.math.expm1(minus_two_A, name='expm1_m2a')
+    mean = tf.divide(expm1_m2a, minus_two_A)
+    return mean
 
 # ********************************************************************************************************************* 
-def score_var(A: np.array):
+def score_var(A: tf.Tensor):
     """
     Variance of the score function 
     f(epsilon) = exp(-1/2 A epsilon^2)
@@ -64,13 +66,19 @@ def score_var(A: np.array):
     """
     # The variance is (A*Coth(A)) * E[f]^2
     # Calculate the leading factor
-    B: np.array = (A / np.tanh(A)) - 1.0
+    # B = (A / tf.tanh(A)) - 1.0
+    tanh_A = tf.tanh(A, name='tanh_A')
+    A_div_tanh_A = tf.divide(A, tanh_A, name='A_div_tanh_A')
+    B = tf.subtract(A_div_tanh_A, 1.0, name='B')
+
     # Calculate the mean
-    mean: np.array = score_mean(A)
-    return B * mean * mean
+    mean: tf.Tensor = score_mean(A)
+    mean2 = tf.square(mean, name='mean2')
+    var = tf.multiply(B, mean2, name='var')
+    return var
 
 # ********************************************************************************************************************* 
-def score_std(A: np.array):
+def score_std(A: tf.Tensor):
     """
     Standard deviation of the score function 
     f(epsilon) = exp(-1/2 A epsilon^2)
@@ -78,11 +86,14 @@ def score_std(A: np.array):
     """
     # The variance is (A*Coth(A)) * E[f]^2
     # The std deviation is sqrt(A*Coth(A)) * E[f]
-    # Calculate the leading factor
-    B: np.array = np.sqrt(A / np.tanh(A) - 1.0)
+    # B = (A / tf.tanh(A)) - 1.0
+    tanh_A = tf.tanh(A, name='tanh_A')
+    A_div_tanh_A = tf.divide(A, tanh_A, name='A_div_tanh_A')
+    B = tf.subtract(A_div_tanh_A, 1.0, name='B')
     # Calculate the mean
-    mean: np.array = score_mean(A)
-    return B * mean
+    mean: tf.Tensor = score_mean(A)
+    std = tf.multiply(B, mean, name='std')
+    return std
 
 # ********************************************************************************************************************* 
 def test_score_moments_one(A: float, mean_exp: float, var_exp: float) -> bool:
@@ -122,9 +133,9 @@ def test_score_moments():
     return isOK
 
 # ********************************************************************************************************************* 
-def test_score_mean_num(N: int, R_deg: float):
+def test_score_num(N: int, R_deg: float):
     """
-    Numerical test of score_mean
+    Numerical test of score_mean and score_var functions
     INPUTS:
         N: number of points to test
         R_deg: resolution factor in degrees
@@ -153,7 +164,7 @@ def test_score_mean_num(N: int, R_deg: float):
     # Test the mean
     rtol: float = 2.0 / N**0.4
     isOK: bool = np.isclose(mean_calc, mean_num, rtol=rtol)
-    print(f'Test score function with N={N}, R={R_deg} degrees:')
+    print(f'\nTest score function with N={N}, R={R_deg} degrees:')
     print(f'Mean:')
     print(f'calc      = {mean_calc:10.8f}')
     print(f'num       = {mean_num:10.8f}')
@@ -162,7 +173,7 @@ def test_score_mean_num(N: int, R_deg: float):
     # Test the standard deviation
     rtol = 2.0 / N**0.4
     isOK = isOK and np.isclose(mean_calc, mean_num, rtol=rtol)
-    print(f'Standard Deviation:')
+    print(f'\nStandard Deviation:')
     print(f'calc      = {std_calc:10.8f}')
     print(f'num       = {std_num:10.8f}')
     print(f'error_rel = {std_error_rel:10.8f}')
@@ -267,80 +278,49 @@ class TrajectoryScore(keras.layers.Layer):
         # Return both the raw and t scores
         return score, t_score
 
-# ********************************************************************************************************************* 
-class TrajectoryLoss(keras.losses.Loss):    
-    """Specialized loss for predicted asteroid directions."""
-    def __init__(self, batch_size: int, traj_size: int, max_obs: int, num_obs: float, **kwargs):
-        super(TrajectoryLoss, self).__init__(**kwargs)
-        self.num_obs = num_obs
-        
-        # The direction difference layer
-        self.dir_diff_layer = DirectionDifference(batch_size=batch_size, traj_size=traj_size, 
-                                                  max_obs=max_obs, name='z')
-        # The trajectory score layer
-        self.traj_score_layer = TrajectoryScore(batch_size=batch_size, name='traj_score')
-        
+## ********************************************************************************************************************* 
+#class TrajectoryLoss(keras.losses.Loss):    
+#    """Specialized loss for predicted asteroid directions."""
+#    def __init__(self, batch_size: int, traj_size: int, max_obs: int, num_obs: float, **kwargs):
+#        super(TrajectoryLoss, self).__init__(**kwargs)
+#        self.num_obs = num_obs
+#        
+#        # The direction difference layer
+#        self.dir_diff_layer = DirectionDifference(batch_size=batch_size, traj_size=traj_size, 
+#                                                  max_obs=max_obs, name='z')
+#        # The trajectory score layer
+#        self.traj_score_layer = TrajectoryScore(batch_size=batch_size, name='traj_score')
+#        
+#
+#    def call(self, y_true, y_pred, sample_weight=None):
+#        """
+#        Loss is the negative of the total t-score summed over all pointss
+#        INPUTS:
+#            t_score: (score - mu) / sigma; mu, sigma are theoretical mean and variance for num_obs
+#                     observations uniformly distributed on the unit sphere.
+#        """
+#        # Alias inputs
+#        u_obs = y_true
+#        u_pred = y_pred
+#        
+#        # Compute the difference in direction
+#        z = self.dir_diff_layer(u_obs, u_pred)
+#        
+#        # TODO: Make R flow through
+#        # Placeholder: ignore R
+#        R = tf.ones(u_pred.shape[0])*np.deg2rad(10.0)
+#        
+#        # Compute the scores from z and R
+#        score, t_score = self.traj_score_layer(z, R, self.num_obs)
+#        score = Identity(name='score')(score)
+#        t_score = Identity(name='t_score')(t_score)
+#
+#        # Sum the scores with a negative sign
+#        return -K.sum(t_score)
 
-    def call(self, y_true, y_pred, sample_weight=None):
-        """
-        Loss is the negative of the total t-score summed over all pointss
-        INPUTS:
-            t_score: (score - mu) / sigma; mu, sigma are theoretical mean and variance for num_obs
-                     observations uniformly distributed on the unit sphere.
-        """
-        # Alias inputs
-        u_obs = y_true
-        u_pred = y_pred
-        
-        # Compute the difference in direction
-        z = self.dir_diff_layer(u_obs, u_pred)
-        
-        # TODO: Make R flow through
-        # Placeholder: ignore R
-        R = tf.ones(u_pred.shape[0])*np.deg2rad(10.0)
-        
-        # Compute the scores from z and R
-        score, t_score = self.traj_score_layer(z, R, self.num_obs)
-        score = Identity(name='score')(score)
-        t_score = Identity(name='t_score')(t_score)
-
-        # Sum the scores with a negative sign
-        return -K.sum(t_score)
-
-# ********************************************************************************************************************* 
-class PredictedDirection(keras.layers.Layer):
-    """Custom layer to predict directions from orbital elements."""
-    def __init__(self, ts, elts_np: dict, batch_size: int, R_deg: float, **kwargs):
-        super(PredictedDirection, self).__init__(**kwargs)
-        self.a = tf.Variable(initial_value=elts_np['a'], trainable=True, name='a')
-        self.e = tf.Variable(initial_value=elts_np['e'], trainable=True, name='e')
-        self.inc = tf.Variable(initial_value=elts_np['inc'], trainable=True, name='inc')
-        self.Omega = tf.Variable(initial_value=elts_np['Omega'], trainable=True, name='Omega')
-        self.omega = tf.Variable(initial_value=elts_np['omega'], trainable=True, name='omega')
-        self.f = tf.Variable(initial_value=elts_np['f'], trainable=True, name='f')
-
-        # The epoch is not trainable
-        self.epoch = tf.Variable(initial_value=elts_np['epoch'], trainable=False, name='epoch')
-
-        # The resolution factor
-        R_np  = np.deg2rad(R_deg) * np.ones_like(elts_np['a'])
-        self.R = tf.Variable(initial_value=R_np, trainable=True, name='R')
-
-        # Output times are a constant
-        ts = keras.backend.constant(ts, name='ts')
-    
-        # Layer to compute asteroid direction from elements
-        self.ast_dir_layer = AsteroidDirection(ts=ts, batch_size=batch_size, name='u')
-        
-    def call(self, inputs):
-        """Predict directions with the current orbital elements; also current resolution"""
-        u = self.ast_dir_layer(self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch)
-
-        return u, self.R
-        
 # ********************************************************************************************************************* 
 class SearchCandidates(keras.layers.Layer):
-    """Custom layer to maintain state of orbital elements."""
+    """Custom layer to maintain state of candidate orbital elements and resolutions."""
 
     def __init__(self, elts_np: dict, batch_size: int, R_deg: float, **kwargs):
         super(SearchCandidates, self).__init__(**kwargs)
@@ -360,59 +340,87 @@ class SearchCandidates(keras.layers.Layer):
 
     def call(self, inputs):
         """Return the current settings"""
+        print(f'type(inputs)={type(inputs)}.')
         return self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch, self.R
 
 # ********************************************************************************************************************* 
-# Functional API models
+# Functional API model
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_model_asteroid_search(ts: tf.Tensor, max_obs: int, 
-                               elt_batch_size: int=64, time_batch_size: int=None):
+def make_model_asteroid_search(ts: tf.Tensor, 
+                               max_obs: int, 
+                               elt_batch_size: int=64, 
+                               time_batch_size: int=None,
+                               R_deg: float = 10.0):
     """Make functional API model for scoring elements"""
+
+    # The full trajectory size
     traj_size: int = ts.shape[0]
+    # Default for time_batch_size is full trajectory size
     if time_batch_size is None:
         time_batch_size = traj_size
 
     # Inputs
-    t = keras.Input(shape=(), name='t', batch_size=time_batch_size, dtype=tf.float32)
-    idx = keras.Input(shape=(), name='idx', batch_size=time_batch_size, dtype=tf.int32)
-    row_len = keras.Input(shape=(), name='idx', batch_size=time_batch_size)
+    t = keras.Input(shape=(), batch_size=time_batch_size, dtype=tf.float32, name='t' )
+    idx = keras.Input(shape=(), batch_size=time_batch_size, dtype=tf.int32, name='idx')
+    row_len = keras.Input(shape=(), batch_size=time_batch_size, name='row_len')
+    u_obs = keras.Input(shape=(max_obs, space_dims), batch_size=time_batch_size, name='u_obs')
     
     # Output times are a constant
     ts = keras.backend.constant(ts, name='ts')
 
     # Orbital elements to try
     elts_np = orbital_element_batch(1)
-    R_deg = 10.0
     
-    # The predicted direction and resolution
-    # u, R = PredictedDirection(ts=ts, elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='pred_dir')(idx)
-
-    # Name the direction and resolution
-    # u = Identity(name='u')(u)
-    # R = Identity(name='R')(R)
-
+    # Set of trainable weights with candidate
     a, e, inc, Omega, omega, f, epoch, R = \
         SearchCandidates(elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='candidates')(idx)
+
+    # Alias the orbital elements; 6 are trainable, epoch is fixed
+    a = Identity(name='a')(a)
+    e = Identity(name='e')(e)
+    inc = Identity(name='inc')(inc)
+    Omega = Identity(name='Omega')(Omega)
+    omega = Identity(name='omega')(omega)
+    f = Identity(name='f')(f)
+    epoch = Identity(name='epoch')(epoch)
+    # Alias the resolution
     R = Identity(name='R')(R)
 
+    # The orbital elements; stack to shape (elt_batch_size, 7)
+    elts = tf.stack(values=[a, e, inc, Omega, omega, f, epoch], axis=1, name='elts')
+
     # The predicted direction
-    u = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u')(a, e, inc, Omega, omega, f, epoch)
+    u_pred = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')(a, e, inc, Omega, omega, f, epoch)
+
+    # Difference in direction between u_obs and u_pred
+    z = DirectionDifference(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, name='z')(u_obs, u_pred)
+    
+    # Raw score and t_score
+    score, t_score = TrajectoryScore(batch_size=elt_batch_size)(z, R, num_obs)
+    # Stack the scores
+    scores = tf.stack(values=[score, t_score], axis=1, name='scores')
 
     # Wrap inputs and outputs
-    inputs = (t, idx,)
-    outputs = (u, R)
+    inputs = (t, idx, row_len, u_obs)
+    outputs = (elts, R, u_pred, z, scores)
 
-    # Create model with functional API    
+    # Create model with functional API
     model = keras.Model(inputs=inputs, outputs=outputs)
-    
-    # Instantiate custom loss layer
-    # traj_loss = TrajectoryLoss(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, num_obs=num_obs)
-    
-    
-    # model.add_loss()
+
+    # Add custom loss; negative of the total t_score
+    model.add_loss(-tf.reduce_sum(t_score))
+       
     return model
+
+# ********************************************************************************************************************* 
+def main():
+    test_score_num(10000, 10.0)
+
+# ********************************************************************************************************************* 
+if __name__ == '__main__':
+    main()
 
 # ********************************************************************************************************************* 
 # Dataset of observations: synthetic data on first 1000 asteroids
@@ -427,7 +435,7 @@ batch_in, batch_out = list(ds.take(1))[0]
 t = batch_in['t']
 idx = batch_in['idx']
 row_len = batch_in['row_len']
-u_obs = batch_out['u']
+u_obs = batch_in['u_obs']
 
 # Get trajectory size and max_obs
 traj_size: int = ts.shape[0]
@@ -437,26 +445,37 @@ max_obs: int = u_obs.shape[1]
 R_deg: float = 10.0
 elts_np = orbital_element_batch(1)
 elt_batch_size = 64
-model = make_model_asteroid_search(ts=ts, max_obs=max_obs, 
-                                   elt_batch_size=elt_batch_size, time_batch_size=time_batch_size)
+model = make_model_asteroid_search(ts=ts, 
+                                   max_obs=max_obs, 
+                                   elt_batch_size=elt_batch_size, 
+                                   time_batch_size=time_batch_size,
+                                   R_deg = R_deg)
+
+model.compile(optimizer='Adam')
+loss0 = model.evaluate(ds)
+pred0 = model.predict(ds)
+elts0, R0, u_pred0, z0, scores0 = pred0
+t_score0 = scores0[:,1]
+# elts0 = np.stack(list(elts_np.values()), axis=1)
+
+model.fit(ds, epochs=100)
+pred = model.predict(ds)
+
+loss = model.evaluate(ds)
+pred = model.predict_on_batch(ds)
+elts, R, u_pred, z, scores = pred
+raw_score = scores[:,0]
+t_score = scores[:,1]
 
 
-# pred_dir = PredictedDirection(ts=ts, elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='pred_dir')
+# Compare original and revised orbital elements
+R0 = np.ones(elt_batch_size) * np.deg2rad(R_deg)
+d_elt = elts - elts0
+d_a = d_elt[:,0]
+d_e = d_elt[:,1]
+d_inc = d_elt[:,2]
+d_Omega = d_elt[:,3]
+d_omega = d_elt[:,4]
+d_f = d_elt[:,5]
+d_R = R - R0
 
-# Total number of observations
-num_obs: float = float(np.sum(row_len))
-# pred = model.predict_on_batch(batch_in)
-u_pred, R = model.predict_on_batch(batch_in)
-
-z = DirectionDifference(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, name='z')(u_obs, u_pred)
-score, t_score = TrajectoryScore(batch_size=elt_batch_size)(z, R, num_obs)
-
-traj_loss = TrajectoryLoss(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, num_obs=num_obs)
-batch_loss = traj_loss(u_obs, u_pred)
-
-loss_dict = {
-        'R': tf.losses.MeanSquaredError(),
-        }
-model.compile(loss=loss_dict)
-# model.compile(loss={'u':traj_loss})
-model.evaluate(ds)

@@ -313,11 +313,10 @@ def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int= None):
         't': t,
         'idx': idx,
         'row_len': row_len,
+        'u_obs': u, 
     }
     outputs = {
-        'u': u, 
         'ast_num': ast_num,
-        'R': tf.zeros_like(t)
     }
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))
     
