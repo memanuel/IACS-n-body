@@ -439,19 +439,32 @@ class MeanToEccentricAnomaly(keras.layers.Layer):
         # Unpack inputs
         M, e = inputs
         
-        # Initialize E; guess M when eccentricity is small, otherwise guess pi
-        # E = tf.where(condition= e < 0.8, x=M, y=tf.constant(np.pi))
+        # Initialize E with M
         E = M
         
         # Initial error; from Kepler's equation M = E - e sin(E)
-        F = E - e * tf.sin(E) - M
+        # F = E - e * tf.sin(E) - M
+        sin_E = keras.layers.Activation(activation=tf.sin, name='sin_E')(E)
+        e_sin_E = tf.multiply(e, sin_E, name='e_sin_E')
+        e_sin_E_plus_M = tf.add(e_sin_E, M, name='e_sin_E_plus_M')
+        F = tf.subtract(E, e_sin_E_plus_M, name='F')
         
         # Iterate to improve E; trial and error shows 10 enough for single precision convergence
-        for i in range(10):
+        for i in range(1, 11):
             # One step of Newton's Method
-            E = E - F / (1.0 - e * tf.cos(E))
+            # E = E - F / (1.0 - e * tf.cos(E))
+            cos_E = tf.cos(E, name='cos_E')
+            e_cos_E = tf.multiply(e, cos_E, name='e_cos_E')
+            one_minus_e_cos_E = tf.subtract(tf.constant(1.0), e_cos_E, name=f'one_minus_e_cos_E_it_{i}')
+            delta_E = tf.divide(F, one_minus_e_cos_E, name=f'delta_E_it_{i}')
+            E = tf.subtract(E, delta_E, name=f'E_it_{i}')
+
             # The new error term
-            F = E - e * tf.sin(E) - M
+            # F = E - e * tf.sin(E) - M
+            sin_E = keras.layers.Activation(activation=tf.sin, name=f'sin_E_it{i}')(E)
+            e_sin_E = tf.multiply(e, sin_E, name=f'e_sin_E_it_{i}')
+            e_sin_E_plus_M = tf.add(e_sin_E, M, name=f'e_sin_E_plus_M_it_{i}')
+            F = tf.subtract(E, e_sin_E_plus_M, name=f'F_it_{i}')
 
         return E
         
@@ -470,19 +483,19 @@ class MeanToTrueAnomaly(keras.layers.Layer):
         M, e = inputs
         
         # Compute the eccentric anomaly E
-        E = MeanToEccentricAnomaly()((M, e))
+        E = MeanToEccentricAnomaly(name='ecc_anomaly')((M, e))
         
         # Compute the true anomaly from E
         # return 2.0*tf.math.atan(tf.sqrt((1.0+e)/(1.0-e))*tf.math.tan(0.5*E))
-        one_plus_e = tf.add(1.0, e, name='one_plus_e')
-        one_minus_e = tf.subtract(1.0, e, name='one_minus_e')
+        one_plus_e = tf.add(tf.constant(1.0), e, name='one_plus_e')
+        one_minus_e = tf.subtract(tf.constant(1.0), e, name='one_minus_e')
         ecc_ratio = tf.divide(one_plus_e, one_minus_e, name='ecc_ratio')
         sqrt_ecc_ratio = tf.sqrt(ecc_ratio, name='sqrt_ecc_ratio')
-        half_E = tf.multiply(0.5, E, name='half_E')
+        half_E = tf.multiply(tf.constant(0.5), E, name='half_E')
         tan_half_E = tf.math.tan(half_E, name='tan_half_E')
         tan_half_theta = tf.multiply(sqrt_ecc_ratio, tan_half_E, name='tan_half_theta')
         half_theta = tf.math.atan(tan_half_theta, name='half_theta')
-        theta = tf.multiply(2.0, half_theta, name='theta')
+        theta = tf.multiply(tf.constant(2.0), half_theta, name='theta')
         return theta
         
     def get_config(self):
@@ -524,11 +537,11 @@ class TrueToEccentricAnomaly(keras.layers.Layer):
         # https://en.wikipedia.org/wiki/Eccentric_anomaly
         cos_f = tf.cos(f, name = 'cos_f')
         e_cos_f = tf.multiply(e, cos_f, name = 'e_cos_f')
-        denom = tf.add(1.0, e_cos_f, name = 'denom')
+        denom = tf.add(tf.constant(1.0), e_cos_f, name = 'denom')
         cos_E_num = tf.add(e, cos_f, name = 'cos_E_num')
         cos_E = tf.divide(cos_E_num, denom, name = 'cos_E')
         sin_f = tf.sin(f)
-        one_minus_e2 = tf.subtract(1.0, tf.square(e), name='one_minus_e2')
+        one_minus_e2 = tf.subtract(tf.constant(1.0), tf.square(e), name='one_minus_e2')
         sqrt_one_minus_e2 = tf.sqrt(one_minus_e2, name = 'sqrt_one_minus_e2')
         sin_E_num = tf.multiply(sqrt_one_minus_e2, sin_f, name='sin_E_num')
         sin_E = tf.divide(sin_E_num, denom, name='sin_E')
@@ -553,7 +566,8 @@ class TrueToMeanAnomaly(keras.layers.Layer):
         # Compute mean anomaly M from E using Kepler's Equation
         # https://en.wikipedia.org/wiki/Mean_anomaly
         # M = E - e * tf.sin(E)
-        sin_E = tf.sin(E, name='sin_E')
+        # sin_E = tf.sin(E, name='sin_E')
+        sin_E = keras.layers.Activation(activation=tf.sin, name='sin_E_')(E)
         e_sin_E = tf.multiply(e, sin_E, name='e_sin_E')
         M = tf.subtract(E, e_sin_E, name='M')
         return M

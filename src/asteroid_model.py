@@ -31,20 +31,85 @@ mu = tf.constant(G_)
 # Custom Layers
 # ********************************************************************************************************************* 
 
+# ********************************************************************************************************************* 
+class ElementToPosition(keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super(ElementToPosition, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        """Compute position from orbital elements (a, e, inc, Omega, omega, f)"""
+        # Unpack inputs
+        # a: semimajor axis
+        # e: eccentricity
+        # inc: inclination
+        # Omega: longitude of ascending node
+        # omega: argument of pericenter
+        # f: true anomaly
+        a, e, inc, Omega, omega, f = inputs
+
+        # See module OrbitalElements for original version that includes velocity as well
+        # This is pared down for speed
+        
+        # sine and cosine of the angles inc, Omega, omega, and f
+        ci = keras.layers.Activation(activation=tf.cos, name='cos_inc')(inc)
+        si = keras.layers.Activation(activation=tf.sin, name='sin_inc')(inc)
+        cO = keras.layers.Activation(activation=tf.cos, name='cos_Omega')(Omega)
+        sO = keras.layers.Activation(activation=tf.sin, name='sin_Omega')(Omega)
+        co = keras.layers.Activation(activation=tf.cos, name='cos_omega')(omega)
+        so = keras.layers.Activation(activation=tf.sin, name='sin_omega')(omega)
+        cf = keras.layers.Activation(activation=tf.cos, name='cos_f')(f)
+        sf = keras.layers.Activation(activation=tf.sin, name='sin_f')(f)
+
+        # Distance from center
+        # one_minus_e2 = tf.constant(1.0) - tf.square(e)
+        # one_plus_e_cos_f = tf.constant(1.0) + e * tf.cos(f)
+        # r = a * one_minus_e2 / one_plus_e_cos_f
+        e2 = keras.layers.Activation(activation=tf.square, name='e2')(e)
+        one_minus_e2 = tf.subtract(tf.constant(1.0), e2, name='one_minus_e2')
+        e_cos_f = tf.multiply(e, cf, name='e_cos_f')
+        one_plus_e_cos_f = tf.add(tf.constant(1.0), e_cos_f, name='one_plus_e_cos_f')
+        a_x_one_minus_e2 = tf.multiply(a, one_minus_e2, name='a_x_one_minus_e2')
+        r = tf.divide(a_x_one_minus_e2, one_plus_e_cos_f, name='r')
+        
+        # Position
+        cocf = tf.multiply(co,cf, name='cocf')
+        sosf = tf.multiply(so,sf, name='sosf')
+        cocf_sosf = tf.subtract(cocf, sosf, name='cocf_sosf')
+        socf = tf.multiply(so,cf, name='socf')
+        cosf = tf.multiply(co,sf, name='cosf')
+        socf_cosf = tf.add(socf, cosf, name='socf_cosf')
+        cO_x_cocf_sosf = tf.multiply(cO, cocf_sosf, name='cO_x_cocf_sosf')
+        sO_x_socf_cosf = tf.multiply(sO, socf_cosf, name = 'sO_x_socf_cosf')
+        sO_x_socf_cosf_x_ci = tf.multiply(sO_x_socf_cosf, ci, name='sO_x_socf_cosf_x_ci')       
+        sO_x_cocf_sosf = tf.multiply(sO, cocf_sosf, name='sO_x_cocf_sosf')
+        cO_x_socf_cosf = tf.multiply(cO, socf_cosf, name='cO_x_socf_cosf')
+        cO_x_socf_cosf_x_ci = tf.multiply(cO_x_socf_cosf, ci, name='cO_x_socf_cosf_x_ci')
+        uz = tf.multiply(socf_cosf, si, name='socf_cosf_x_si')
+        ux = tf.subtract(cO_x_cocf_sosf, sO_x_socf_cosf_x_ci, name='ux')
+        uy = tf.add(sO_x_cocf_sosf, cO_x_socf_cosf_x_ci, name='uy')
+        qx = tf.multiply(r, ux, name='qx')
+        qy = tf.multiply(r, uy, name='qy')
+        qz = tf.multiply(r, uz, name='qz')
+
+        # Assemble the position vector
+        q = keras.layers.concatenate(inputs=[qx, qy, qz], axis=-1, name='q')
+        return q
+
+    def get_config(self):
+        return dict()
+
+# ********************************************************************************************************************* 
 class AsteroidPosition(keras.layers.Layer):
     """
     Compute orbit positions for asteroids in the solar system from the initial orbital elements with the Kepler model.
     Inputs for the model are 6 orbital elements, the epoch, and the desired times for position outputs.
     Outputs of the model are the position of the asteroid relative to the sun.    
     """
-    def __init__(self, batch_size: int, **kwargs):
+    def __init__(self, **kwargs):
         """Constructor; batch_size is the number of elements to simulate at a time, e.g. 64."""
         super(AsteroidPosition, self).__init__(**kwargs)
         # Get trajectory size from ts
-        self.batch_size = batch_size
-
-        # Layer mapping orbital elements to cartesian coordinates
-        self.model_e2c = make_model_elt_to_pos(batch_size=batch_size)
+        # self.batch_size = batch_size
 
     def call(self, t, a, e, inc, Omega, omega, f, epoch):
         """
@@ -54,7 +119,7 @@ class AsteroidPosition(keras.layers.Layer):
         """
         # Alias traj_size, batch_size
         traj_size = t.shape[0]
-        batch_size = self.batch_size
+        batch_size = a.shape[0]
 
         # Compute eccentric anomaly E from f and e
         M = TrueToMeanAnomaly(name='TrueToMeanAnomaly')([f, e])
@@ -90,7 +155,7 @@ class AsteroidPosition(keras.layers.Layer):
         Omega_t = keras.layers.RepeatVector(n=traj_size, name='Omega_t')(keras.backend.reshape(Omega, target_shape))
         omega_t = keras.layers.RepeatVector(n=traj_size, name='omega_t')(keras.backend.reshape(omega, target_shape))
         # Repeat the gravitational field strength to vector of shape (batch_size, traj_size)
-        mu_t = keras.layers.RepeatVector(n=traj_size, name='mu_t')(keras.backend.reshape(mu, (1, 1)))
+        # mu_t = keras.layers.RepeatVector(n=traj_size, name='mu_t')(keras.backend.reshape(mu, (1, 1)))
         
         # Repeat initial mean anomaly M0 and mean motion N0 to match shape of outputs
         M0_t = keras.layers.RepeatVector(n=traj_size, name='M0_t')(keras.backend.reshape(M, target_shape))
@@ -103,17 +168,10 @@ class AsteroidPosition(keras.layers.Layer):
         f_t = MeanToTrueAnomaly(name='mean_to_true_anomaly')([M_t, e_t])
     
         # Wrap orbital elements into one tuple of inputs for layer converting to cartesian coordinates
-        elt_t = (a_t, e_t, inc_t, Omega_t, omega_t, f_t, mu_t,)
+        elt_t = (a_t, e_t, inc_t, Omega_t, omega_t, f_t,)
         
-        # ******************************************************************
         # Convert orbital elements to cartesian coordinates 
-        
-        # Convert from orbital elements to cartesian coordinates (position only)
-        q = self.model_e2c(elt_t)
-        
-        # Name the outputs
-        q = Identity(name='q')(q)
-        # v = Identity(name='v')(v)
+        q = ElementToPosition(name='q')(elt_t)
     
         return q
 
@@ -188,11 +246,10 @@ def make_model_ast_pos(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     t = keras.backend.constant(ts, name='t')
 
     # Call asteroid position layer
-    q = AsteroidPosition(batch_size)(t, a, e, inc, Omega, omega, f, epoch)
+    q = AsteroidPosition()(t, a, e, inc, Omega, omega, f, epoch)
     
     # Name the outputs
     q = Identity(name='q')(q)
-    # v = Identity(name='v')(v)
     
     # Wrap up the outputs
     outputs = (q,)
@@ -329,4 +386,5 @@ def main():
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
+    pass
 
