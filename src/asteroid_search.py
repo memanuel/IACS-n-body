@@ -12,6 +12,7 @@ import tensorflow as tf
 # from tensorflow.python.ops import math_ops
 from tensorflow.python.keras import backend as K
 import numpy as np
+from datetime import datetime
 
 # Local imports
 from asteroid_integrate import load_data as load_data_asteroids
@@ -21,6 +22,8 @@ from asteroid_data import get_earth_pos, orbital_element_batch
 from asteroid_model import AsteroidDirection
 from asteroid_model import AsteroidPosition, DirectionUnitVector
 # from asteroid_model make_model_ast_dir, make_model_ast_pos
+from search_score_functions import score_mean, score_var, score_mean_2d, score_var_2d
+# score_mean_2d_approx, score_var_2d_approx
 from tf_utils import Identity
 
 # Aliases
@@ -31,157 +34,6 @@ space_dims = 3
 
 # Load asteroid names and orbital elements
 ast_elt = load_data_asteroids()
-
-# ********************************************************************************************************************* 
-# Functions for scoring predicted asteroid directions vs. observations
-# ********************************************************************************************************************* 
-
-# ********************************************************************************************************************* 
-def score_mean(A: tf.Tensor):
-    """
-    Expected value of the score function 
-    f(epsilon) = exp(-1/2 A epsilon^2)
-    epsilon is the Euclidean distance between the predicted and observed direction; 
-    epsilon^2 = dx^2 + dy^2 + dz^2 with dx = u_obs_x - u_pred_x, etc.
-    If we use cylindrical coordinates (z, phi), with r^2 +z^2 = 1, x^2 + y^2 = r^2, and
-    x = r cos(phi), y = r sin(phi), z = z
-    and set the true direction at (0, 0, 1), we can get the EV by integrating over the sphere.
-    epsilon is a right triangle with sides (1-z) and r, regardless of phi, so
-    epsilon^2 = (1-z)^2 + r^2 = 1 -2z + z^2 + r^2 = 1 + (r^2+z^2) - 2z = 2 - 2z = 2(1-z)
-    This can be integrated symbolically.
-    """
-    # The expected value is (1 - e^-2A) / 2A
-    # return (1.0 - np.exp(-2.0*A)) / (2*A)
-    minus_two_A = tf.multiply(A, -2.0, name='minus_two_A')
-    expm1_m2a = tf.math.expm1(minus_two_A, name='expm1_m2a')
-    mean = tf.divide(expm1_m2a, minus_two_A)
-    return mean
-
-# ********************************************************************************************************************* 
-def score_var(A: tf.Tensor):
-    """
-    Variance of the score function 
-    f(epsilon) = exp(-1/2 A epsilon^2)
-    This can be integrated symbolically.
-    """
-    # The variance is (A*Coth(A)) * E[f]^2
-    # Calculate the leading factor
-    # B = (A / tf.tanh(A)) - 1.0
-    tanh_A = tf.tanh(A, name='tanh_A')
-    A_div_tanh_A = tf.divide(A, tanh_A, name='A_div_tanh_A')
-    B = tf.subtract(A_div_tanh_A, 1.0, name='B')
-
-    # Calculate the mean
-    mean: tf.Tensor = score_mean(A)
-    mean2 = tf.square(mean, name='mean2')
-    var = tf.multiply(B, mean2, name='var')
-    return var
-
-# ********************************************************************************************************************* 
-def score_std(A: tf.Tensor):
-    """
-    Standard deviation of the score function 
-    f(epsilon) = exp(-1/2 A epsilon^2)
-    This can be integrated symbolically.
-    """
-    # The variance is (A*Coth(A)) * E[f]^2
-    # The std deviation is sqrt(A*Coth(A)) * E[f]
-    # B = (A / tf.tanh(A)) - 1.0
-    tanh_A = tf.tanh(A, name='tanh_A')
-    A_div_tanh_A = tf.divide(A, tanh_A, name='A_div_tanh_A')
-    B = tf.subtract(A_div_tanh_A, 1.0, name='B')
-    # Calculate the mean
-    mean: tf.Tensor = score_mean(A)
-    std = tf.multiply(B, mean, name='std')
-    return std
-
-# ********************************************************************************************************************* 
-def test_score_moments_one(A: float, mean_exp: float, var_exp: float) -> bool:
-    """Test the mean and variance for the score function with three known values"""
-    # Test the mean
-    mean_calc = score_mean(A)
-    isOK: bool = np.isclose(mean_exp, mean_calc, atol=1.0E-7)     
-    if not isOK:
-        print(f'Failed on A = 1.0, expected mean {mean_exp}, got mean {mean_calc}.')
-
-    # Test the variance
-    var_calc = score_var(A)
-    isOK = isOK and np.isclose(var_exp, var_calc, atol=1.0E-7)
-    if not isOK:
-        print(f'Failed on A = 1.0, expected var {var_exp}, got var {var_calc}.')
-        
-    return isOK
-
-# ********************************************************************************************************************* 
-def test_score_moments():
-    """Test the mean and variance for the score function with three known values"""
-    # When A = 1.0, mean = 0.432332, var = 0.0585098
-    A = 1.0
-    mean_exp = 0.432332
-    var_exp = 0.0585098
-    isOK: bool = test_score_moments_one(A, mean_exp, var_exp)
-    
-    # When A = 32.828063500117445 (10 degrees), mean = 0.0152309, var = 0.00738346
-    A = 1.0 / np.deg2rad(10.0)**2
-    mean_exp = 0.0152309
-    var_exp = 0.00738346
-    isOK = isOK and test_score_moments_one(A, mean_exp, var_exp)
-    
-    # Report results
-    msg: str = 'PASS' if isOK else 'FAIL'
-    print(f'Test score moments: ***** {msg} *****')    
-    return isOK
-
-# ********************************************************************************************************************* 
-def test_score_num(N: int, R_deg: float):
-    """
-    Numerical test of score_mean and score_var functions
-    INPUTS:
-        N: number of points to test
-        R_deg: resolution factor in degrees
-    """
-    # Convert resolution factor to A
-    R: float = np.deg2rad(R_deg)
-    A: float = 1.0 / R**2
-    # Calculated mean and variance
-    mean_calc: float = score_mean(A)
-    std_calc: float = score_std(A)
-
-    # Numerical samples
-    directions: np.array = random_direction(N)
-    # Difference with north pole    
-    north_pole = np.array([0.0, 0.0, 1.0])
-    epsilon = directions- north_pole
-    epsilon2 = np.sum(epsilon*epsilon, axis=-1)
-
-    # Simulated mean and stdev
-    scores = np.exp(-0.5 * A * epsilon2)
-    mean_num: float = np.mean(scores)
-    mean_error_rel = np.abs(mean_num-mean_calc) / mean_calc
-    std_num: float = np.std(scores)
-    std_error_rel = np.abs(std_num-std_calc) / std_calc
-
-    # Test the mean
-    rtol: float = 2.0 / N**0.4
-    isOK: bool = np.isclose(mean_calc, mean_num, rtol=rtol)
-    print(f'\nTest score function with N={N}, R={R_deg} degrees:')
-    print(f'Mean:')
-    print(f'calc      = {mean_calc:10.8f}')
-    print(f'num       = {mean_num:10.8f}')
-    print(f'error_rel = {mean_error_rel:10.8f}')
-    
-    # Test the standard deviation
-    rtol = 2.0 / N**0.4
-    isOK = isOK and np.isclose(mean_calc, mean_num, rtol=rtol)
-    print(f'\nStandard Deviation:')
-    print(f'calc      = {std_calc:10.8f}')
-    print(f'num       = {std_num:10.8f}')
-    print(f'error_rel = {std_error_rel:10.8f}')
-    
-    # Summary results    
-    msg: str = 'PASS' if isOK else 'FAIL'
-    print(f'***** {msg} *****')
-    return isOK
 
 # ********************************************************************************************************************* 
 # Custom Layers
@@ -261,62 +113,25 @@ class TrajectoryScore(keras.layers.Layer):
         # print(f'score.shape = {score.shape}')
         
         # The expected score
-        mu = num_obs * score_mean(A)
+        wt_3d = 0.99
+        wt_2d = 0.01
+        mu_per_obs = wt_3d*score_mean(A) + wt_2d * score_mean_2d(A)
+        mu = tf.multiply(num_obs, mu_per_obs, name='mu')
         # print(f'mu.shape = {mu.shape}')
         
-        # The expected variance
-        sigma2 = num_obs * score_var(A)
-        sigma = tf.sqrt(sigma2)
+        # The expected variance; use the 2D (plane) estimate
+        var_per_obs = wt_3d *score_var(A) + wt_2d * score_var_2d(A)
+        sigma2 = tf.multiply(num_obs, var_per_obs, name='sigma2')
+        sigma = tf.sqrt(sigma2, name='sigma')
         # print(f'sigma.shape = {sigma.shape}')
         
         # The t-score for each sample
         # This is a modified t-score with an extra penalty for overly large R
-        mu_factor: float = 1.10
-        t_score = (score - mu_factor * mu) / sigma
+        t_score = (score - mu) / sigma
         # print(f't_score.shape = {t_score.shape}')
 
         # Return both the raw and t scores
-        return score, t_score
-
-## ********************************************************************************************************************* 
-#class TrajectoryLoss(keras.losses.Loss):    
-#    """Specialized loss for predicted asteroid directions."""
-#    def __init__(self, batch_size: int, traj_size: int, max_obs: int, num_obs: float, **kwargs):
-#        super(TrajectoryLoss, self).__init__(**kwargs)
-#        self.num_obs = num_obs
-#        
-#        # The direction difference layer
-#        self.dir_diff_layer = DirectionDifference(batch_size=batch_size, traj_size=traj_size, 
-#                                                  max_obs=max_obs, name='z')
-#        # The trajectory score layer
-#        self.traj_score_layer = TrajectoryScore(batch_size=batch_size, name='traj_score')
-#        
-#
-#    def call(self, y_true, y_pred, sample_weight=None):
-#        """
-#        Loss is the negative of the total t-score summed over all pointss
-#        INPUTS:
-#            t_score: (score - mu) / sigma; mu, sigma are theoretical mean and variance for num_obs
-#                     observations uniformly distributed on the unit sphere.
-#        """
-#        # Alias inputs
-#        u_obs = y_true
-#        u_pred = y_pred
-#        
-#        # Compute the difference in direction
-#        z = self.dir_diff_layer(u_obs, u_pred)
-#        
-#        # TODO: Make R flow through
-#        # Placeholder: ignore R
-#        R = tf.ones(u_pred.shape[0])*np.deg2rad(10.0)
-#        
-#        # Compute the scores from z and R
-#        score, t_score = self.traj_score_layer(z, R, self.num_obs)
-#        score = Identity(name='score')(score)
-#        t_score = Identity(name='t_score')(t_score)
-#
-#        # Sum the scores with a negative sign
-#        return -K.sum(t_score)
+        return score, t_score, mu, sigma
 
 # ********************************************************************************************************************* 
 class SearchCandidates(keras.layers.Layer):
@@ -334,22 +149,25 @@ class SearchCandidates(keras.layers.Layer):
         # The epoch is not trainable
         self.epoch = tf.Variable(initial_value=elts_np['epoch'], trainable=False, name='epoch')
         
-        # The resolution factor
+        # The log of the resolution factor
         R_np  = np.deg2rad(R_deg) * np.ones_like(elts_np['a'])
-        self.R = tf.Variable(initial_value=R_np, trainable=True, name='R')
+        self.log_R = tf.Variable(initial_value=np.log(R_np), trainable=True, name='log_R')
+        # self.R_ = tf.Variable(initial_value=R_np, trainable=True, name='R_')
 
     def call(self, inputs):
         """Return the current settings"""
         print(f'type(inputs)={type(inputs)}.')
-        return self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch, self.R
+        return self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch, self.log_R
 
 # ********************************************************************************************************************* 
 # Functional API model
 # ********************************************************************************************************************* 
 
 # ********************************************************************************************************************* 
-def make_model_asteroid_search(ts: tf.Tensor, 
-                               max_obs: int, 
+def make_model_asteroid_search(ts: tf.Tensor,
+                               elts_np: dict,
+                               max_obs: int,
+                               num_obs: float,
                                elt_batch_size: int=64, 
                                time_batch_size: int=None,
                                R_deg: float = 10.0):
@@ -364,17 +182,14 @@ def make_model_asteroid_search(ts: tf.Tensor,
     # Inputs
     t = keras.Input(shape=(), batch_size=time_batch_size, dtype=tf.float32, name='t' )
     idx = keras.Input(shape=(), batch_size=time_batch_size, dtype=tf.int32, name='idx')
-    row_len = keras.Input(shape=(), batch_size=time_batch_size, name='row_len')
-    u_obs = keras.Input(shape=(max_obs, space_dims), batch_size=time_batch_size, name='u_obs')
+    row_len = keras.Input(shape=(), batch_size=time_batch_size, dtype=tf.int32, name='row_len')
+    u_obs = keras.Input(shape=(max_obs, space_dims), batch_size=time_batch_size, dtype=tf.float32, name='u_obs')
     
     # Output times are a constant
     ts = keras.backend.constant(ts, name='ts')
 
-    # Orbital elements to try
-    elts_np = orbital_element_batch(1)
-    
     # Set of trainable weights with candidate
-    a, e, inc, Omega, omega, f, epoch, R = \
+    a, e, inc, Omega, omega, f, epoch, log_R = \
         SearchCandidates(elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='candidates')(idx)
 
     # Alias the orbital elements; 6 are trainable, epoch is fixed
@@ -385,8 +200,12 @@ def make_model_asteroid_search(ts: tf.Tensor,
     omega = Identity(name='omega')(omega)
     f = Identity(name='f')(f)
     epoch = Identity(name='epoch')(epoch)
+
     # Alias the resolution
-    R = Identity(name='R')(R)
+    R = keras.layers.Activation(activation=tf.exp, name='R')(log_R)
+    # R = keras.layers.Activation(activation=tf.nn.relu, name='R')(R_)
+    R_min = tf.constant(np.deg2rad(1.0/3600), dtype=tf.float32, name='R_min')
+    R = tf.add(R, R_min)
 
     # The orbital elements; stack to shape (elt_batch_size, 7)
     elts = tf.stack(values=[a, e, inc, Omega, omega, f, epoch], axis=1, name='elts')
@@ -398,9 +217,9 @@ def make_model_asteroid_search(ts: tf.Tensor,
     z = DirectionDifference(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, name='z')(u_obs, u_pred)
     
     # Raw score and t_score
-    score, t_score = TrajectoryScore(batch_size=elt_batch_size)(z, R, num_obs)
+    score, t_score, mu, sigma = TrajectoryScore(batch_size=elt_batch_size)(z, R, num_obs)
     # Stack the scores
-    scores = tf.stack(values=[score, t_score], axis=1, name='scores')
+    scores = tf.stack(values=[score, t_score, mu, sigma], axis=1, name='scores')
 
     # Wrap inputs and outputs
     inputs = (t, idx, row_len, u_obs)
@@ -415,8 +234,39 @@ def make_model_asteroid_search(ts: tf.Tensor,
     return model
 
 # ********************************************************************************************************************* 
+def perturb_elts(elts, sigma_a=0.05, sigma_e=0.10, sigma_f=np.deg2rad(5.0), mask=None):
+    """Apply perturbations to orbital elements"""
+
+    # Copy the elements
+    elts_new = elts.copy()
+
+    # Default for mask is all elements
+    if mask is None:
+        mask = np.ones_like(elts['a'], dtype=bool)
+
+    # Number of elements to perturb
+    num_shift = np.sum(mask)
+    
+    # Apply shift log(a)
+    log_a = np.log(elts['a'])
+    log_a[mask] += np.random.normal(scale=sigma_a, size=num_shift)
+    elts_new['a'] = np.exp(log_a)
+    
+    # Apply shift to log(e)
+    log_e = np.log(elts['e'])
+    log_e[mask] += np.random.normal(scale=sigma_e, size=num_shift)
+    elts_new['e'] = np.exp(log_e)
+    
+    # Apply shift directly to true anomaly f
+    f = elts['f']
+    f[mask] += np.random.normal(scale=sigma_f, size=num_shift)
+    elts_new['f'] = f
+    
+    return elts_new
+
+# ********************************************************************************************************************* 
 def main():
-    test_score_num(10000, 10.0)
+    pass
 
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
@@ -424,11 +274,16 @@ if __name__ == '__main__':
 
 # ********************************************************************************************************************* 
 # Dataset of observations: synthetic data on first 1000 asteroids
-n0: int = 1
-n1: int = 10
-time_batch_size = None
+
 # Build the dataset
-ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1, batch_size=time_batch_size)
+n0: int = 1
+n1: int = 100
+dt0: datetime = datetime(2000,1,1)
+dt1: datetime = datetime(2019,1,1)
+time_batch_size = None
+ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1, dt0=dt0, dt1=dt1, batch_size=time_batch_size)
+
+# def run_training():
 # Get example batch
 batch_in, batch_out = list(ds.take(1))[0]
 # Contents of this batch
@@ -440,42 +295,73 @@ u_obs = batch_in['u_obs']
 # Get trajectory size and max_obs
 traj_size: int = ts.shape[0]
 max_obs: int = u_obs.shape[1]
+num_obs: float = np.sum(row_len, dtype=np.float32)
 
 # Build functional model for asteroid score
 R_deg: float = 10.0
 elts_np = orbital_element_batch(1)
 elt_batch_size = 64
-model = make_model_asteroid_search(ts=ts, 
-                                   max_obs=max_obs, 
+
+# Mask where data expected vs not
+mask_good = np.arange(64) < 32
+mask_bad = ~mask_good
+# Perturb second half of orbital elements
+elts_np2 = perturb_elts(elts_np, mask=mask_bad)
+
+model = make_model_asteroid_search(ts=ts,
+                                   elts_np=elts_np2,
+                                   max_obs=max_obs,
+                                   num_obs=num_obs,
                                    elt_batch_size=elt_batch_size, 
                                    time_batch_size=time_batch_size,
                                    R_deg = R_deg)
 
-model.compile(optimizer='Adam')
+model.compile(optimizer='Adam', learning_rate=0.01)
 loss0 = model.evaluate(ds)
 pred0 = model.predict(ds)
 elts0, R0, u_pred0, z0, scores0 = pred0
 t_score0 = scores0[:,1]
-# elts0 = np.stack(list(elts_np.values()), axis=1)
 
-model.fit(ds, epochs=100)
+model.fit(ds, epochs=10)
 pred = model.predict(ds)
 
-loss = model.evaluate(ds)
-pred = model.predict_on_batch(ds)
-elts, R, u_pred, z, scores = pred
-raw_score = scores[:,0]
-t_score = scores[:,1]
-
-
-# Compare original and revised orbital elements
-R0 = np.ones(elt_batch_size) * np.deg2rad(R_deg)
-d_elt = elts - elts0
-d_a = d_elt[:,0]
-d_e = d_elt[:,1]
-d_inc = d_elt[:,2]
-d_Omega = d_elt[:,3]
-d_omega = d_elt[:,4]
-d_f = d_elt[:,5]
-d_R = R - R0
-
+def report_model(model, R0, mask_good):
+    """Report summary of model on good and b"""
+    mask_bad = ~mask_good
+    
+    loss = model.evaluate(ds)
+    pred = model.predict_on_batch(ds)
+    elts, R, u_pred, z, scores = pred
+    raw_score = scores[:,0]
+    t_score = scores[:,1]
+    mu = scores[:,2]
+    sigma = scores[:,3]
+    
+    # Compare original and revised orbital elements
+    R0 = np.ones(elt_batch_size) * np.deg2rad(R_deg)
+#    d_elt = elts - elts0
+#    d_a = d_elt[:,0]
+#    d_e = d_elt[:,1]
+#    d_inc = d_elt[:,2]
+#    d_Omega = d_elt[:,3]
+#    d_omega = d_elt[:,4]
+#    d_f = d_elt[:,5]
+    d_R = R - R0
+    
+    # Mean t_score on good and bad masks
+    mean_good = np.mean(t_score[mask_good])
+    std_good = np.std(t_score[mask_good])
+    mean_bad = np.mean(t_score[mask_bad])
+    std_bad = np.std(t_score[mask_bad])
+    
+    dR_good = np.mean(d_R[mask_good])
+    dR_bad = np.mean(d_R[mask_bad])
+    
+    print(f'Processed first {n1} asteroids; seeded with first 64. Perturbed 33-65.')
+    print(f'Mean & std t_score by Category:')
+    print(f'Good: {mean_good:8.2f} +/- {std_good:8.2f}')
+    print(f'Bad:  {mean_bad:8.2f} +/- {std_bad:8.2f}')
+    print(f'Change in resolution R By Category:')
+    print(f'Good: {dR_good:+8.6f}')
+    print(f'Bad:  {dR_bad:+8.6f}')
+    print(f'Loss = {loss:8.0f}')

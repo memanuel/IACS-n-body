@@ -195,16 +195,32 @@ def random_direction(num_bogus: int):
     return u
 
 # ********************************************************************************************************************* 
-def load_synthetic_obs_data(n0: int, n1: int):
-    """Load synthetic observation data"""
+def load_synthetic_obs_data(n0: int, n1: int, 
+                            dt0: datetime=datetime(2000,1,1),
+                            dt1: datetime=datetime(2019,10,1)):
+    """
+    Load synthetic observation data
+    INPUTS:
+        n0: First asteroid number
+        n1: Last asteroid number
+        dt0: Start date; defaults to 2000-01-01
+        dt1: End date; defaults to 2010-10-01
+    """
     # File name for this data set
     fname: str = f'../data/observations/synthetic_n_{n0:06}_{n1:06}.npz'
+
     # Load numpy data and unpack into variables
     data = np.load(fname)
     t = data['t']
     u = data['u']
     ast_num = data['ast_num']
-    return t, u, ast_num
+
+    # Convert dates to mjd for filtering
+    t0 = datetime_to_mjd(dt0)
+    t1 = datetime_to_mjd(dt1)
+    mask = (t0<=t) & (t<t1)
+
+    return t[mask], u[mask], ast_num[mask]
 
 # ********************************************************************************************************************* 
 def run_batch(n0: int, n1: int) -> None:
@@ -270,11 +286,14 @@ def make_ragged_tensors(t_np: np.array, u_np: np.array, ast_num_np: np.array, ba
     return t, u, ast_num
 
 # ********************************************************************************************************************* 
-def make_synthetic_obs_dataset(n0: int, n1: int, batch_size: int= None):
+def make_synthetic_obs_dataset(n0: int, n1: int, 
+                               dt0: datetime=datetime(2000,1,1),
+                               dt1: datetime=datetime(2019,10,1), 
+                               batch_size: int= None):
     """Create a tf.Dataset with synthetic data"""
     # Load data between asteroid numbers n0 and n1
-    t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1)
-    
+    t_np, u_np, ast_num_np = load_synthetic_obs_data(n0=n0, n1=n1, dt0=dt0, dt1=dt1)
+
     # Convert to tensors (regular for t, ragged for u and ast_num)
     t, u_r, ast_num_r = make_ragged_tensors(t_np=t_np, u_np=u_np, ast_num_np=ast_num_np, batch_size=batch_size)
     
