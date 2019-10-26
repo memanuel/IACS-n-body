@@ -34,6 +34,10 @@ space_dims = 3
 
 # Load asteroid names and orbital elements
 ast_elt = load_data_asteroids()
+# Range for resolution parameter
+log_R_min_ = np.log(np.deg2rad(1.0/3600))
+log_R_max_ = np.log(np.deg2rad(10.0))
+
 
 # ********************************************************************************************************************* 
 # Custom Layers
@@ -49,7 +53,7 @@ class DirectionDifference(keras.layers.Layer):
         self.traj_size = traj_size
         self.max_obs = max_obs
     
-    def call(self, u_obs, u_pred):
+    def call(self, u_obs, u_pred, idx):
         """
         INPUTS:
             u_obs: observed directions, PADDED to a regular tensor; shape (traj_size, max_obs, 3,)
@@ -64,16 +68,26 @@ class DirectionDifference(keras.layers.Layer):
         traj_size = self.traj_size
         max_obs = self.max_obs
 
+        # Slice of the full trajectory
+        i0 = idx[0]
+        i1 = idx[-1] + 1
+        u_pred_slice = u_pred[:,i0:i1]
+        # Manually set the shapes to work around documented bug on slices losing shape info
+        u_slice_shape = (batch_size, traj_size, 3)
+        u_pred_slice.set_shape(u_slice_shape)
+
         # Debug
         # print(f'u_obs.shape = {u_obs.shape}')
         # print(f'u_pred.shape = {u_pred.shape}')
+        # print(f'u_pred_slice.shape = {u_pred_slice.shape}')
         # print(f'batch_size={batch_size}, traj_size={traj_size}, max_obs={max_obs}.')
+        # print(f'i0={i0}, i1={i1}.')
 
         # The observations; broadcast to shape (1, traj_size, max_obs, 3)
         y = tf.broadcast_to(u_obs, (1, traj_size, max_obs, space_dims))
         # print(f'y.shape = {y.shape}')
         # The predicted directions; reshape to (batch_size, traj_size, 1, 3)
-        x = tf.reshape(u_pred, (batch_size, traj_size, 1, space_dims))
+        x = tf.reshape(u_pred_slice, (batch_size, traj_size, 1, space_dims))
         # print(f'x.shape = {x.shape}')
         
         # The difference in directions; size (batch_size, traj_size, max_obs, 3)
@@ -149,10 +163,10 @@ class SearchCandidates(keras.layers.Layer):
         # The epoch is not trainable
         self.epoch = tf.Variable(initial_value=elts_np['epoch'], trainable=False, name='epoch')
         
-        # The log of the resolution factor
-        R_np  = np.deg2rad(R_deg) * np.ones_like(elts_np['a'])
-        self.log_R = tf.Variable(initial_value=np.log(R_np), trainable=True, name='log_R')
-        # self.R_ = tf.Variable(initial_value=R_np, trainable=True, name='R_')
+        # The control of the log of the resolution factor between R_min and R_max
+        R_init= np.deg2rad(R_deg) * np.ones_like(elts_np['a'])
+        log_R_init  = np.log(R_init)
+        self.log_R = tf.Variable(initial_value=log_R_init, trainable=True, name='log_R')
 
     def call(self, inputs):
         """Return the current settings"""
@@ -170,7 +184,7 @@ def make_model_asteroid_search(ts: tf.Tensor,
                                num_obs: float,
                                elt_batch_size: int=64, 
                                time_batch_size: int=None,
-                               R_deg: float = 10.0):
+                               R_deg: float = 5.0):
     """Make functional API model for scoring elements"""
 
     # The full trajectory size
@@ -201,11 +215,14 @@ def make_model_asteroid_search(ts: tf.Tensor,
     f = Identity(name='f')(f)
     epoch = Identity(name='epoch')(epoch)
 
-    # Alias the resolution
-    R = keras.layers.Activation(activation=tf.exp, name='R')(log_R)
-    # R = keras.layers.Activation(activation=tf.nn.relu, name='R')(R_)
-    R_min = tf.constant(np.deg2rad(1.0/3600), dtype=tf.float32, name='R_min')
-    R = tf.add(R, R_min)
+    # Transform the resolution output
+    log_R = Identity(name='log_R')(log_R)
+    # Clip log_R in allowed range
+    log_R_min = tf.constant(log_R_min_, dtype=tf.float32, name='log_R_min')
+    log_R_max = tf.constant(log_R_max_, dtype=tf.float32, name='log_R_max')
+    log_R_clip = tf.clip_by_value(log_R, log_R_min, log_R_max, name='log_R_clip')
+    # The resolution from log_R, with clipping
+    R = keras.layers.Activation(activation=tf.exp, name='R')(log_R_clip)
 
     # The orbital elements; stack to shape (elt_batch_size, 7)
     elts = tf.stack(values=[a, e, inc, Omega, omega, f, epoch], axis=1, name='elts')
@@ -214,7 +231,10 @@ def make_model_asteroid_search(ts: tf.Tensor,
     u_pred = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')(a, e, inc, Omega, omega, f, epoch)
 
     # Difference in direction between u_obs and u_pred
-    z = DirectionDifference(batch_size=elt_batch_size, traj_size=traj_size, max_obs=max_obs, name='z')(u_obs, u_pred)
+    z = DirectionDifference(batch_size=elt_batch_size, 
+                            traj_size=time_batch_size, 
+                            max_obs=max_obs, 
+                            name='z')(u_obs, u_pred, idx)
     
     # Raw score and t_score
     score, t_score, mu, sigma = TrajectoryScore(batch_size=elt_batch_size)(z, R, num_obs)
@@ -273,6 +293,48 @@ if __name__ == '__main__':
     main()
 
 # ********************************************************************************************************************* 
+def report_model(model, R0, mask_good):
+    """Report summary of model on good and b"""
+    mask_bad = ~mask_good
+    
+    loss = model.evaluate(ds)
+    pred = model.predict_on_batch(ds)
+    elts, R, u_pred, z, scores = pred
+    # raw_score = scores[:,0]
+    t_score = scores[:,1]
+    # mu = scores[:,2]
+    # sigma = scores[:,3]
+    
+    # Compare original and revised orbital elements
+    R0 = np.ones(elt_batch_size) * np.deg2rad(R_deg)
+#    d_elt = elts - elts0
+#    d_a = d_elt[:,0]
+#    d_e = d_elt[:,1]
+#    d_inc = d_elt[:,2]
+#    d_Omega = d_elt[:,3]
+#    d_omega = d_elt[:,4]
+#    d_f = d_elt[:,5]
+    d_R = R - R0
+    
+    # Mean t_score on good and bad masks
+    mean_good = np.mean(t_score[mask_good])
+    std_good = np.std(t_score[mask_good])
+    mean_bad = np.mean(t_score[mask_bad])
+    std_bad = np.std(t_score[mask_bad])
+    
+    dR_good = np.mean(d_R[mask_good])
+    dR_bad = np.mean(d_R[mask_bad])
+    
+    print(f'Processed first {n1} asteroids; seeded with first 64. Perturbed 33-65.')
+    print(f'Mean & std t_score by Category:')
+    print(f'Good: {mean_good:8.2f} +/- {std_good:8.2f}')
+    print(f'Bad:  {mean_bad:8.2f} +/- {std_bad:8.2f}')
+    print(f'Change in resolution R By Category:')
+    print(f'Good: {dR_good:+8.6f}')
+    print(f'Bad:  {dR_bad:+8.6f}')
+    print(f'Loss = {loss:8.0f}')
+
+# ********************************************************************************************************************* 
 # Dataset of observations: synthetic data on first 1000 asteroids
 
 # Build the dataset
@@ -280,7 +342,7 @@ n0: int = 1
 n1: int = 100
 dt0: datetime = datetime(2000,1,1)
 dt1: datetime = datetime(2019,1,1)
-time_batch_size = None
+time_batch_size = 1024
 ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1, dt0=dt0, dt1=dt1, batch_size=time_batch_size)
 
 # def run_training():
@@ -316,52 +378,15 @@ model = make_model_asteroid_search(ts=ts,
                                    time_batch_size=time_batch_size,
                                    R_deg = R_deg)
 
-model.compile(optimizer='Adam', learning_rate=0.01)
+model.compile(optimizer='Adam', learning_rate=0.05)
 loss0 = model.evaluate(ds)
 pred0 = model.predict(ds)
 elts0, R0, u_pred0, z0, scores0 = pred0
 t_score0 = scores0[:,1]
 
-model.fit(ds, epochs=10)
+hist = model.fit(ds, epochs=10)
 pred = model.predict(ds)
-
-def report_model(model, R0, mask_good):
-    """Report summary of model on good and b"""
-    mask_bad = ~mask_good
-    
-    loss = model.evaluate(ds)
-    pred = model.predict_on_batch(ds)
-    elts, R, u_pred, z, scores = pred
-    raw_score = scores[:,0]
-    t_score = scores[:,1]
-    mu = scores[:,2]
-    sigma = scores[:,3]
-    
-    # Compare original and revised orbital elements
-    R0 = np.ones(elt_batch_size) * np.deg2rad(R_deg)
-#    d_elt = elts - elts0
-#    d_a = d_elt[:,0]
-#    d_e = d_elt[:,1]
-#    d_inc = d_elt[:,2]
-#    d_Omega = d_elt[:,3]
-#    d_omega = d_elt[:,4]
-#    d_f = d_elt[:,5]
-    d_R = R - R0
-    
-    # Mean t_score on good and bad masks
-    mean_good = np.mean(t_score[mask_good])
-    std_good = np.std(t_score[mask_good])
-    mean_bad = np.mean(t_score[mask_bad])
-    std_bad = np.std(t_score[mask_bad])
-    
-    dR_good = np.mean(d_R[mask_good])
-    dR_bad = np.mean(d_R[mask_bad])
-    
-    print(f'Processed first {n1} asteroids; seeded with first 64. Perturbed 33-65.')
-    print(f'Mean & std t_score by Category:')
-    print(f'Good: {mean_good:8.2f} +/- {std_good:8.2f}')
-    print(f'Bad:  {mean_bad:8.2f} +/- {std_bad:8.2f}')
-    print(f'Change in resolution R By Category:')
-    print(f'Good: {dR_good:+8.6f}')
-    print(f'Bad:  {dR_bad:+8.6f}')
-    print(f'Loss = {loss:8.0f}')
+report_model(model, R0, mask_good)
+pred = model.predict(ds)
+elts, R, u_pred, z, scores = pred
+dR = R - R0
