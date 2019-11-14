@@ -17,6 +17,7 @@ import numpy as np
 from orbital_element import MeanToTrueAnomaly, TrueToMeanAnomaly
 from asteroid_data import make_dataset_ast_pos, make_dataset_ast_dir, get_earth_pos, orbital_element_batch
 from asteroid_integrate import calc_ast_pos
+from  tf_utils import Identity
 # Aliases
 keras = tf.keras
 
@@ -324,13 +325,19 @@ def make_model_ast_pos(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     ts = keras.backend.constant(ts, name='ts')
 
     # Call asteroid position layer
-    q = AsteroidPosition(ts, batch_size, name='q')(a, e, inc, Omega, omega, f, epoch)
+    # q = AsteroidPosition(ts, batch_size, name='q')(a, e, inc, Omega, omega, f, epoch)
+    ast_pos_layer = AsteroidPosition(ts, batch_size, name='q')
+    q = ast_pos_layer(a, e, inc, Omega, omega, f, epoch)
     
     # Wrap up the outputs
     outputs = (q,)
 
     # Wrap this into a model
     model = keras.Model(inputs=inputs, outputs=outputs, name='model_asteroid_pos')
+    
+    # Bind the asteroid position layer
+    model.ast_pos_layer = ast_pos_layer
+    
     return model
 
 
@@ -372,35 +379,6 @@ def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     return model
 
 # ********************************************************************************************************************* 
-# Custom Models
-# ********************************************************************************************************************* 
-
-# ********************************************************************************************************************* 
-class AsteroidPositionModel(keras.Model):
-    """
-    Compute orbit positions for asteroids in the solar system from the initial orbital elements with the Kepler model.
-    Inputs for the model are 6 orbital elements, the epoch, and the desired times for position outputs.
-    Outputs of the model are the position of the asteroid relative to the sun.    
-    """
-    
-    def __init__(self, ts, batch_size: int, **kwargs):
-        # Initialize keras.Model class
-        super(AsteroidPositionModel, self).__init__(**kwargs)
-        # Output times are a constant
-        self.ts = keras.backend.constant(ts, name='ts')
-        # Build the position layer
-        self.position_layer = AsteroidPosition(self.ts, batch_size, name='q')
-        
-    def call(self, inputs):
-        """Simulate the orbital trajectories."""
-        # Unpack the inputs
-        a, e, inc, Omega, omega, f, epoch, _ = inputs
-        # Dispatch call to position layer
-        q = self.position_layer(a, e, inc, Omega, omega, f, epoch)
-        return q
-    
-
-# ********************************************************************************************************************* 
 # Tests
 # ********************************************************************************************************************* 
 
@@ -421,10 +399,10 @@ def test_ast_pos() -> bool:
     # Get reference times
     batch_in, batch_out = list(ds.take(1))[0]
     ts = batch_in['ts'][0]
-    # Create the model to predict asteroid trajectories
-    # model: keras.Model = make_model_ast_pos(ts=ts)
     batch_size = 64
-    model = AsteroidPositionModel(ts=ts, batch_size=batch_size)
+    # Create the model to predict asteroid trajectories
+    model: keras.Model = make_model_ast_pos(ts=ts, batch_size=batch_size)
+    # model = AsteroidPositionModel(ts=ts, batch_size=batch_size)
     # Compile with MSE (mean squared error) loss
     model.compile(loss='MSE')
     # Evaluate this model
@@ -472,8 +450,59 @@ def test_ast_dir() -> bool:
 # ********************************************************************************************************************* 
 def main():
     test_ast_pos()
-    # test_ast_dir()
+    test_ast_dir()
     
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
-    main()
+    # main()
+    pass
+
+# Load data for the first 1000 asteroids
+ds: tf.data.Dataset = make_dataset_ast_pos(0, 1)
+# Get reference times
+batch_in, batch_out = list(ds.take(1))[0]
+ts = batch_in['ts'][0]
+batch_size = 64
+# Create the model to predict asteroid trajectories
+model: keras.Model = make_model_ast_pos(ts=ts, batch_size=batch_size)
+# model = AsteroidPositionModel(ts=ts, batch_size=batch_size)
+# Compile with MSE (mean squared error) loss
+model.compile(loss='MSE')
+
+# Evaluate this model
+mse: float = model.evaluate(ds)
+rmse: float = np.sqrt(mse)
+# Threshold for passing
+thresh: float = 0.125
+isOK: bool = (rmse < thresh)
+# Report results
+msg: str = 'PASS' if isOK else 'FAIL'
+print(f'Root MSE for asteroid model on first 1000 asteroids = {rmse:8.6f}')
+print(f'***** {msg} *****')
+
+# Evaluate on first batch before adjustments
+q1_true = batch_out['q']
+q1_pred = model.predict(batch_in)
+err1_pre = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
+print(f'Mean error on first batch of 64 asteroids before correction: {err1_pre:5.3e}')
+
+# Compute correction factor with calc_ast_pos
+# dq = q1_true - q1_pred
+elts = {
+    'a': batch_in['a'],
+    'e': batch_in['e'],
+    'inc': batch_in['inc'],
+    'Omega': batch_in['Omega'],
+    'omega': batch_in['omega'],
+    'f': batch_in['f'],
+    }
+# Epoch must be constant in a batch
+epoch = batch_in['epoch'][0].numpy()
+q_true = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
+dq = q1_true - q1_pred
+
+# Evaluate error after correction
+model.ast_pos_layer.update_dq(dq)
+q1_pred = model.predict(batch_in)
+err1_post = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
+print(f'Mean error on first batch of 64 asteroids after correction: {err1_post:5.3e}')
