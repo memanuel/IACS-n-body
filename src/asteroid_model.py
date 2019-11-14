@@ -16,7 +16,7 @@ import numpy as np
 # from tf_utils import Identity
 from orbital_element import MeanToTrueAnomaly, TrueToMeanAnomaly
 from asteroid_data import make_dataset_ast_pos, make_dataset_ast_dir, get_earth_pos, orbital_element_batch
-
+from asteroid_integrate import calc_ast_pos
 # Aliases
 keras = tf.keras
 
@@ -169,7 +169,15 @@ class AsteroidPosition(keras.layers.Layer):
         # print(f't_rep.shape = {t_rep.shape}')
         # Transpose axes to make shape (batch_size, traj_size, 1)
         self.t_vec = tf.transpose(t_rep, perm=(1,0,2))
-        # print(f't_vec.shape = {t_vec.shape}')
+        print(f't_vec.shape = {self.t_vec.shape}')
+
+        # The adjustment dq to correct the Kepler approximation to match the numerical integration
+        self.dq = keras.backend.variable(np.zeros((batch_size, self.traj_size, space_dims,)), 
+                                         dtype=tf.float32, name = 'dq')
+
+    def update_dq(self, dq):
+        """Update the value of dq"""
+        self.dq.assign(dq)
 
     def call(self, a, e, inc, Omega, omega, f, epoch):
         """
@@ -223,8 +231,9 @@ class AsteroidPosition(keras.layers.Layer):
         
         # Convert orbital elements to cartesian coordinates 
         q = ElementToPosition(name='q')(elt_t)
-    
-        return q
+   
+        # The estimated position includes the optional correction factor dq
+        return tf.add(q, self.dq)
 
 # ********************************************************************************************************************* 
 class DirectionUnitVector(keras.layers.Layer):
@@ -282,7 +291,7 @@ class AsteroidDirection(keras.layers.Layer):
         u = DirectionUnitVector(name='u')(self.q_earth, q_ast)
         
         return u
-
+    
 # ********************************************************************************************************************* 
 # Functional API Models
 # ********************************************************************************************************************* 
@@ -325,62 +334,6 @@ def make_model_ast_pos(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     return model
 
 
-## ********************************************************************************************************************* 
-#def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
-#    """
-#    Compute direction from earth to asteroids in the solar system from
-#    the initial orbital elements with the Kepler model.
-#    Factory function that returns a functional model.
-#    Inputs for the model are 6 orbital elements, the epoch, and the desired times for position outputs.
-#    Outputs of the model are the unit vector (direction) pointing from earth to the asteroid
-#    INPUTS;
-#        ts: times to evaluate asteroid direction from earth
-#        batch_size: defaults to None for variable batch size
-#    """
-#    # Get trajectory size from ts
-#    traj_size: int = ts.shape[0]
-#    
-#    # Inputs: 6 orbital elements; epoch; ts (output times as MJD)
-#    a = keras.Input(shape=(), batch_size=batch_size, name='a')
-#    e = keras.Input(shape=(), batch_size=batch_size, name='e')
-#    inc = keras.Input(shape=(), batch_size=batch_size, name='inc')
-#    Omega = keras.Input(shape=(), batch_size=batch_size, name='Omega')
-#    omega = keras.Input(shape=(), batch_size=batch_size, name='omega')
-#    f = keras.Input(shape=(), batch_size=batch_size, name='f')
-#    epoch = keras.Input(shape=(), batch_size=batch_size, name='epoch')
-#
-#    # Wrap these up into one tuple of inputs for the model
-#    inputs = (a, e, inc, Omega, omega, f, epoch)
-#    
-#    # Output times are a constant
-#    ts = keras.backend.constant(ts, name='ts')
-#
-#    # Call asteroid position layer
-#    q = AsteroidPosition(ts, batch_size, name='q')(a, e, inc, Omega, omega, f, epoch)
-#
-#    # Take a one time snapshot of the earth's position at these times
-#    q_earth_np = get_earth_pos(ts)
-#    # print(f'q_earth_np loaded, shape = {q_earth_np.shape}')
-#    q_earth_np = q_earth_np.reshape(1, traj_size, space_dims)
-#    q_earth = keras.backend.constant(q_earth_np, 
-#                                     dtype=tf.float32,
-#                                     shape=q_earth_np.shape,
-#                                     name='q_earth')
-#    # print(f'q_earth keras.constant created, shape = {q_earth.shape}')
-#
-#    # Unit displacement vector (direction) from earth to asteroid
-#    u = DirectionUnitVector(name='dir_earth_ast')(q_earth, q)
-#
-#    # Name the outputs
-#    u = Identity(name='u')(u)
-#
-#    # Wrap the outputs
-#    outputs = (u,)
-#    
-#    # Wrap this into a model
-#    model = keras.Model(inputs=inputs, outputs=outputs, name='model_asteroid_dir')
-#    return model
-#
 # ********************************************************************************************************************* 
 def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     """
@@ -393,7 +346,7 @@ def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
         ts: times to evaluate asteroid direction from earth
         batch_size: defaults to None for variable batch size
     """
-    # Inputs: 6 orbital elements; epoch; ts (output times as MJD)
+    # Inputs: 6 orbital elements; epoch
     a = keras.Input(shape=(), batch_size=batch_size, name='a')
     e = keras.Input(shape=(), batch_size=batch_size, name='e')
     inc = keras.Input(shape=(), batch_size=batch_size, name='inc')
@@ -419,6 +372,39 @@ def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     return model
 
 # ********************************************************************************************************************* 
+# Custom Models
+# ********************************************************************************************************************* 
+
+# ********************************************************************************************************************* 
+class AsteroidPositionModel(keras.Model):
+    """
+    Compute orbit positions for asteroids in the solar system from the initial orbital elements with the Kepler model.
+    Inputs for the model are 6 orbital elements, the epoch, and the desired times for position outputs.
+    Outputs of the model are the position of the asteroid relative to the sun.    
+    """
+    
+    def __init__(self, ts, batch_size: int, **kwargs):
+        # Initialize keras.Model class
+        super(AsteroidPositionModel, self).__init__(**kwargs)
+        # Output times are a constant
+        self.ts = keras.backend.constant(ts, name='ts')
+        # Build the position layer
+        self.position_layer = AsteroidPosition(self.ts, batch_size, name='q')
+        
+    def call(self, inputs):
+        """Simulate the orbital trajectories."""
+        # Unpack the inputs
+        a, e, inc, Omega, omega, f, epoch, _ = inputs
+        # Dispatch call to position layer
+        q = self.position_layer(a, e, inc, Omega, omega, f, epoch)
+        return q
+    
+
+# ********************************************************************************************************************* 
+# Tests
+# ********************************************************************************************************************* 
+
+# ********************************************************************************************************************* 
 def test_ast_pos_layer():
     """Test custom layer for asteroid positions"""
     ast_pos_layer = AsteroidPosition(batch_size=64)
@@ -436,7 +422,9 @@ def test_ast_pos() -> bool:
     batch_in, batch_out = list(ds.take(1))[0]
     ts = batch_in['ts'][0]
     # Create the model to predict asteroid trajectories
-    model: keras.Model = make_model_ast_pos(ts=ts)
+    # model: keras.Model = make_model_ast_pos(ts=ts)
+    batch_size = 64
+    model = AsteroidPositionModel(ts=ts, batch_size=batch_size)
     # Compile with MSE (mean squared error) loss
     model.compile(loss='MSE')
     # Evaluate this model
@@ -484,7 +472,7 @@ def test_ast_dir() -> bool:
 # ********************************************************************************************************************* 
 def main():
     test_ast_pos()
-    test_ast_dir()
+    # test_ast_dir()
     
 # ********************************************************************************************************************* 
 if __name__ == '__main__':

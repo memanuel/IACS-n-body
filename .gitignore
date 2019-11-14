@@ -33,6 +33,8 @@ src/tensorflow-tutorial/training_1
 src/tensorflow-tutorial/training_2
 src/tensorflow-tutorial/weights
 
+# Log files
+logs
 
 # ******************************************************************************************
 # Byte-compiled / optimized / DLL files
