@@ -14,14 +14,15 @@ from tensorflow.python.keras import backend as K
 import numpy as np
 from datetime import datetime
 import logging
+from typing import Dict
 
 # Local imports
 from asteroid_integrate import load_data as load_data_asteroids
 from observation_data import make_synthetic_obs_dataset, random_direction
 # from observation_data import make_synthetic_obs_tensors
-from asteroid_data import get_earth_pos, orbital_element_batch
+from asteroid_data import orbital_element_batch
 from asteroid_model import AsteroidDirection
-from asteroid_model import AsteroidPosition, DirectionUnitVector
+from asteroid_integrate import calc_ast_pos
 # from asteroid_model make_model_ast_dir, make_model_ast_pos
 from search_score_functions import score_mean, score_var, score_mean_2d, score_var_2d
 # score_mean_2d_approx, score_var_2d_approx
@@ -184,7 +185,7 @@ class SearchCandidates(keras.layers.Layer):
 
 # ********************************************************************************************************************* 
 def make_model_asteroid_search(ts: tf.Tensor,
-                               elts_np: dict,
+                               elts_np: Dict,
                                max_obs: int,
                                num_obs: float,
                                elt_batch_size: int=64, 
@@ -233,7 +234,18 @@ def make_model_asteroid_search(ts: tf.Tensor,
     elts = tf.stack(values=[a, e, inc, Omega, omega, f, epoch], axis=1, name='elts')
 
     # The predicted direction
-    u_pred = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')(a, e, inc, Omega, omega, f, epoch)
+    # u_pred = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')(a, e, inc, Omega, omega, f, epoch)
+    ast_dir_layer = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')
+
+    # Compute numerical orbits for calibration
+    epoch0 = elts_np['epoch'][0]
+    print(f'Numerically integrating orbits for calibration...')
+    q_ast, q_sun, q_earth = calc_ast_pos(elts=elts_np, epoch=epoch0, ts=ts)
+
+    # Calibrate the direction prediction layer
+    ast_dir_layer.calibrate(elts=elts_np, q_ast=q_ast, q_sun=q_sun)
+    # Tensor of predicted directions
+    u_pred = ast_dir_layer(a, e, inc, Omega, omega, f, epoch)
 
     # Difference in direction between u_obs and u_pred
     z = DirectionDifference(batch_size=elt_batch_size, 
@@ -253,9 +265,12 @@ def make_model_asteroid_search(ts: tf.Tensor,
     # Create model with functional API
     model = keras.Model(inputs=inputs, outputs=outputs)
 
+    # Bind the asteroid direction layer
+    model.ast_dir_layer = ast_dir_layer
+
     # Add custom loss; negative of the total t_score
     model.add_loss(-tf.reduce_sum(t_score))
-       
+
     return model
 
 # ********************************************************************************************************************* 
@@ -298,11 +313,11 @@ if __name__ == '__main__':
     main()
 
 # ********************************************************************************************************************* 
-def report_model(model, R0, mask_good):
+def report_model(model, R0, mask_good, steps, elts_true):
     """Report summary of model on good and b"""
     mask_bad = ~mask_good
-    
-    loss = model.evaluate(ds)
+
+    loss = model.evaluate(ds, steps=steps)
     pred = model.predict_on_batch(ds)
     elts, R, u_pred, z, scores = pred
     # raw_score = scores[:,0]
@@ -310,17 +325,20 @@ def report_model(model, R0, mask_good):
     # mu = scores[:,2]
     # sigma = scores[:,3]
     
-    # Compare original and revised orbital elements
+    # Change in resolution
     R0 = np.ones(elt_batch_size) * np.deg2rad(R_deg)
-#    d_elt = elts - elts0
-#    d_a = d_elt[:,0]
-#    d_e = d_elt[:,1]
-#    d_inc = d_elt[:,2]
-#    d_Omega = d_elt[:,3]
-#    d_omega = d_elt[:,4]
-#    d_f = d_elt[:,5]
     d_R = R - R0
-    
+
+    # Error in orbital elements
+    elt_err = np.abs(elts - elts_true)
+    # Mean element error on good and bad masks
+    elt_err_good = elt_err[mask_good]
+    elt_err_bad = elt_err[mask_bad]
+    err_a_good = np.mean(elt_err_good[:,0])
+    err_e_good = np.mean(elt_err_good[:,1])
+    err_a_bad = np.mean(elt_err_bad[:,0])
+    err_e_bad = np.mean(elt_err_bad[:,1])
+
     # Mean t_score on good and bad masks
     mean_good = np.mean(t_score[mask_good])
     std_good = np.std(t_score[mask_good])
@@ -329,15 +347,17 @@ def report_model(model, R0, mask_good):
     
     dR_good = np.mean(d_R[mask_good])
     dR_bad = np.mean(d_R[mask_bad])
-    
-    print(f'Processed first {n1} asteroids; seeded with first 64. Perturbed 33-65.')
-    print(f'Mean & std t_score by Category:')
+        
+    print(f'\nLoss = {loss:8.0f}')
+    print(f'\nError in orbital elements:')
+    print(f'Good: a: {err_a_good:5.3e},  e: {err_e_good:5.3e}')
+    print(f'Bad:  a: {err_a_bad:5.3e},  e: {err_e_bad:5.3e}')
+    print(f'\nMean & std t_score by Category:')
     print(f'Good: {mean_good:8.2f} +/- {std_good:8.2f}')
     print(f'Bad:  {mean_bad:8.2f} +/- {std_bad:8.2f}')
-    print(f'Change in resolution R By Category:')
+    print(f'\nChange in resolution R By Category:')
     print(f'Good: {dR_good:+8.6f}')
     print(f'Bad:  {dR_bad:+8.6f}')
-    print(f'Loss = {loss:8.0f}')
 
 # ********************************************************************************************************************* 
 # Dataset of observations: synthetic data on first 1000 asteroids
@@ -348,6 +368,8 @@ n1: int = 100
 dt0: datetime = datetime(2000,1,1)
 dt1: datetime = datetime(2019,1,1)
 time_batch_size = 1024
+traj_size = 14976
+steps = int(np.ceil(traj_size / time_batch_size))
 ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1, dt0=dt0, dt1=dt1, batch_size=time_batch_size)
 
 # def run_training():
@@ -368,6 +390,9 @@ num_obs: float = np.sum(row_len, dtype=np.float32)
 R_deg: float = 10.0
 elts_np = orbital_element_batch(1)
 elt_batch_size = 64
+# The correct orbital elements as an array
+elts_true = np.array([elts_np['a'], elts_np['e'], elts_np['inc'], elts_np['Omega'], 
+                      elts_np['omega'], elts_np['f'], elts_np['epoch']]).transpose()
 
 # Mask where data expected vs not
 mask_good = np.arange(64) < 32
@@ -383,15 +408,24 @@ model = make_model_asteroid_search(ts=ts,
                                    time_batch_size=time_batch_size,
                                    R_deg = R_deg)
 
-model.compile(optimizer='Adam', learning_rate=0.05)
-loss0 = model.evaluate(ds)
-pred0 = model.predict(ds)
+# model.compile(optimizer='Adam', learning_rate=0.05)
+model.compile(optimizer='Adam', learning_rate=0.001)
+# Report losses before training
+print(f'Processed first {n1} asteroids; seeded with first 64. Perturbed 33-65.')
+print(f'Model before training:')
+# loss0 = model.evaluate(ds, steps=steps)
+pred0 = model.predict_on_batch(ds)
 elts0, R0, u_pred0, z0, scores0 = pred0
+report_model(model, R0, mask_good, steps, elts_true)
 t_score0 = scores0[:,1]
 
-hist = model.fit(ds, epochs=10)
-pred = model.predict(ds)
-report_model(model, R0, mask_good)
-pred = model.predict(ds)
+hist = model.fit(ds, epochs=10, steps_per_epoch=steps)
+pred = model.predict_on_batch(ds)
+report_model(model, R0, mask_good, steps, elts_true)
 elts, R, u_pred, z, scores = pred
+print(f'Model after training:')
+report_model(model, R0, mask_good, steps, elts_true)
 dR = R - R0
+
+elt_err = elts - elts_true
+elt_err = np.mean(np.abs(elt_err), axis=0)

@@ -340,8 +340,8 @@ def make_synthetic_obs_dataset(n0: int, n1: int,
     ds = tf.data.Dataset.from_tensor_slices((inputs, outputs))
     
     # Batch the dataset
-    drop_remainder: bool = True    
-    ds = ds.batch(batch_size, drop_remainder=drop_remainder)
+    drop_remainder: bool = False    
+    ds = ds.batch(batch_size, drop_remainder=drop_remainder).repeat()
     # Return the dataset as well as tensors with the time snapshots and row lengths
     return ds, t, row_len
 

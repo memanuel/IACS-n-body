@@ -174,8 +174,9 @@ class AsteroidPosition(keras.layers.Layer):
         # print(f't_vec.shape = {self.t_vec.shape}')
 
         # The adjustment dq to correct the Kepler approximation to match the numerical integration
-        self.dq = keras.backend.variable(np.zeros((batch_size, self.traj_size, space_dims,)), 
-                                         dtype=tf.float32, name = 'dq')
+        # self.dq = keras.backend.variable(np.zeros((batch_size, self.traj_size, space_dims,)), dtype=tf.float32, name = 'dq')
+        self.dq = tf.Variable(initial_value=np.zeros((batch_size, self.traj_size, space_dims,)), 
+                              dtype=tf.float32, trainable=False, name='dq')
 
     def update_dq(self, dq):
         """Update the value of dq"""
