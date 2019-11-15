@@ -251,6 +251,8 @@ def calc_ast_pos(elts: Dict[str, np.array], epoch: float, ts: np.array) -> np.ar
     # Number of heavy bodies; saved before first asteroid in output array
     N_heavy: int = N - N_ast
 
+    # The sun is the primary and is always in column 0
+    sun_idx = 0
     # Column index of Earth by searching for hash of earth in all hashes of the simulation
     hash_earth = rebound.hash('Earth')
     hashes = np.zeros(N, dtype=np.uint32)
@@ -284,12 +286,15 @@ def calc_ast_pos(elts: Dict[str, np.array], epoch: float, ts: np.array) -> np.ar
         # Process this row
         process_row(sim=sim_back, t=t, row=row)
     
+    # Position of sun is the relevant column
+    q_sun = q[:, sun_idx, 0:3]
     # Position of earth is the relevant column
-    q_earth = q[:, earth_idx, 0:3].astype(np.float32)
+    q_earth = q[:, earth_idx, 0:3]
     # The asteroid positions are in the right-hand slice of q_all
     # Transpose so resulting array has size (N_ast, traj_size, 3)
-    q_ast = q[:, N_heavy:N, 0:3].transpose((1,0,2)).astype(np.float32)
-    return q_earth, q_ast
+    q_ast = q[:, N_heavy:N, 0:3].transpose((1,0,2))
+
+    return q_sun, q_earth, q_ast
 
 # ********************************************************************************************************************* 
 def make_sim_asteroids_horizons(asteroid_names: List[str], epoch: datetime) -> rebound.Simulation:

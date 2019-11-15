@@ -181,6 +181,22 @@ class AsteroidPosition(keras.layers.Layer):
         """Update the value of dq"""
         self.dq.assign(dq)
 
+    def calibrate(self, elts, q_ast):
+        """Calibrate this model by setting dq to recover q_ast"""
+        # Unpack elements
+        a = elts['a']
+        e = elts['e']
+        inc = elts['inc']
+        Omega = elts['Omega']
+        omega = elts['omega']
+        f = elts['f']
+        epoch = elts['epoch']
+        # Predict with these elements
+        q_pred = self.call(a, e, inc, Omega, omega, f, epoch)
+        # Compute the offset and apply it to the model
+        dq = q_ast - q_pred
+        self.update_dq(dq)
+
     def call(self, a, e, inc, Omega, omega, f, epoch):
         """
         Simulate the orbital trajectories.  
@@ -285,6 +301,14 @@ class AsteroidDirection(keras.layers.Layer):
         self.q_earth = keras.backend.constant(q_earth_np, dtype=tf.float32, shape=q_earth_np.shape, name='q_earth')
         # print(f'q_earth.shape = {self.q_earth.shape}')
 
+    def update_q_earth(self, q_earth):
+        """Update the value of q_earth"""
+        self.q_earth = keras.backend.constant(q_earth, dtype=tf.float32, shape=q_earth.shape, name='q_earth')
+
+    def calibrate(self, elts, q_ast):
+        """Calibrate this model by calibrating the underlying position layer"""
+        self.q_layer.calibrate(elts=elts, q_ast=q_ast)
+
     def call(self, a, e, inc, Omega, omega, f, epoch):
         # Calculate position
         q_ast = self.q_layer(a, e, inc, Omega, omega, f, epoch)
@@ -370,13 +394,20 @@ def make_model_ast_dir(ts: tf.Tensor, batch_size:int =64) -> keras.Model:
     ts = keras.backend.constant(ts, name='ts')
 
     # All the work done in a single layer
-    u = AsteroidDirection(ts, batch_size, name='u')(a, e, inc, Omega, omega, f, epoch)
-    
+    # u = AsteroidDirection(ts, batch_size, name='u')(a, e, inc, Omega, omega, f, epoch)
+    ast_dir_layer = AsteroidDirection(ts, batch_size, name='u')
+    u = ast_dir_layer(a, e, inc, Omega, omega, f, epoch)
+
     # Wrap the outputs
     outputs = (u,)
     
     # Wrap this into a model
     model = keras.Model(inputs=inputs, outputs=outputs, name='model_asteroid_dir')
+    
+    # Bind the asteroid direction layer and aasteroid position layer
+    model.ast_dir_layer = ast_dir_layer
+    model.ast_pos_layer = ast_dir_layer.q_layer
+    
     return model
 
 # ********************************************************************************************************************* 
@@ -414,7 +445,7 @@ def test_ast_pos() -> bool:
     isOK_1: bool = (rmse < thresh)
     # Report results
     msg: str = 'PASS' if isOK_1 else 'FAIL'
-    print(f'Root MSE for asteroid model on first 1000 asteroids = {rmse:8.6f}')
+    print(f'Root MSE for asteroid model on first 1000 asteroids in AU = {rmse:8.6f}')
     print(f'***** {msg} *****')
 
     # Evaluate on first batch before adjustments
@@ -422,7 +453,7 @@ def test_ast_pos() -> bool:
     q1_pred = model.predict(batch_in)
     err1_pre = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
     
-    # Compute correction factor with calc_ast_pos
+    # Assemble orbital elements for p
     elts = {
         'a': batch_in['a'].numpy(),
         'e': batch_in['e'].numpy(),
@@ -430,20 +461,20 @@ def test_ast_pos() -> bool:
         'Omega': batch_in['Omega'].numpy(),
         'omega': batch_in['omega'].numpy(),
         'f': batch_in['f'].numpy(),
+        'epoch': batch_in['epoch'].numpy(),
         }
     # Epoch must be constant in a batch
     epoch = batch_in['epoch'][0].numpy()
     
-    # Compute correction factor dq; also time this operation
+    # Compute numerical orbit for calibration
     t0 = time.time()
-    q_earth, q_ast = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
-    dq = q_ast - q1_pred
+    q_sun, q_earth, q_ast = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
     t1 = time.time()
-    calc_time = t1-t0
-    print(f'Numerical integration of orbits took {calc_time:5.3f} seconds.')
+    calc_time = t1 - t0
+    print(f'\nNumerical integration of orbits took {calc_time:5.3f} seconds.')
     
-    # Evaluate error after correction
-    model.ast_pos_layer.update_dq(dq)
+    # Evaluate error after calibration
+    model.ast_pos_layer.calibrate(elts=elts, q_ast=q_ast)
     q1_pred = model.predict(batch_in)
     err1_post = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
 
@@ -451,12 +482,12 @@ def test_ast_pos() -> bool:
     thresh = 2.0E-6
     isOK_2: bool = (err1_post < thresh)
     msg = 'PASS' if isOK_2 else 'FAIL'
-    print(f'Mean error on first batch of 64 asteroids:')
-    print(f'Before correction: {err1_pre:5.3e}')
-    print(f'After correction:  {err1_post:5.3e}')
+    print(f'Mean error on first batch of 64 asteroids in AU:')
+    print(f'Before calibration: {err1_pre:5.3e}')
+    print(f'After calibration:  {err1_post:5.3e}')
     print(f'***** {msg} *****')
 
-    return isOK_1 and isOK_2
+    return (isOK_1 and isOK_2)
 
 # ********************************************************************************************************************* 
 def test_ast_dir() -> bool:
@@ -479,22 +510,63 @@ def test_ast_dir() -> bool:
     rmse_sec = rmse_deg * 3600
     # Threshold for passing
     thresh: float = 2.5
-    isOK: bool = (rmse_deg < thresh)
+    isOK_1: bool = (rmse_deg < thresh)
     
     # Report results
-    msg: str = 'PASS' if isOK else 'FAIL'
+    msg: str = 'PASS' if isOK_1 else 'FAIL'
     print(f'MSE for asteroid model on first 1000 asteroids = {mse:8.6f}')
     print(f'Angle error = {rmse_rad:5.3e} rad / {rmse_deg:8.6f} degrees / {rmse_sec:6.2f} arc seconds')
     print(f'***** {msg} *****')
-    return isOK
+
+    # Evaluate on first batch before adjustments
+    u1_true = batch_out['u']
+    u1_pred = model.predict(batch_in)
+    # Error in degrees
+    err1_pre = np.rad2deg(np.mean(np.linalg.norm(u1_pred - u1_true, axis=2)))
+    
+    # Assemble orbital elements for calibration
+    elts = {
+        'a': batch_in['a'].numpy(),
+        'e': batch_in['e'].numpy(),
+        'inc': batch_in['inc'].numpy(),
+        'Omega': batch_in['Omega'].numpy(),
+        'omega': batch_in['omega'].numpy(),
+        'f': batch_in['f'].numpy(),
+        'epoch': batch_in['epoch'].numpy(),
+        }
+    # Epoch must be common in a batch to allow for numerical integration
+    epoch = elts['epoch'][0]
+    
+    # Compute correction factor dq; also time this operation
+    t0 = time.time()
+    q_sun, q_earth, q_ast = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
+    t1 = time.time()
+    calc_time = t1 - t0
+    print(f'\nNumerical integration of orbits took {calc_time:5.3f} seconds.')
+    
+    # Evaluate error after correction
+    model.ast_dir_layer.calibrate(elts=elts, q_ast=q_ast)
+    u1_pred = model.predict(batch_in)
+    err1_post = np.rad2deg(np.mean(np.linalg.norm(u1_pred - u1_true, axis=2)))
+    err1_post_sec = err1_post * 3600
+    
+    # Report results
+    thresh = 1.0
+    isOK_2: bool = (err1_post_sec < thresh)
+    msg = 'PASS' if isOK_2 else 'FAIL'
+    print(f'Mean angle error on first batch of 64 asteroids in degrees:')
+    print(f'Before calibration: {err1_pre:5.3e}')
+    print(f'After calibration:  {err1_post:5.3e}  ({err1_post_sec:5.3f} arc-seconds)')
+    print(f'***** {msg} *****')
+    
+    return (isOK_1 and isOK_2)
 
 # ********************************************************************************************************************* 
 def main():
     test_ast_pos()
-    # test_ast_dir()
+    test_ast_dir()
     
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
     main()
-    pass
 
