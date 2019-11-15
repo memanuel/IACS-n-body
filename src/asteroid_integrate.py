@@ -294,7 +294,7 @@ def calc_ast_pos(elts: Dict[str, np.array], epoch: float, ts: np.array) -> np.ar
     # Transpose so resulting array has size (N_ast, traj_size, 3)
     q_ast = q[:, N_heavy:N, 0:3].transpose((1,0,2))
 
-    return q_sun, q_earth, q_ast
+    return q_ast, q_sun, q_earth
 
 # ********************************************************************************************************************* 
 def make_sim_asteroids_horizons(asteroid_names: List[str], epoch: datetime) -> rebound.Simulation:

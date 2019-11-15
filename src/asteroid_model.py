@@ -181,7 +181,7 @@ class AsteroidPosition(keras.layers.Layer):
         """Update the value of dq"""
         self.dq.assign(dq)
 
-    def calibrate(self, elts, q_ast):
+    def calibrate(self, elts, q_ast, q_sun):
         """Calibrate this model by setting dq to recover q_ast"""
         # Unpack elements
         a = elts['a']
@@ -191,10 +191,13 @@ class AsteroidPosition(keras.layers.Layer):
         omega = elts['omega']
         f = elts['f']
         epoch = elts['epoch']
-        # Predict with these elements
+        # Zero out calibration and predict with these elements
+        self.update_dq(self.dq*0.0)
         q_pred = self.call(a, e, inc, Omega, omega, f, epoch)
+        # Compute what we expected to get- numerically integrated heliocentric coordinates of the asteroids
+        q_num = q_ast - q_sun
         # Compute the offset and apply it to the model
-        dq = q_ast - q_pred
+        dq = q_num - q_pred
         self.update_dq(dq)
 
     def call(self, a, e, inc, Omega, omega, f, epoch):
@@ -294,20 +297,27 @@ class AsteroidDirection(keras.layers.Layer):
         # Build layer to compute positions
         self.q_layer = AsteroidPosition(ts=ts, batch_size=batch_size, name='q_ast')
         
-        # Take a one time snapshot of the earth's position at these times
+        # Take a one time snapshot of the earth's position at these times; done in heliocentric coordinates
         q_earth_np = get_earth_pos(ts)
         traj_size = ts.shape[0]
         q_earth_np = q_earth_np.reshape(1, traj_size, space_dims)
         self.q_earth = keras.backend.constant(q_earth_np, dtype=tf.float32, shape=q_earth_np.shape, name='q_earth')
-        # print(f'q_earth.shape = {self.q_earth.shape}')
+        
+        # Alternative approach; make q_earth a 
+        # self.q_earth = keras.backend.variable(q_earth_np, dtype=tf.float32, name='q_earth')
+        # print(f'self.q_earth.shape = {self.q_earth.shape}')
 
-    def update_q_earth(self, q_earth):
-        """Update the value of q_earth"""
-        self.q_earth = keras.backend.constant(q_earth, dtype=tf.float32, shape=q_earth.shape, name='q_earth')
+    # def update_q_earth(self, q_earth):
+    #     """Update the value of q_earth"""
+    #    print(f'update_q_earth: argument q_earth.shape = {q_earth.shape}')
+    #    self.q_earth.assign(q_earth.reshape(1, -1, 3))
 
-    def calibrate(self, elts, q_ast):
+    def calibrate(self, elts, q_ast, q_sun):
         """Calibrate this model by calibrating the underlying position layer"""
-        self.q_layer.calibrate(elts=elts, q_ast=q_ast)
+        # Calibrate the position model
+        self.q_layer.calibrate(elts=elts, q_ast=q_ast, q_sun=q_sun)
+        # Update the position of earth from the same integration
+        # self.update_q_earth(q_earth - q_sun)
 
     def call(self, a, e, inc, Omega, omega, f, epoch):
         # Calculate position
@@ -468,13 +478,14 @@ def test_ast_pos() -> bool:
     
     # Compute numerical orbit for calibration
     t0 = time.time()
-    q_sun, q_earth, q_ast = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
+    q_ast, q_sun, q_earth = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
     t1 = time.time()
     calc_time = t1 - t0
     print(f'\nNumerical integration of orbits took {calc_time:5.3f} seconds.')
     
+    # Calibrate the position model
+    model.ast_pos_layer.calibrate(elts=elts, q_ast=q_ast, q_sun=q_sun)
     # Evaluate error after calibration
-    model.ast_pos_layer.calibrate(elts=elts, q_ast=q_ast)
     q1_pred = model.predict(batch_in)
     err1_post = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
 
@@ -499,10 +510,14 @@ def test_ast_dir() -> bool:
     ts = batch_in['ts'][0]
     # Create the model to predict asteroid trajectories
     model: keras.Model = make_model_ast_dir(ts=ts)
+    # Set number of steps
+    num_ast: int = 1000
+    batch_size: int = 64
+    steps = num_ast // batch_size
     # Compile with MSE (mean squared error) loss
     model.compile(loss='MSE')
     # Evaluate this model
-    mse: float = model.evaluate(ds)
+    mse: float = model.evaluate(ds, steps=steps)
     rmse: float = np.sqrt(mse)
     # Convert error from unit vector to angle
     rmse_rad = 2.0 * np.arcsin(rmse / 2.0)
@@ -539,13 +554,13 @@ def test_ast_dir() -> bool:
     
     # Compute correction factor dq; also time this operation
     t0 = time.time()
-    q_sun, q_earth, q_ast = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
+    q_ast, q_sun, q_earth = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
     t1 = time.time()
     calc_time = t1 - t0
     print(f'\nNumerical integration of orbits took {calc_time:5.3f} seconds.')
     
     # Evaluate error after correction
-    model.ast_dir_layer.calibrate(elts=elts, q_ast=q_ast)
+    model.ast_dir_layer.calibrate(elts=elts, q_ast=q_ast, q_sun=q_sun)
     u1_pred = model.predict(batch_in)
     err1_post = np.rad2deg(np.mean(np.linalg.norm(u1_pred - u1_true, axis=2)))
     err1_post_sec = err1_post * 3600

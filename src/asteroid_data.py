@@ -24,6 +24,8 @@ from rebound_utils import load_sim_np
 # DataFrame of asteroid snapshots
 ast_elt = load_data()
 
+space_dims = 3
+
 # ********************************************************************************************************************* 
 def get_earth_pos_file():
     """Get the position of earth consistent with the asteroid data; look up from data file"""
@@ -47,11 +49,15 @@ def get_earth_pos_file():
     t_offset = datetime_to_mjd(dt0)
     ts += t_offset
    
-    # Extract position of earth
+    # Extract position of sun and earth in Barycentric coordinates
+    sun_idx = object_names.index('Sun')
     earth_idx = object_names.index('Earth')
-    q_earth = q[:, earth_idx, :].astype(dtype)
-
-    return q_earth, ts
+    q_sun_bc = q[:, sun_idx, :]
+    q_earth_bc = q[:, earth_idx, :]
+    # Compute earth position in heliocentric coordinates
+    q_earth = q_earth_bc - q_sun_bc
+    # Convert to selected data type
+    return q_earth.astype(dtype), ts
 
 # ********************************************************************************************************************* 
 # Create 1D linear interpolator for earth positions; just need one instance for the whole module
@@ -113,23 +119,30 @@ def make_data_one_file(n0: int, n1: int) -> tf.data.Dataset:
     # offset for indexing into asteroids; the first [10] objects are sun and planets
     ast_offset: int = len(object_names) - N_ast
 
-    # shrink down q and v to slice with asteroid data only; convert to selected data type
-    q = q[:, ast_offset:, :].astype(dtype)
-    v = v[:, ast_offset:, :].astype(dtype)
+    # Extract position of the sun
+    sun_idx = 0
+    q_sun = q[:, sun_idx, :]
+    v_sun = q[:, sun_idx, :]
+    # Compute position of the earth in Heliocentric coordinates
+    earth_idx = 3
+    q_earth = q[:, earth_idx, :] - q_sun
+    # v_earth = v[:, earth_idx :] - v_sun
+
+    # shrink down q and v to slice with asteroid data only; 
+    q = q[:, ast_offset:, :]
+    v = v[:, ast_offset:, :]
     
     # swap axes for time step and body number; TF needs inputs and outputs to have same number of samples
     # this means that inputs and outputs must first be indexed by asteroid number, then time time step
-    q = np.swapaxes(q, 0, 1)
-    v = np.swapaxes(v, 0, 1)
+    # also convert to heliocentric coordinates
+    q = np.swapaxes(q, 0, 1) - q_sun
+    v = np.swapaxes(v, 0, 1) - v_sun
     
     # Compute relative displacement to earth
-    q_earth, _ = get_earth_pos_file()
-    traj_size = q_earth.shape[0]
-    space_dims = 3
-    q_rel = q - q_earth.reshape(1, traj_size, space_dims,)
+    q_rel = q - q_earth
     # Distance to earth
     r_earth = np.linalg.norm(q_rel, axis=2, keepdims=True)
-    # Direction from earth to asteroid as unit vectors u =(ux, uy, uz)
+    # Direction from earth to asteroid as unit vectors u = (ux, uy, uz)
     u = q_rel / r_earth
 
     # dict with inputs   
@@ -146,9 +159,9 @@ def make_data_one_file(n0: int, n1: int) -> tf.data.Dataset:
     
     # dict with outputs
     outputs = {
-        'q': q,
-        'v': v,
-        'u': u
+        'q': q.astype(dtype),
+        'v': v.astype(dtype),
+        'u': u.astype(dtype),
     }
     
     return inputs, outputs
@@ -264,7 +277,7 @@ def combine_datasets_dir(n0: int, n1: int, batch_size: int = 64, progbar: bool =
         except:
             pass
     # Batch the dataset
-    drop_remainder: bool = True    
+    drop_remainder: bool = True
     return ds.batch(batch_size, drop_remainder=drop_remainder)
 
 # ********************************************************************************************************************* 
@@ -272,7 +285,8 @@ def make_dataset_ast_dir(n0: int, num_files: int):
     """Create a dataset spanning files [n0, n1); user friendly API for combine_datasets"""
     n1: int = n0 + num_files
     progbar: bool = False
-    return combine_datasets_dir(n0=n0, n1=n1, progbar=progbar)
+    ds = combine_datasets_dir(n0=n0, n1=n1, progbar=progbar)
+    return ds
 
 # ********************************************************************************************************************* 
 def orbital_element_batch(n0: int, batch_size: int=64):

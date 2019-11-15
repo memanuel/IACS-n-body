@@ -175,7 +175,7 @@ class SearchCandidates(keras.layers.Layer):
 
     def call(self, inputs):
         """Return the current settings"""
-        print(f'type(inputs)={type(inputs)}.')
+        # print(f'type(inputs)={type(inputs)}.')
         return self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch, self.log_R
 
 # ********************************************************************************************************************* 
