@@ -10,7 +10,8 @@ Sun Oct 13 11:56:50 2019
 # Library imports
 import tensorflow as tf
 import numpy as np
-# import rebound
+import logging
+import time
 
 # Local imports
 # from tf_utils import Identity
@@ -22,8 +23,8 @@ from  tf_utils import Identity
 keras = tf.keras
 
 # ********************************************************************************************************************* 
-# Set autograph logging verbosity
-tf.autograph.set_verbosity(0)
+# Turn off all logging; only solution found to eliminate crushing volume of unresolvable autograph warnings
+logging.getLogger('tensorflow').disabled = True
 
 # ********************************************************************************************************************* 
 # Constants
@@ -170,7 +171,7 @@ class AsteroidPosition(keras.layers.Layer):
         # print(f't_rep.shape = {t_rep.shape}')
         # Transpose axes to make shape (batch_size, traj_size, 1)
         self.t_vec = tf.transpose(t_rep, perm=(1,0,2))
-        print(f't_vec.shape = {self.t_vec.shape}')
+        # print(f't_vec.shape = {self.t_vec.shape}')
 
         # The adjustment dq to correct the Kepler approximation to match the numerical integration
         self.dq = keras.backend.variable(np.zeros((batch_size, self.traj_size, space_dims,)), 
@@ -410,12 +411,52 @@ def test_ast_pos() -> bool:
     rmse: float = np.sqrt(mse)
     # Threshold for passing
     thresh: float = 0.125
-    isOK: bool = (rmse < thresh)
+    isOK_1: bool = (rmse < thresh)
     # Report results
-    msg: str = 'PASS' if isOK else 'FAIL'
+    msg: str = 'PASS' if isOK_1 else 'FAIL'
     print(f'Root MSE for asteroid model on first 1000 asteroids = {rmse:8.6f}')
     print(f'***** {msg} *****')
-    return isOK
+
+    # Evaluate on first batch before adjustments
+    q1_true = batch_out['q']
+    q1_pred = model.predict(batch_in)
+    err1_pre = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
+    
+    # Compute correction factor with calc_ast_pos
+    elts = {
+        'a': batch_in['a'].numpy(),
+        'e': batch_in['e'].numpy(),
+        'inc': batch_in['inc'].numpy(),
+        'Omega': batch_in['Omega'].numpy(),
+        'omega': batch_in['omega'].numpy(),
+        'f': batch_in['f'].numpy(),
+        }
+    # Epoch must be constant in a batch
+    epoch = batch_in['epoch'][0].numpy()
+    
+    # Compute correction factor dq; also time this operation
+    t0 = time.time()
+    q_earth, q_ast = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
+    dq = q_ast - q1_pred
+    t1 = time.time()
+    calc_time = t1-t0
+    print(f'Numerical integration of orbits took {calc_time:5.3f} seconds.')
+    
+    # Evaluate error after correction
+    model.ast_pos_layer.update_dq(dq)
+    q1_pred = model.predict(batch_in)
+    err1_post = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
+
+    # Report results
+    thresh = 2.0E-6
+    isOK_2: bool = (err1_post < thresh)
+    msg = 'PASS' if isOK_2 else 'FAIL'
+    print(f'Mean error on first batch of 64 asteroids:')
+    print(f'Before correction: {err1_pre:5.3e}')
+    print(f'After correction:  {err1_post:5.3e}')
+    print(f'***** {msg} *****')
+
+    return isOK_1 and isOK_2
 
 # ********************************************************************************************************************* 
 def test_ast_dir() -> bool:
@@ -450,59 +491,10 @@ def test_ast_dir() -> bool:
 # ********************************************************************************************************************* 
 def main():
     test_ast_pos()
-    test_ast_dir()
+    # test_ast_dir()
     
 # ********************************************************************************************************************* 
 if __name__ == '__main__':
-    # main()
+    main()
     pass
 
-# Load data for the first 1000 asteroids
-ds: tf.data.Dataset = make_dataset_ast_pos(0, 1)
-# Get reference times
-batch_in, batch_out = list(ds.take(1))[0]
-ts = batch_in['ts'][0]
-batch_size = 64
-# Create the model to predict asteroid trajectories
-model: keras.Model = make_model_ast_pos(ts=ts, batch_size=batch_size)
-# model = AsteroidPositionModel(ts=ts, batch_size=batch_size)
-# Compile with MSE (mean squared error) loss
-model.compile(loss='MSE')
-
-# Evaluate this model
-mse: float = model.evaluate(ds)
-rmse: float = np.sqrt(mse)
-# Threshold for passing
-thresh: float = 0.125
-isOK: bool = (rmse < thresh)
-# Report results
-msg: str = 'PASS' if isOK else 'FAIL'
-print(f'Root MSE for asteroid model on first 1000 asteroids = {rmse:8.6f}')
-print(f'***** {msg} *****')
-
-# Evaluate on first batch before adjustments
-q1_true = batch_out['q']
-q1_pred = model.predict(batch_in)
-err1_pre = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
-print(f'Mean error on first batch of 64 asteroids before correction: {err1_pre:5.3e}')
-
-# Compute correction factor with calc_ast_pos
-# dq = q1_true - q1_pred
-elts = {
-    'a': batch_in['a'],
-    'e': batch_in['e'],
-    'inc': batch_in['inc'],
-    'Omega': batch_in['Omega'],
-    'omega': batch_in['omega'],
-    'f': batch_in['f'],
-    }
-# Epoch must be constant in a batch
-epoch = batch_in['epoch'][0].numpy()
-q_true = calc_ast_pos(elts=elts, epoch=epoch, ts=ts)
-dq = q1_true - q1_pred
-
-# Evaluate error after correction
-model.ast_pos_layer.update_dq(dq)
-q1_pred = model.predict(batch_in)
-err1_post = np.mean(np.linalg.norm(q1_pred - q1_true, axis=2))
-print(f'Mean error on first batch of 64 asteroids after correction: {err1_post:5.3e}')

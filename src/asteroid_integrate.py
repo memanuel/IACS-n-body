@@ -20,7 +20,7 @@ from utils import print_header
 from astro_utils import mjd_to_datetime
 from rebound_utils import make_archive, load_sim_np
 from rebound_utils import report_sim_difference, test_integration, sim_cfg_array, sim_elt_array
-from astro_utils import datetime_to_mjd
+# from astro_utils import datetime_to_mjd
 from horizons import make_sim_horizons
 from planets import make_sim_planets, object_names_planets
 
@@ -172,23 +172,24 @@ def make_sim_asteroids(sim_base: rebound.Simulation,
     return sim, asteroid_names
 
 # ********************************************************************************************************************* 
-def make_sim_from_elts(elts: Dict[str, np.array], epoch: datetime):
+def make_sim_from_elts(elts: Dict[str, np.array], epoch: float):
     """
     Create a simulation for planets and asteroids parameterized by their orbital elements
     INPUTS:
         elts: dictionary with keys 'a', 'e', etc. for 6 orbital elements.  values arrays of shape (N,)
-        epoch: datetime as of which these orbital elements apply    
+        epoch: MJD as of which these orbital elements apply    
     """
-
+    # Convert epoch to a datetime
+    epoch_dt = mjd_to_datetime(epoch)
     # Base Rebound simulation of the planets and moons on this date
-    sim = make_sim_planets(epoch=epoch)
+    sim = make_sim_planets(epoch=epoch_dt)
     # Set the number of active particles to the base simulation
     sim.N_active = sim.N
 
     # Unpack the orbital elements
     a = elts['a']
     e = elts['e']
-    inc = elts['e']
+    inc = elts['inc']
     Omega = elts['Omega']
     omega = elts['omega']
     f = elts['f']
@@ -204,7 +205,7 @@ def make_sim_from_elts(elts: Dict[str, np.array], epoch: datetime):
         # Add the new asteroid
         sim.add(m=0.0, a=a[i], e=e[i], inc=inc[i], Omega=Omega[i], omega=omega[i], f=f[i], primary=primary)
         # Set the hash to the asteroid's number in this batch
-        sim.particles[-1].hash = i
+        sim.particles[-1].hash = rebound.hash(f'{i}')
         
     # Return the new simulation including the asteroids
     return sim
@@ -224,8 +225,7 @@ def calc_ast_pos(elts: Dict[str, np.array], epoch: float, ts: np.array) -> np.ar
     It's different though because it's intended to generate arrays on the fly, not save them to disk.
     """
     # Build the simulation at the epoch
-    epoch_dt = mjd_to_datetime(epoch)
-    sim_epoch = make_sim_from_elts(elts, epoch_dt)
+    sim_epoch = make_sim_from_elts(elts, epoch)
     
     # Create copies of the simulation to integrate forward and backward
     sim_fwd: rebound.Simulation = sim_epoch.copy()
@@ -258,8 +258,10 @@ def calc_ast_pos(elts: Dict[str, np.array], epoch: float, ts: np.array) -> np.ar
     earth_idx = np.argmax(hashes==hash_earth)
     
     # Initialize array for the positions of all particles in the simulation
-    q: np.array = np.zeros(shape=(N, M, 3,), dtype=np.float32)
-
+    # Match the order required by rebound for efficient serialization!
+    # This must be permuted at the end
+    q: np.array = np.zeros(shape=(M, N, 3,), dtype=np.float64)
+    
     # Subfunction: process one row of the loop    
     def process_row(sim: rebound.Simulation, t: float, row: int):
         # Integrate to the current time step with an exact finish time
@@ -267,26 +269,26 @@ def calc_ast_pos(elts: Dict[str, np.array], epoch: float, ts: np.array) -> np.ar
         
         # Serialize the positions of earth and all the bodies
         sim.serialize_particle_data(xyz=q[row])
-
+    
     # process times in the forward direction
     for i, t in enumerate(ts_fwd):
         # Row index for position data
         row: int = M_back + i
         # Process this row
         process_row(sim=sim_fwd, t=t, row=row)
-
+    
     # process times in the backward direction
     for i, t in enumerate(ts_back):
         # Row index for position data
         row: int = M_back - (i+1)
         # Process this row
         process_row(sim=sim_back, t=t, row=row)
-
+    
     # Position of earth is the relevant column
-    q_earth = q[earth_idx, :, :]
+    q_earth = q[:, earth_idx, 0:3].astype(np.float32)
     # The asteroid positions are in the right-hand slice of q_all
-    q_ast = q[N_heavy:N, :, :]
-
+    # Transpose so resulting array has size (N_ast, traj_size, 3)
+    q_ast = q[:, N_heavy:N, 0:3].transpose((1,0,2)).astype(np.float32)
     return q_earth, q_ast
 
 # ********************************************************************************************************************* 
@@ -327,13 +329,12 @@ def ast_data_add_calc_elements(ast_elt) -> pd.DataFrame:
     # Make a gigantic simulation with all these asteroids
     n0: int = np.min(ast_elt.Num)
     n1 = np.max(ast_elt.Num) + 1
-    # n1 = 100
     print(f'Making big simulation with all {n1} asteroids...')
     sim_ast, asteroid_names = make_sim_asteroids(sim_base=sim_base, ast_elt=ast_elt, n0=n0, n1=n1, progbar=True)
     
-    # Calculate orbital elements for all particles
+    # Calculate orbital elements for all particles; must specify primary = Sun!!!
     print(f'Computing orbital elements...')
-    orbits = sim_ast.calculate_orbits()
+    orbits = sim_ast.calculate_orbits(primary=sim_ast.particles[0])
     # Slice orbits so it skips the planets and only includes the asteroids
     orbits = orbits[sim_base.N-1:]
     

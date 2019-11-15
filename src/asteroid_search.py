@@ -13,6 +13,7 @@ import tensorflow as tf
 from tensorflow.python.keras import backend as K
 import numpy as np
 from datetime import datetime
+import logging
 
 # Local imports
 from asteroid_integrate import load_data as load_data_asteroids
@@ -28,6 +29,10 @@ from tf_utils import Identity
 
 # Aliases
 keras = tf.keras
+
+# ********************************************************************************************************************* 
+# Turn off all logging; only solution found to eliminate crushing volume of unresolvable autograph warnings
+logging.getLogger('tensorflow').disabled = True
 
 # Constants
 space_dims = 3

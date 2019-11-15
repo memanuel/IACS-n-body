@@ -17,7 +17,8 @@ from tqdm.auto import tqdm
 
 # Local imports
 from astro_utils import datetime_to_mjd
-from asteroid_integrate import load_data, load_sim_np
+from asteroid_integrate import load_data
+from rebound_utils import load_sim_np
 
 # ********************************************************************************************************************* 
 # DataFrame of asteroid snapshots
