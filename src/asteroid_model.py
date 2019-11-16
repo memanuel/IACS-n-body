@@ -157,6 +157,13 @@ class AsteroidPosition(keras.layers.Layer):
             batch_size: the number of elements to simulate at a time, e.g. 64; not to be confused with traj_size!
         """
         super(AsteroidPosition, self).__init__(**kwargs)
+
+        # Configuration for serialization
+        self.cfg = {
+            'ts': ts,
+            'batch_size': batch_size,
+        }
+
         # Get trajectory size from ts
         self.traj_size = ts.shape[0]
         self.batch_size = batch_size
@@ -257,6 +264,9 @@ class AsteroidPosition(keras.layers.Layer):
         # The estimated position includes the optional correction factor dq
         return tf.add(q, self.dq)
 
+    def get_config(self):
+        return self.cfg
+
 # ********************************************************************************************************************* 
 class DirectionUnitVector(keras.layers.Layer):
     """
@@ -294,6 +304,12 @@ class AsteroidDirection(keras.layers.Layer):
             batch_size: the number of elements to simulate at a time, e.g. 64; not to be confused with traj_size!
         """
         super(AsteroidDirection, self).__init__(**kwargs)
+
+        # Configuration for serialization
+        self.cfg = {
+            'ts': ts,
+            'batch_size': batch_size,
+        }
         
         # Build layer to compute positions
         self.q_layer = AsteroidPosition(ts=ts, batch_size=batch_size, name='q_ast')
@@ -328,6 +344,9 @@ class AsteroidDirection(keras.layers.Layer):
         u = DirectionUnitVector(name='u')(self.q_earth, q_ast)
         
         return u
+    
+    def get_config(self):
+        return self.cfg
     
 # ********************************************************************************************************************* 
 # Functional API Models
