@@ -40,10 +40,16 @@ space_dims = 3
 
 # Load asteroid names and orbital elements
 ast_elt = load_data_asteroids()
-# Range for resolution parameter
+
+# Range for a
+log_a_min_ = np.log(0.10) 
+log_a_max_ = np.log(100.0) 
+# Range for e
+log_e_min_ = np.log(1.0E-6)
+log_e_max_ = np.log(0.999999)
+# Range for resolution parameter R
 log_R_min_ = np.log(np.deg2rad(1.0/3600))
 log_R_max_ = np.log(np.deg2rad(10.0))
-
 
 # ********************************************************************************************************************* 
 # Custom Layers
@@ -154,13 +160,15 @@ class TrajectoryScore(keras.layers.Layer):
         return score, t_score, mu, sigma
 
 # ********************************************************************************************************************* 
-class SearchCandidates(keras.layers.Layer):
+class OrbitalElements(keras.layers.Layer):
     """Custom layer to maintain state of candidate orbital elements and resolutions."""
 
     def __init__(self, elts_np: dict, batch_size: int, R_deg: float, **kwargs):
-        super(SearchCandidates, self).__init__(**kwargs)
-        self.a = tf.Variable(initial_value=elts_np['a'], trainable=True, name='a')
-        self.e = tf.Variable(initial_value=elts_np['e'], trainable=True, name='e')
+        super(OrbitalElements, self).__init__(**kwargs)
+        self.log_a = tf.Variable(initial_value=np.log(elts_np['a']), trainable=True, 
+                                 constraint=lambda t: tf.clip_by_value(t, log_a_min_, log_a_max_), name='a')
+        self.log_e = tf.Variable(initial_value=np.log(elts_np['e']), trainable=True, 
+                                 constraint=lambda t: tf.clip_by_value(t, log_e_min_, log_e_max_), name='e')
         self.inc = tf.Variable(initial_value=elts_np['inc'], trainable=True, name='inc')
         self.Omega = tf.Variable(initial_value=elts_np['Omega'], trainable=True, name='Omega')
         self.omega = tf.Variable(initial_value=elts_np['omega'], trainable=True, name='omega')
@@ -172,12 +180,13 @@ class SearchCandidates(keras.layers.Layer):
         # The control of the log of the resolution factor between R_min and R_max
         R_init= np.deg2rad(R_deg) * np.ones_like(elts_np['a'])
         log_R_init  = np.log(R_init)
-        self.log_R = tf.Variable(initial_value=log_R_init, trainable=True, name='log_R')
+        self.log_R = tf.Variable(initial_value=log_R_init, trainable=True, 
+                                 constraint=lambda t: tf.clip_by_value(t, log_R_min_, log_R_max_), name='log_R')
 
     def call(self, inputs):
-        """Return the current settings"""
+        """Return the current orbital elements and resolution"""
         # print(f'type(inputs)={type(inputs)}.')
-        return self.a, self.e, self.inc, self.Omega, self.omega, self.f, self.epoch, self.log_R
+        return self.log_a, self.log_e, self.inc, self.Omega, self.omega, self.f, self.epoch, self.log_R
 
 # ********************************************************************************************************************* 
 # Functional API model
@@ -209,33 +218,37 @@ def make_model_asteroid_search(ts: tf.Tensor,
     ts = keras.backend.constant(ts, name='ts')
 
     # Set of trainable weights with candidate
-    a, e, inc, Omega, omega, f, epoch, log_R = \
-        SearchCandidates(elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='candidates')(idx)
+    # a, e, inc, Omega, omega, f, epoch, log_R = \
+    #    SearchCandidates(elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='candidates')(idx)
+    elements_layer = OrbitalElements(elts_np=elts_np, batch_size=elt_batch_size, R_deg=R_deg, name='candidates')
+    log_a, log_e, inc, Omega, omega, f, epoch, log_R = elements_layer(idx)
+    
 
-    # Alias the orbital elements; 6 are trainable, epoch is fixed
-    a = Identity(name='a')(a)
-    e = Identity(name='e')(e)
+    # Transform the semi-major axis a; clipping implemented as a constraint on log_a
+    log_a = Identity(name='log_a')(log_a)
+    a = keras.layers.Activation(activation=tf.exp, name='a')(log_a)
+
+    # Transform the eccentricity e; clipping implemented as a constraint on log_e
+    log_e = Identity(name='log_e')(log_e)
+    e = keras.layers.Activation(activation=tf.exp, name='e')(log_e)
+
+    # Alias the other 4 orbital elements; inc, Omega, omega, and f are trainable; epoch is fixed
     inc = Identity(name='inc')(inc)
     Omega = Identity(name='Omega')(Omega)
     omega = Identity(name='omega')(omega)
     f = Identity(name='f')(f)
     epoch = Identity(name='epoch')(epoch)
 
-    # Transform the resolution output
+    # Transform the resolution output; clipping implemented as a constraint on log_R
     log_R = Identity(name='log_R')(log_R)
-    # Clip log_R in allowed range
-    log_R_min = tf.constant(log_R_min_, dtype=tf.float32, name='log_R_min')
-    log_R_max = tf.constant(log_R_max_, dtype=tf.float32, name='log_R_max')
-    log_R_clip = tf.clip_by_value(log_R, log_R_min, log_R_max, name='log_R_clip')
-    # The resolution from log_R, with clipping
-    R = keras.layers.Activation(activation=tf.exp, name='R')(log_R_clip)
+    R = keras.layers.Activation(activation=tf.exp, name='R')(log_R)
 
     # The orbital elements; stack to shape (elt_batch_size, 7)
     elts = tf.stack(values=[a, e, inc, Omega, omega, f, epoch], axis=1, name='elts')
 
     # The predicted direction
     # u_pred = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')(a, e, inc, Omega, omega, f, epoch)
-    ast_dir_layer = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')
+    direction_layer = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')
 
     # Compute numerical orbits for calibration
     epoch0 = elts_np['epoch'][0]
@@ -243,9 +256,9 @@ def make_model_asteroid_search(ts: tf.Tensor,
     q_ast, q_sun, q_earth = calc_ast_pos(elts=elts_np, epoch=epoch0, ts=ts)
 
     # Calibrate the direction prediction layer
-    ast_dir_layer.calibrate(elts=elts_np, q_ast=q_ast, q_sun=q_sun)
+    direction_layer.calibrate(elts=elts_np, q_ast=q_ast, q_sun=q_sun)
     # Tensor of predicted directions
-    u_pred = ast_dir_layer(a, e, inc, Omega, omega, f, epoch)
+    u_pred = direction_layer(a, e, inc, Omega, omega, f, epoch)
 
     # Difference in direction between u_obs and u_pred
     z = DirectionDifference(batch_size=elt_batch_size, 
@@ -254,9 +267,11 @@ def make_model_asteroid_search(ts: tf.Tensor,
                             name='z')(u_obs, u_pred, idx)
     
     # Raw score and t_score
-    score, t_score, mu, sigma = TrajectoryScore(batch_size=elt_batch_size)(z, R, num_obs)
+    # score, t_score, mu, sigma = TrajectoryScore(batch_size=elt_batch_size)(z, R, num_obs)
+    score_layer = TrajectoryScore(batch_size=elt_batch_size)
+    raw_score, t_score, mu, sigma = score_layer(z, R, num_obs)
     # Stack the scores
-    scores = tf.stack(values=[score, t_score, mu, sigma], axis=1, name='scores')
+    scores = tf.stack(values=[raw_score, t_score, mu, sigma], axis=1, name='scores')
 
     # Wrap inputs and outputs
     inputs = (t, idx, row_len, u_obs)
@@ -265,10 +280,13 @@ def make_model_asteroid_search(ts: tf.Tensor,
     # Create model with functional API
     model = keras.Model(inputs=inputs, outputs=outputs)
 
-    # Bind the asteroid direction layer
-    model.ast_dir_layer = ast_dir_layer
+    # Bind the custom layers to model
+    model.elements = elements_layer
+    model.direction = direction_layer
+    model.scores = score_layer
 
     # Add custom loss; negative of the total t_score
+    # grad_factor = 1.0 / (max_obs * time_batch_size)
     model.add_loss(-tf.reduce_sum(t_score))
 
     return model
@@ -336,8 +354,10 @@ def report_model(model, R0, mask_good, steps, elts_true):
     elt_err_bad = elt_err[mask_bad]
     err_a_good = np.mean(elt_err_good[:,0])
     err_e_good = np.mean(elt_err_good[:,1])
+    err_f_good = np.mean(elt_err_good[:,5])
     err_a_bad = np.mean(elt_err_bad[:,0])
     err_e_bad = np.mean(elt_err_bad[:,1])
+    err_f_bad = np.mean(elt_err_bad[:,5])
 
     # Mean t_score on good and bad masks
     mean_good = np.mean(t_score[mask_good])
@@ -350,8 +370,8 @@ def report_model(model, R0, mask_good, steps, elts_true):
         
     print(f'\nLoss = {loss:8.0f}')
     print(f'\nError in orbital elements:')
-    print(f'Good: a: {err_a_good:5.3e},  e: {err_e_good:5.3e}')
-    print(f'Bad:  a: {err_a_bad:5.3e},  e: {err_e_bad:5.3e}')
+    print(f'Good: a: {err_a_good:5.3e},  e: {err_e_good:5.3e}, f: {err_f_good:5.3e}')
+    print(f'Bad:  a: {err_a_bad:5.3e},  e: {err_e_bad:5.3e}, f: {err_f_bad:5.3e}')
     print(f'\nMean & std t_score by Category:')
     print(f'Good: {mean_good:8.2f} +/- {std_good:8.2f}')
     print(f'Bad:  {mean_bad:8.2f} +/- {std_bad:8.2f}')
@@ -387,7 +407,7 @@ max_obs: int = u_obs.shape[1]
 num_obs: float = np.sum(row_len, dtype=np.float32)
 
 # Build functional model for asteroid score
-R_deg: float = 10.0
+R_deg: float = 5.0
 elts_np = orbital_element_batch(1)
 elt_batch_size = 64
 # The correct orbital elements as an array
@@ -399,7 +419,7 @@ mask_good = np.arange(64) < 32
 mask_bad = ~mask_good
 # Perturb second half of orbital elements
 elts_np2 = perturb_elts(elts_np, mask=mask_bad)
-
+# Initialize model with perturbed orbital elements
 model = make_model_asteroid_search(ts=ts,
                                    elts_np=elts_np2,
                                    max_obs=max_obs,
@@ -407,9 +427,23 @@ model = make_model_asteroid_search(ts=ts,
                                    elt_batch_size=elt_batch_size, 
                                    time_batch_size=time_batch_size,
                                    R_deg = R_deg)
+# Use Adam optimizer with gradient clipping
+adam = keras.optimizers.Adam(learning_rate=0.001, clipvalue=5.0)
+model.compile(optimizer=adam)
+# model.compile(optimizer='Adadelta', learning_rate=1.0e-10)
 
-# model.compile(optimizer='Adam', learning_rate=0.05)
-model.compile(optimizer='Adam', learning_rate=0.001)
+# Get gradients
+#with tf.GradientTape(persistent=True) as gt:
+#    pred = model.predict_on_batch(ds)
+#    elts, R, u_pred, z, scores = pred
+#    raw_score, t_score = scores[0:2]
+#    loss = tf.reduce_sum(t_score)
+#dL_da = gt.gradient(loss, model.elements.log_a)
+#dL_de = gt.gradient(loss, model.elements.log_e)
+#dL_df = gt.gradient(loss, model.elements.f)
+#dL_dR = gt.gradient(loss, model.elements.log_R)
+#del gt
+
 # Report losses before training
 print(f'Processed first {n1} asteroids; seeded with first 64. Perturbed 33-65.')
 print(f'Model before training:')
@@ -419,7 +453,7 @@ elts0, R0, u_pred0, z0, scores0 = pred0
 report_model(model, R0, mask_good, steps, elts_true)
 t_score0 = scores0[:,1]
 
-hist = model.fit(ds, epochs=10, steps_per_epoch=steps)
+hist = model.fit(ds, epochs=10, steps_per_epoch=steps*2)
 pred = model.predict_on_batch(ds)
 report_model(model, R0, mask_good, steps, elts_true)
 elts, R, u_pred, z, scores = pred
