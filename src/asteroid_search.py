@@ -10,7 +10,8 @@ Thu Oct 17 15:24:10 2019
 import tensorflow as tf
 from tensorflow.python.keras import backend as K
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 import logging
 from typing import Dict
 
@@ -18,10 +19,11 @@ from typing import Dict
 from asteroid_integrate import load_data as load_data_asteroids
 from observation_data import make_synthetic_obs_dataset, random_direction
 from asteroid_data import orbital_element_batch
-from asteroid_model import AsteroidDirection
+from asteroid_model import AsteroidDirection, make_model_ast_pos
 from asteroid_integrate import calc_ast_pos
 from search_score_functions import score_mean, score_var, score_mean_2d, score_var_2d
 from tf_utils import Identity
+from utils import print_header
 
 # Aliases
 keras = tf.keras
@@ -37,12 +39,12 @@ space_dims = 3
 ast_elt = load_data_asteroids()
 
 # Range for a
-a_min_: float = 0.125
-a_max_: float = 64.0
+a_min_: float = 0.5
+a_max_: float = 32.0
 
 # Range for e
-e_min_: float = 2.0**-20
-e_max_: float = 1.0 - e_min_
+e_min_: float = 0.0
+e_max_: float = 1.0 - 2.0**-10
 
 # Range for resolution parameter R
 R_min_ = np.deg2rad(1.0/3600)
@@ -308,10 +310,10 @@ class TrajectoryScore(keras.layers.Layer):
         objective = raw_score - self.alpha * mu - self.beta * sigma2
         
         # Minimum of objective
-        objective_min = num_obs * tf.dtypes.cast(-self.alpha * self.mu_max - self.beta * self.sigma2_max, tf.float32)
+        # objective_min = num_obs * tf.dtypes.cast(-self.alpha * self.mu_max - self.beta * self.sigma2_max, tf.float32)
         
         # Return both the raw and t scores
-        return raw_score, mu, sigma2, objective, objective_min
+        return raw_score, mu, sigma2, objective
 
     def get_config(self):
         return self.cfg
@@ -328,7 +330,10 @@ def make_model_asteroid_search(ts: tf.Tensor,
                                elt_batch_size: int=64, 
                                time_batch_size: int=None,
                                R_deg: float = 5.0,
-                               q_cal = None):
+                               alpha: float = 2.0,
+                               beta: float = 1.0,
+                               q_cal = None,
+                               use_calibration: bool = True):
     """Make functional API model for scoring elements"""
 
     # The full trajectory size
@@ -368,24 +373,22 @@ def make_model_asteroid_search(ts: tf.Tensor,
     # The predicted direction
     direction_layer = AsteroidDirection(ts=ts, batch_size=elt_batch_size, name='u_pred')
 
-    # Compute numerical orbits for calibration
-    if q_cal is None:
-        print(f'Numerically integrating orbits for calibration...')
-        epoch0 = elts_np['epoch'][0]
-        q_ast, q_sun, q_earth = calc_ast_pos(elts=elts_np, epoch=epoch0, ts=ts)
-    else:
-        q_ast, q_sun, q_earth = q_cal
+    # Compute numerical orbits for calibration if necessary
+    if use_calibration:
+        if q_cal is not None:
+            q_ast, q_sun, q_earth = q_cal
+        else:
+            print(f'Numerically integrating orbits for calibration...')
+            epoch0 = elts_np['epoch'][0]
+            q_ast, q_sun, q_earth = calc_ast_pos(elts=elts_np, epoch=epoch0, ts=ts)
 
     # Calibrate the direction prediction layer
-    direction_layer.calibrate(elts=elts_np, q_ast=q_ast, q_sun=q_sun)
+    if use_calibration:
+        direction_layer.calibrate(elts=elts_np, q_ast=q_ast, q_sun=q_sun)
     # Tensor of predicted directions
     u_pred = direction_layer(a, e, inc, Omega, omega, f, epoch)
 
     # Difference in direction between u_obs and u_pred
-#    z = DirectionDifference(batch_size=elt_batch_size, 
-#                            traj_size=time_batch_size, 
-#                            max_obs=max_obs, 
-#                            name='z')(u_obs, u_pred, idx)
     dir_diff_layer = DirectionDifference(batch_size=elt_batch_size, 
                                          traj_size=time_batch_size, 
                                          max_obs=max_obs, 
@@ -393,8 +396,8 @@ def make_model_asteroid_search(ts: tf.Tensor,
     z = dir_diff_layer(u_obs, u_pred, idx)
 
     # Calculate score compoments
-    score_layer = TrajectoryScore(batch_size=elt_batch_size, alpha=2.0, beta=10.0)
-    raw_score,  mu, sigma2, objective, objective_min = score_layer(z, R, num_obs)
+    score_layer = TrajectoryScore(batch_size=elt_batch_size, alpha=alpha, beta=beta)
+    raw_score,  mu, sigma2, objective  = score_layer(z, R, num_obs)
     # Stack the scores
     scores = tf.stack(values=[raw_score, mu, sigma2, objective], axis=1, name='scores')
 
@@ -453,17 +456,45 @@ def perturb_elts(elts, sigma_a=0.05, sigma_e=0.10, sigma_f_deg=5.0, mask=None):
     return elts_new
 
 # ********************************************************************************************************************* 
-def main():
-    pass
-
-# ********************************************************************************************************************* 
-if __name__ == '__main__':
-    main()
-
+def traj_diff(elts0: np.array, elts1: np.array, model_pos: keras.Model):
+    """Compute difference between two orbital elements trajectories"""
+    # Wrap up inputs
+    inputs0 = {
+        'a': elts0[:,0],
+        'e': elts0[:,1],
+        'inc': elts0[:,2],
+        'Omega': elts0[:,3],
+        'omega': elts0[:,4],
+        'f': elts0[:,5],
+        'epoch': elts0[:,6],
+    }
+    inputs1 = {
+        'a': elts1[:,0],
+        'e': elts1[:,1],
+        'inc': elts1[:,2],
+        'Omega': elts1[:,3],
+        'omega': elts1[:,4],
+        'f': elts1[:,5],
+        'epoch': elts1[:,6],
+    }
+    
+    # Predict position
+    q0 = model_pos.predict(inputs0)
+    q1 = model_pos.predict(inputs1)
+    
+    # Displacement between predicted trajsectories; shape (batch_size, traj_size, 3)
+    dq = q1 - q0
+    # Distance between predicted trajsectories; shape (batch_size, traj_size)
+    distance = np.linalg.norm(dq, axis=-1)
+    # Return norm of the difference by row
+    return np.mean(distance, axis=-1)
+    
 # ********************************************************************************************************************* 
 def report_model_attribute(att: np.array, mask_good: np.array, att_name: str):
     """Report mean and stdev of a model attribute on good and bad masks"""
+    # Complementary mask
     mask_bad = ~mask_good
+
     # Attribute on masks
     att_g = att[mask_good]
     att_b = att[mask_bad]
@@ -474,21 +505,72 @@ def report_model_attribute(att: np.array, mask_good: np.array, att_name: str):
     std_b = np.std(att_b, axis=0)
     std_a = np.std(att, axis=0)
 
-    print(f'\nMean & std {att_name} by Category:')
+    print(f'\nMean & Std {att_name} by Category:')
     print(f'Good: {mean_g:8.2f} +/- {std_g:8.2f}')
     print(f'Bad:  {mean_b:8.2f} +/- {std_b:8.2f}')
     print(f'All:  {mean_a:8.2f} +/- {std_a:8.2f}')
     
 
 # ********************************************************************************************************************* 
+def report_model_attribute_change(att0: np.array, att1: np.array, mask_good: np.array, 
+                                  att_name: str, dp: int = 6, dp0: int = None):
+    """Report mean and stdev of a model attribute on good and bad masks"""
+    # Default arguments
+    if dp0 is None:
+        dp0 = dp
+
+    # Complementary mask
+    mask_bad = ~mask_good
+    
+    # Change
+    chng = att1 - att0
+    
+    # Attribute on masks
+    att_g0 = att0[mask_good]
+    att_b0 = att0[mask_bad]
+    att_g1 = att1[mask_good]
+    att_b1 = att1[mask_bad]
+    chng_g = chng[mask_good]
+    chng_b = chng[mask_bad]
+
+    # Mean of attribute
+    mean_g0 = np.mean(att_g0, axis=0)
+    mean_b0 = np.mean(att_b0, axis=0)
+    mean_a0 = np.mean(att0, axis=0)
+    mean_g1 = np.mean(att_g1, axis=0)
+    mean_b1 = np.mean(att_b1, axis=0)
+    mean_a1 = np.mean(att1, axis=0)
+
+    # Mean change
+    mean_chng_g = np.mean(chng_g, axis=0)
+    mean_chng_b = np.mean(chng_b, axis=0)
+    mean_chng_a = np.mean(chng, axis=0)
+
+    # Std change
+    std_chng_g = np.std(chng_g, axis=0)
+    std_chng_b = np.std(chng_b, axis=0)
+    std_chng_a = np.std(chng, axis=0)
+    
+    # Percentage change
+    pct_chng_g = mean_chng_g / mean_g0
+    pct_chng_b = mean_chng_b / mean_b0
+    pct_chng_a = mean_chng_a / mean_a0
+
+    print(f'\nMean & Std Change in {att_name} by Category:')
+    print(f'Good: {mean_chng_g:+8.{dp}f} +/- {std_chng_g:8.{dp}f} -- from {mean_g0:8.{dp0}f} to {mean_g1:8.{dp0}f}'
+          f'     ({pct_chng_g:+3.1%})')
+    print(f'Bad:  {mean_chng_b:+8.{dp}f} +/- {std_chng_b:8.{dp}f} -- from {mean_b0:8.{dp0}f} to {mean_b1:8.{dp0}f}'
+          f'     ({pct_chng_b:+4.1%})')
+    print(f'All:  {mean_chng_a:+8.{dp}f} +/- {std_chng_a:8.{dp}f} -- from {mean_a0:8.{dp0}f} to {mean_a1:8.{dp0}f}'
+          f'     ({pct_chng_a:+4.1%})')
+   
+# ********************************************************************************************************************* 
 def report_model(model, R_deg, mask_good, batch_size, steps, elts_true, display=True):
     """Report summary of model on good and b"""
 
+    # Mask for perturbed ("bad") elements
     mask_bad = ~mask_good
-    loss_mean = model.evaluate(ds, steps=steps)
-    loss_total = steps * loss_mean
-    obj_per_elt = -loss_total / batch_size
-
+    
     # Get scores on the whole data set
     pred = model.predict(ds, steps=steps)
     elts, R, u_pred, z, scores_all = pred
@@ -500,6 +582,13 @@ def report_model(model, R_deg, mask_good, batch_size, steps, elts_true, display=
     elts = elts[0:batch_size]
     R = R[0:batch_size]
     u_pred = u_pred[0:batch_size]
+
+    # Model to predict position from elements
+    ts = model.direction.ts
+    model_pos = make_model_ast_pos(ts=ts, batch_size=batch_size)
+
+    # Difference between predicted and true trajectory in Kepler 2 body model
+    traj_err = traj_diff(elts, elts_true, model_pos)
 
     # Consolidate the scores; create 2 extra columns for sigma and t_score
     scores = np.zeros((batch_size, score_cols+2))
@@ -522,10 +611,6 @@ def report_model(model, R_deg, mask_good, batch_size, steps, elts_true, display=
     scores[:, 4] = sigma
     scores[:, 5] = t_score
     
-    # Change in resolution
-    # R0 = tf.ones_like(R) * np.deg2rad(R_deg)
-    # d_R = R - R0
-
     # Error in orbital elements
     elt_err = np.abs(elts - elts_true)
     # Convert angles from radians to degrees
@@ -537,61 +622,100 @@ def report_model(model, R_deg, mask_good, batch_size, steps, elts_true, display=
     mean_err_b = np.mean(elt_err_b[0:6], axis=0)
 
     if display:
+        # Report trajectory error
+        report_model_attribute(traj_err, mask_good, 'Trajectory Error (AU) vs. True Elements')
+
         # Report errors in orbital elements
-        # print(f'\nMean Loss per batch =  {loss_mean:8.0f}')
-        print(f'\nMean Objective per elt = {obj_per_elt:8.0f}')
         print('\nError in orbital elements:')
+        print(f'(Angles shown in degrees)')
         print('      a          e         inc       Omega      omega     f')
-        print(f'Good: {mean_err_g[0]:5.2e},  {mean_err_g[1]:5.2e}, {mean_err_g[2]:5.2e}, '
-              f'{mean_err_g[3]:5.2e},  {mean_err_g[4]:5.2e}, {mean_err_g[5]:5.2e}, ')
-        print(f'Bad : {mean_err_b[0]:5.2e},  {mean_err_b[1]:5.2e}, {mean_err_b[2]:5.2e}, '
-              f'{mean_err_b[3]:5.2e},  {mean_err_b[4]:5.2e}, {mean_err_b[5]:5.2e}, ')
+        print(f'Good: {mean_err_g[0]:8.6f},  {mean_err_g[1]:8.6f}, {mean_err_g[2]:8.6f}, '
+              f'{mean_err_g[3]:8.6f},  {mean_err_g[4]:8.6f}, {mean_err_g[5]:8.6f}, ')
+        print(f'Bad : {mean_err_b[0]:8.6f},  {mean_err_b[1]:8.6f}, {mean_err_b[2]:8.6f}, '
+              f'{mean_err_b[3]:8.6f},  {mean_err_b[4]:8.6f}, {mean_err_b[5]:8.6f}, ')
     
         # Report effective observations, mu, sigma, and t_score    
-        # report_model_attribute(raw_score, mask_good, 'Raw Score')
-        # report_model_attribute(mu, mask_good, 'Mu')
+        report_model_attribute(raw_score, mask_good, 'Raw Score')
+        report_model_attribute(mu, mask_good, 'Mu')
         report_model_attribute(eff_obs, mask_good, 'Effective Observations')
-        # report_model_attribute(sigma, mask_good, 'Sigma')
+        report_model_attribute(sigma, mask_good, 'Sigma')
         report_model_attribute(t_score, mask_good, 't_score')
         report_model_attribute(objective, mask_good, 'Objective Function')
-        # report_model_attribute(d_R, mask_good, 'Change in resolution R')
+        report_model_attribute(R, mask_good, 'Resolution R')
 
-    return scores, elt_err
+    return scores, traj_err, elt_err
 
 # ********************************************************************************************************************* 
-def report_training_progress(d_scores, d_elt_err, d_R):
+def report_training_progress(scores_01, traj_err_01, elt_err_01, R_01):
     """Report progress while model trained"""
-    # Unpack change in scores
-    d_raw_score = d_scores[:,0]
-    d_mu = d_scores[:, 1]
-    # d_sigma2 = d_scores[:,2]
-    d_objective = d_scores[:, 3]
-    # d_sigma = d_scores[:, 4]
-    d_t_score = d_scores[:,5]
-
-    # Calculations
-    d_eff_obs = d_raw_score - d_mu
-
-    # report_model_attribute(d_raw_score, mask_good, 'Change in Raw Score')
-    report_model_attribute(d_eff_obs, mask_good, 'Change in Effective Observations')
-    report_model_attribute(d_t_score, mask_good, 'Change in t_score')
-    report_model_attribute(d_objective, mask_good, 'Change in Objective Function')
-    report_model_attribute(np.rad2deg(d_R), mask_good, 'Change in resolution R (degrees)')
-
-    # Convert angles from radians to degrees
-    d_elt_err[:, 2:6] = np.rad2deg(d_elt_err[:, 2:6])
-    # Changes in element errors and R
-    d_err_g = np.mean(d_elt_err[mask_good], axis=0)
-    d_err_b = np.mean(d_elt_err[mask_bad], axis=0)
     
+    # Unpack inputs pairs
+    scores0, scores1 = scores_01
+    traj_err0, traj_err1 = traj_err_01
+    elt_err0, elt_err1 = elt_err_01
+    R0, R1, = R_01
+
+    # Unpack score components
+    raw_score0 = scores0[:,0]
+    raw_score1 = scores1[:,0]
+    mu0 = scores0[:,1]
+    mu1 = scores1[:,1]
+    sigma0 = scores0[:,2]
+    sigma1 = scores1[:,2]
+    objective0 = scores0[:,3]
+    objective1 = scores1[:,3]
+    t_score0 = scores0[:,5]
+    t_score1 = scores1[:,5]
+    
+    # Calculations
+    eff_obs0 = raw_score0 - mu0
+    eff_obs1 = raw_score1 - mu1
+
+    # Changes in trajectory errors
+    report_model_attribute_change(traj_err0, traj_err1, mask_good, 'Trajectory Error (AU)', dp=6)
+    report_model_attribute_change(raw_score0, raw_score1, mask_good, 'Raw Score', dp=0)
+    report_model_attribute_change(mu0, mu1, mask_good, 'Mu', dp=0)
+    report_model_attribute_change(eff_obs0, eff_obs1, mask_good, 'Effective Observations', dp=0)
+    report_model_attribute_change(sigma0, sigma1, mask_good, 'Sigma Squared', dp=0)
+    report_model_attribute_change(t_score0, t_score1, mask_good, 't-score', dp=1)
+    report_model_attribute_change(objective0, objective1, mask_good, 'Objective Function', dp=0)
+    report_model_attribute_change(np.rad2deg(R0), np.rad2deg(R1), mask_good, 'Resolution R (degrees)', dp=4)
+    
+    # Unpack element errors
+    err_a0 = elt_err0[:,0]
+    err_a1 = elt_err1[:,0]
+    err_e0 = elt_err0[:,1]
+    err_e1 = elt_err1[:,1]
+    err_inc0 = elt_err0[:,2]
+    err_inc1 = elt_err1[:,2]
+    # err_Omega0 = elt_err0[:,3]
+    # err_Omega1 = elt_err1[:,3]
+    # err_omega0 = elt_err0[:,4]
+    # err_omega1 = elt_err1[:,4]
+    err_f0 = elt_err0[:,5]
+    err_f1 = elt_err1[:,5]
+    
+    # Report element errors
+    report_model_attribute_change(err_a0, err_a1, mask_good, 'Error in a', dp=6)
+    report_model_attribute_change(err_e0, err_e1, mask_good, 'Error in e', dp=6)
+    report_model_attribute_change(err_f0, err_f1, mask_good, 'Error in f', dp=6)
+    
+    # Changes in element errors
+    d_elt_err_g = np.mean(d_elt_err[mask_good], axis=0)
+    d_elt_err_b = np.mean(d_elt_err[mask_bad], axis=0)
+
     print(f'\nChange in Orbital Element error by Category:')
+    print(f'(Angles shown in degrees)')
     print('          a           e         inc         Omega       omega      f')
-    print(f'd_err_g: {d_err_g[0]:+5.2e},  {d_err_g[1]:+5.2e}, {d_err_g[2]:+5.2e}, '
-          f'{d_err_g[3]:+5.2e},  {d_err_g[4]:+5.2e}, {d_err_g[5]:+5.2e}, ')
-    print(f'd_err_b: {d_err_b[0]:+5.2e},  {d_err_b[1]:+5.2e}, {d_err_b[2]:+5.2e}, '
-          f'{d_err_b[3]:+5.2e},  {d_err_b[4]:+5.2e}, {d_err_b[5]:+5.2e}, ')
+    print(f'd_err_g: {d_elt_err_g[0]:+8.6f},  {d_elt_err_g[1]:+8.6f}, {d_elt_err_g[2]:+8.6f}, '
+          f'{d_elt_err_g[3]:+8.6f},  {d_elt_err_g[4]:+8.6f}, {d_elt_err_g[5]:+8.6f}, ')
+    print(f'd_err_b: {d_elt_err_b[0]:+8.6f},  {d_elt_err_b[1]:+8.6f}, {d_elt_err_b[2]:+8.6f}, '
+          f'{d_elt_err_b[3]:+8.6f},  {d_elt_err_b[4]:+8.6f}, {d_elt_err_b[5]:+8.6f}, ')
 
 # ********************************************************************************************************************* 
+def main():
+    pass
+
 # Dataset of observations: synthetic data on first 1000 asteroids
 
 # Build the dataset
@@ -600,7 +724,6 @@ n1: int = 100
 dt0: datetime = datetime(2000,1,1)
 dt1: datetime = datetime(2019,1,1)
 time_batch_size = 128
-# time_batch_size = 6941
 ds, ts, row_len = make_synthetic_obs_dataset(n0=n0, n1=n1, dt0=dt0, dt1=dt1, batch_size=time_batch_size)
 # Trajectory size and steps per batch
 traj_size = ts.shape[0]
@@ -619,11 +742,12 @@ traj_size: int = ts.shape[0]
 max_obs: int = u_obs.shape[1]
 num_obs: float = np.sum(row_len, dtype=np.float32)
 
-# Build functional model for asteroid score
-R_deg: float = 5.0
+# Batch of perturbed orbital elements for asteroid model
+R_deg: float = 2.0
 elts_np = orbital_element_batch(1)
 epoch = elts_np['epoch'][0]
 elt_batch_size = 64
+
 # The correct orbital elements as an array
 elts_true = np.array([elts_np['a'], elts_np['e'], elts_np['inc'], elts_np['Omega'], 
                       elts_np['omega'], elts_np['f'], elts_np['epoch']]).transpose()
@@ -632,172 +756,221 @@ elts_true = np.array([elts_np['a'], elts_np['e'], elts_np['inc'], elts_np['Omega
 mask_good = np.arange(64) < 32
 mask_bad = ~mask_good
 # Perturb second half of orbital elements
-# elts_np2 = perturb_elts(elts_np, sigma_a=0.05, sigma_e=0.10, sigma_f_deg=5.0, mask=mask_bad)
-elts_np2 = perturb_elts(elts_np, sigma_a=0.00, sigma_e=0.00, sigma_f_deg=5.0, mask=mask_bad)
+# elts_np2 = perturb_elts(elts_np, sigma_a=0.00, sigma_e=0.00, sigma_f_deg=2.0, mask=mask_bad)
+elts_np2 = perturb_elts(elts_np, sigma_a=0.05, sigma_e=0.05, sigma_f_deg=5.0, mask=mask_bad)
 
 # Orbits for calibration
 if 'q_cal' not in globals():
     print(f'Numerically integrating calibration trajectories q_cal...')
-    q_cal = calc_ast_pos(elts=elts_np, epoch=epoch, ts=ts)
+    q_cal = calc_ast_pos(elts=elts_np2, epoch=epoch, ts=ts)
+# q_cal = None
 
-# Initialize model with perturbed orbital elements
-model = make_model_asteroid_search(ts=ts,
-                                   elts_np=elts_np2,
-                                   max_obs=max_obs,
-                                   num_obs=num_obs,
-                                   elt_batch_size=elt_batch_size, 
-                                   time_batch_size=time_batch_size,
-                                   R_deg = R_deg,
-                                   q_cal=q_cal)
+# Set calibration flag
+use_calibration: bool = True
+
+# Alpha and beta parameters for the objective function
+alpha = 8.0
+beta = 20.0
+
+# Build functional model for asteroid score
+model = make_model_asteroid_search(\
+    ts=ts, elts_np=elts_np2, max_obs=max_obs, num_obs=num_obs,
+    elt_batch_size=elt_batch_size, time_batch_size=time_batch_size,
+    R_deg=R_deg, alpha=alpha, beta=beta, q_cal=q_cal, use_calibration=use_calibration)
+
 # Use Adam optimizer with gradient clipping
-# opt = keras.optimizers.Adam(learning_rate=1.0e-6, epsilon=1.0, amsgrad=True, clipvalue=1.0, )
-opt = keras.optimizers.Adam(learning_rate=1.0e-4, beta_1=0.900, beta_2=0.999,
+learning_rate = 1.0e-4
+clipvalue = 5.0
+opt = keras.optimizers.Adam(learning_rate=learning_rate, 
+                            beta_1=0.900, 
+                            beta_2=0.999,
                             epsilon=1.0E-7, 
-                            clipvalue=5.0, 
+                            clipvalue=clipvalue, 
                             amsgrad=False)
 model.compile(optimizer=opt)
 
-# Clone model before training
-model0 = make_model_asteroid_search(ts=ts,
-                                    elts_np=elts_np2,
-                                    max_obs=max_obs,
-                                    num_obs=num_obs,
-                                    elt_batch_size=elt_batch_size, 
-                                    time_batch_size=time_batch_size,
-                                    R_deg = R_deg,
-                                    q_cal=q_cal)
-model0.compile(optimizer=opt)
-
-# Set display for report_model
-display = True
+display = False
 
 # Report losses before training
 print(f'Processed first {n1} asteroids; seeded with first 64. Perturbed 33-65.')
-print(f'\nModel before training:')
-# loss0 = model.evaluate(ds, steps=steps)
+if display:
+    print_header('Model Before Training:')
 pred0 = model.predict_on_batch(ds)
 elts0, R0, u_pred0, z0, _ = pred0
-scores0, elt_err0 = report_model(model=model, R_deg=R_deg, mask_good=mask_good, 
-                                 batch_size=elt_batch_size, steps=steps, elts_true=elts_true, display=display)
-
-# Get gradients on entire data set
-with tf.GradientTape(persistent=True) as gt:
-    gt.watch([model.elements.e_, model.elements.inc_, model.elements.R_])
-    pred = model.predict_on_batch(ds.take(traj_size))
-    # pred = model.predict_on_batch(ds.take(traj_size))
-    elts, R, u_pred, z, scores = pred
-    raw_score = scores[:, 0]
-    mu = scores[:, 1]
-    sigma2 = scores[:, 2]
-    objective = scores[:, 3]
-    loss = tf.reduce_sum(-objective)
-dL_da = gt.gradient(loss, model.elements.a_) / steps
-dL_de = gt.gradient(loss, model.elements.e_) / steps
-dL_dinc = gt.gradient(loss, model.elements.inc_) / steps
-dL_dOmega = gt.gradient(loss, model.elements.Omega_) / steps
-dL_domega = gt.gradient(loss, model.elements.omega_) / steps
-dL_df = gt.gradient(loss, model.elements.f_) / steps
-dL_dR = gt.gradient(loss, model.elements.R_) / steps
-del gt
+scores0, traj_err0, elt_err0 = \
+    report_model(model=model, R_deg=R_deg, mask_good=mask_good, 
+                 batch_size=elt_batch_size, steps=steps, elts_true=elts_true, display=display)
 
 # Train model
-step_multiplier = 10
+step_multiplier = 5
 steps_per_epoch = steps*step_multiplier
-epochs = 10
+rows_per_epoch = steps_per_epoch * time_batch_size
+epochs = 20
+print_header(f'Training for {epochs} Epochs of Size {rows_per_epoch} Observation Days...')
+print(f'alpha:         {alpha:5.1f}')
+print(f'beta:          {beta:5.1f}')
+print(f'R (degrees):   {R_deg:5.1f}')
+print(f'learning_rate:   {learning_rate:5.2e}')
+print(f'clipvalue:      {clipvalue:5.2f}')
+
+train_time_0 = time.time()
 hist = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
-pred = model.predict_on_batch(ds)
-elts, R, u_pred, z, scores = pred
-# elt_err = np.abs(elts - elts_true)
+train_time_1 = time.time()
+train_time = train_time_1 - train_time_0
+print(f'Elapsed Time: {str(timedelta(seconds=train_time))}')
 
 # Report results
-print(f'\nModel after training:')
-scores, elt_err = report_model(model=model, R_deg=R_deg, mask_good=mask_good, 
-                               batch_size=elt_batch_size, steps=steps, elts_true=elts_true, display=display)
+if display:
+    print_header('Model After Training:')
+pred1 = model.predict_on_batch(ds)
+elts1, R1, u_pred1, z1, _ = pred1
+scores1, traj_err1, elt_err1 = \
+    report_model(model=model, R_deg=R_deg, mask_good=mask_good, 
+                 batch_size=elt_batch_size, steps=steps, elts_true=elts_true, display=display)
+
 # Unpack scores after training
-raw_score = scores[:,0]
-mu = scores[:,1]
-sigma2 = scores[:,2]
-objective = scores[:,3]
-sigma = scores[:, 4]
-t_score = scores[:, 5]
+raw_score = scores1[:,0]
+mu = scores1[:,1]
+sigma2 = scores1[:,2]
+objective = scores1[:,3]
+sigma = scores1[:, 4]
+t_score = scores1[:, 5]
 eff_obs = raw_score - mu
 
 ## Change in scores
-d_scores = scores - scores0
-d_elt_err = elt_err - elt_err0
-d_R = R - R0
-# d_objective = d_scores[:,3]
+d_scores = scores1 - scores0
+d_traj_err = traj_err1 - traj_err0
+d_elt_err = elt_err1 - elt_err0
+d_R = R1 - R0
 
 # Report training progress: scores, orbital element errors, and resolution
-print(f'\nProgress during training:')
-report_training_progress(d_scores, d_elt_err, d_R)
+print_header('Progress During Training:')
+# report_training_progress(d_scores, d_traj_err, d_elt_err, d_R)
+scores_01 = (scores0, scores1)
+traj_err_01 = (traj_err0, traj_err1)
+elt_err_01 = (elt_err0, elt_err1)
+R_01 = (R0, R1)
+# report_training_progress(d_scores, d_traj_err, d_elt_err, d_R)
+report_training_progress(scores_01, traj_err_01, elt_err_01, R_01)
 
-# Initial elements
-a0 = elts_np2['a']
-f0 = elts_np2['f']
-# Current elements
-a1 = model.elements.get_a()
-f1 = model.elements.get_f()
-# True elements
-a_true = elts_true[:,0]
-f_true = elts_true[:, 5]
-# change in a during training
-da = a1 - a0
-df = f1 - f0
-# the change we want to learn
-goal_a = a_true - a0
-goal_f = f_true - f0
+# ********************************************************************************************************************* 
+if __name__ == '__main__':
+    main()
 
-# Known asteroid numbers
-ast_num = batch_out['ast_num']
 
-# unpack elements
-a = elts[:,0]
-e = elts[:,1]
-inc = elts[:,2]
-Omega = elts[:,3]
-omega = elts[:,4]
-f = elts[:,5]
-epoch = elts[:,6]
-# inputs to model
-# t, idx, row_len, u_obs
-
-# direction
-
-# calculation of 
-
-## score calculation in gradient tape
-#with tf.GradientTape(persistent=True) as gt:
-#    gt.watch([a, e, R])
-#    u_pred_ = model.direction(a, e, inc, Omega, omega, f, epoch)
-#    A = 1.0 / R**2
-#    B = tf.reshape(-0.5 * A, (64, 1, 1,))
-#    gt.watch([A])
-#    z_ = model.dir_diff(u_obs, u_pred_, idx)
-#    z2_ = tf.square(tf.linalg.norm(z_, axis=-1))
-#    arg = tf.multiply(B, z2_)
-#    # K.sum(z_*z_, axis=(2,3)).shape
-#    # raw_scores = tf.exp(arg)
-#    is_close = arg > -10
-#    close_idx = tf.where(is_close)
-#    raw_scores = tf.scatter_nd(indices=close_idx, updates=tf.exp(arg[is_close]), shape=arg.shape)
-#    # scores of asteroid 1 by date
-#    scores_ast1 = K.sum(raw_scores[0], axis=(1))
-#    # raw score by asteroid
-#    raw_score = K.sum(tf.exp(arg), axis=(1,2))
-#
-#    mu_per_obs = score_mean(A)
-#    mu = tf.multiply(num_obs, mu_per_obs, name='mu')
+#    # Get gradients on entire data set
+#    with tf.GradientTape(persistent=True) as gt:
+#        gt.watch([model.elements.e_, model.elements.inc_, model.elements.R_])
+#        pred = model.predict_on_batch(ds.take(traj_size))
+#        # pred = model.predict_on_batch(ds.take(traj_size))
+#        elts, R, u_pred, z, scores = pred
+#        # unpack elements
+#        a = elts[:,0]
+#        e = elts[:,1]
+#        inc = elts[:,2]
+#        Omega = elts[:,3]
+#        omega = elts[:,4]
+#        f = elts[:,5]
+#        epoch = elts[:,6]
+#        # unpack scores
+#        raw_score = scores[:, 0]
+#        mu = scores[:, 1]
+#        sigma2 = scores[:, 2]
+#        objective = scores[:, 3]
+#        # total loss function
+#        loss = tf.reduce_sum(-objective)
 #    
-#    # The expected variance; use the 2D (plane) estimate
-#    var_per_obs = score_var(A)
-#    sigma2 = tf.multiply(num_obs, var_per_obs, name='sigma2')
+#    # Derivatives of elements w.r.t. control variables
+#    da_da_ = gt.gradient(a, model.elements.a_)
+#    de_de_ = gt.gradient(e, model.elements.e_)
+#    dinc_dinc_ = gt.gradient(inc, model.elements.inc_)
+#    dOmega_dOmega_ = gt.gradient(Omega, model.elements.Omega_)
+#    domega_domega_ = gt.gradient(omega, model.elements.omega_)
+#    df_df_ = gt.gradient(f, model.elements.f_)
 #    
-#    # objective function
-#    alpha = 1.0
-#    beta = 0.0
-#    objective = raw_score - alpha * mu - beta * sigma2
+#    # Derivatives of loss w.r.t. control variables for elements and R
+#    dL_da = gt.gradient(loss, model.elements.a_) / steps
+#    dL_de = gt.gradient(loss, model.elements.e_) / steps
+#    dL_dinc = gt.gradient(loss, model.elements.inc_) / steps
+#    dL_dOmega = gt.gradient(loss, model.elements.Omega_) / steps
+#    dL_domega = gt.gradient(loss, model.elements.omega_) / steps
+#    dL_df = gt.gradient(loss, model.elements.f_) / steps
+#    dL_dR = gt.gradient(loss, model.elements.R_) / steps
+#    del gt
+
+
+#    # Initial elements
+#    a0 = elts_np2['a']
+#    e0 = elts_np2['e']
+#    inc0 = elts_np2['inc']
+#    Omega0 = elts_np2['Omega']
+#    omega0 = elts_np2['omega']
+#    f0 = elts_np2['f']
 #    
-#    # gradients
-#    df_da = gt.gradient(objective, a)
-#    df_dR = gt.gradient(objective, R)
+#    # Current elements
+#    #a1 = model.elements.get_a()
+#    #e1 = model.elements.get_e()
+#    #inc1 = model.elements.get_inc()
+#    #Omega1 = model.elements.get_Omega()
+#    #omega1 = model.elements.get_omega()
+#    #f1 = model.elements.get_f()
+#    a1 = a
+#    e1 = e
+#    inc1 = inc
+#    Omega1 = Omega
+#    omega1 = omega
+#    f1 = f
+#    
+#    # True elements
+#    a_true = elts_true[:, 0]
+#    e_true = elts_true[:, 1]
+#    inc_true = elts_true[:, 2]
+#    Omega_true = elts_true[:, 3]
+#    omega_true = elts_true[:, 4]
+#    f_true = elts_true[:, 5]
+#    
+#    # change in a during training
+#    da = a1 - a0
+#    df = f1 - f0
+#    # the change we want to learn
+#    goal_a = a_true - a0
+#    goal_f = f_true - f0
+#    
+#    # Known asteroid numbers
+#    ast_num = batch_out['ast_num']
+
+#    ## score calculation in gradient tape
+#    with tf.GradientTape(persistent=True) as gt:
+#        gt.watch([a, e, R])
+#        u_pred_ = model.direction(a, e, inc, Omega, omega, f, epoch)
+#        A = 1.0 / R**2
+#        B = tf.reshape(-0.5 * A, (64, 1, 1,))
+#        gt.watch([A])
+#        z_ = model.dir_diff(u_obs, u_pred_, idx)
+#        z2_ = tf.square(tf.linalg.norm(z_, axis=-1))
+#        arg = tf.multiply(B, z2_)
+#        # K.sum(z_*z_, axis=(2,3)).shape
+#        # raw_scores = tf.exp(arg)
+#        is_close = arg > -10
+#        close_idx = tf.where(is_close)
+#        raw_scores = tf.scatter_nd(indices=close_idx, updates=tf.exp(arg[is_close]), shape=arg.shape)
+#        # raw_scores = tf.exp(arg)
+#        # scores of asteroid 1 by date
+#        scores_ast1 = raw_scores[0]
+#        # scores_ast1 = K.sum(raw_scores[0], axis=(1))
+#        # raw score by asteroid
+#        raw_score = K.sum(tf.exp(arg), axis=(1,2))
+#    
+#        mu_per_obs = score_mean(A)
+#        mu = tf.multiply(num_obs, mu_per_obs, name='mu')
+#        
+#        # The expected variance; use the 2D (plane) estimate
+#        var_per_obs = score_var(A)
+#        sigma2 = tf.multiply(num_obs, var_per_obs, name='sigma2')
+#        
+#        # objective function
+#        objective = raw_score - alpha * mu - beta * sigma2
+#        
+#        # gradients
+#        df_da = gt.gradient(objective, a)
+#        df_dR = gt.gradient(objective, R)

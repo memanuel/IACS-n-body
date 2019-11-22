@@ -165,9 +165,9 @@ class AsteroidPosition(keras.layers.Layer):
         }
 
         # Get trajectory size from ts
+        self.ts = ts
         self.traj_size = ts.shape[0]
         self.batch_size = batch_size
-        # self.ts = ts
 
         # Reshape ts to (batch_size, traj_size, 1)
         target_shape = (-1, 1)
@@ -310,6 +310,7 @@ class AsteroidDirection(keras.layers.Layer):
             'ts': ts,
             'batch_size': batch_size,
         }
+        self.ts = ts
         
         # Build layer to compute positions
         self.q_layer = AsteroidPosition(ts=ts, batch_size=batch_size, name='q_ast')
