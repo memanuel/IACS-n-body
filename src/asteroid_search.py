@@ -420,6 +420,8 @@ def make_model_asteroid_search(ts: tf.Tensor,
     # Add the loss function
     model.add_loss(-tf.reduce_sum(objective))
     # model.add_loss(-tf.reduce_sum(tf.math.log(objective-objective_min)))
+    
+    
 
     return model
 
@@ -696,9 +698,10 @@ def report_training_progress(scores_01, traj_err_01, elt_err_01, R_01):
     err_f1 = elt_err1[:,5]
     
     # Report element errors
-    report_model_attribute_change(err_a0, err_a1, mask_good, 'Error in a', dp=6)
-    report_model_attribute_change(err_e0, err_e1, mask_good, 'Error in e', dp=6)
-    report_model_attribute_change(err_f0, err_f1, mask_good, 'Error in f', dp=6)
+    report_model_attribute_change(err_a0, err_a1, mask_good, 'Error in semi-major axis, a', dp=6)
+    report_model_attribute_change(err_e0, err_e1, mask_good, 'Error in eccentricity, e', dp=6)
+    report_model_attribute_change(err_inc0, err_inc1, mask_good, 'Error in inclination, inc', dp=6)
+    report_model_attribute_change(err_f0, err_f1, mask_good, 'Error in true anomaly, f', dp=6)
     
     # Changes in element errors
     d_elt_err_g = np.mean(d_elt_err[mask_good], axis=0)
@@ -779,7 +782,7 @@ model = make_model_asteroid_search(\
     R_deg=R_deg, alpha=alpha, beta=beta, q_cal=q_cal, use_calibration=use_calibration)
 
 # Use Adam optimizer with gradient clipping
-learning_rate = 1.0e-4
+learning_rate = 2.0e-5
 clipvalue = 5.0
 opt = keras.optimizers.Adam(learning_rate=learning_rate, 
                             beta_1=0.900, 
@@ -800,6 +803,45 @@ elts0, R0, u_pred0, z0, _ = pred0
 scores0, traj_err0, elt_err0 = \
     report_model(model=model, R_deg=R_deg, mask_good=mask_good, 
                  batch_size=elt_batch_size, steps=steps, elts_true=elts_true, display=display)
+
+# Get intital gradients on entire data set
+with tf.GradientTape(persistent=True) as gt:
+    gt.watch([model.elements.e_, model.elements.inc_, model.elements.R_])
+    pred = model.predict_on_batch(ds.take(traj_size))
+    elts, R, u_pred, z, scores = pred
+    # unpack elements
+    a = elts[:,0]
+    e = elts[:,1]
+    inc = elts[:,2]
+    Omega = elts[:,3]
+    omega = elts[:,4]
+    f = elts[:,5]
+    epoch = elts[:,6]
+    # unpack scores
+    raw_score = scores[:, 0]
+    mu = scores[:, 1]
+    sigma2 = scores[:, 2]
+    objective = scores[:, 3]
+    # total loss function
+    loss = tf.reduce_sum(-objective)
+
+#    # Derivatives of elements w.r.t. control variables
+#    da_da_ = gt.gradient(a, model.elements.a_)
+#    de_de_ = gt.gradient(e, model.elements.e_)
+#    dinc_dinc_ = gt.gradient(inc, model.elements.inc_)
+#    dOmega_dOmega_ = gt.gradient(Omega, model.elements.Omega_)
+#    domega_domega_ = gt.gradient(omega, model.elements.omega_)
+#    df_df_ = gt.gradient(f, model.elements.f_)
+
+# Derivatives of loss w.r.t. control variables for elements and R
+dL_da = gt.gradient(loss, model.elements.a_) / steps
+dL_de = gt.gradient(loss, model.elements.e_) / steps
+dL_dinc = gt.gradient(loss, model.elements.inc_) / steps
+dL_dOmega = gt.gradient(loss, model.elements.Omega_) / steps
+dL_domega = gt.gradient(loss, model.elements.omega_) / steps
+dL_df = gt.gradient(loss, model.elements.f_) / steps
+dL_dR = gt.gradient(loss, model.elements.R_) / steps
+del gt
 
 # Train model
 step_multiplier = 5
@@ -858,45 +900,6 @@ if __name__ == '__main__':
     main()
 
 
-#    # Get gradients on entire data set
-#    with tf.GradientTape(persistent=True) as gt:
-#        gt.watch([model.elements.e_, model.elements.inc_, model.elements.R_])
-#        pred = model.predict_on_batch(ds.take(traj_size))
-#        # pred = model.predict_on_batch(ds.take(traj_size))
-#        elts, R, u_pred, z, scores = pred
-#        # unpack elements
-#        a = elts[:,0]
-#        e = elts[:,1]
-#        inc = elts[:,2]
-#        Omega = elts[:,3]
-#        omega = elts[:,4]
-#        f = elts[:,5]
-#        epoch = elts[:,6]
-#        # unpack scores
-#        raw_score = scores[:, 0]
-#        mu = scores[:, 1]
-#        sigma2 = scores[:, 2]
-#        objective = scores[:, 3]
-#        # total loss function
-#        loss = tf.reduce_sum(-objective)
-#    
-#    # Derivatives of elements w.r.t. control variables
-#    da_da_ = gt.gradient(a, model.elements.a_)
-#    de_de_ = gt.gradient(e, model.elements.e_)
-#    dinc_dinc_ = gt.gradient(inc, model.elements.inc_)
-#    dOmega_dOmega_ = gt.gradient(Omega, model.elements.Omega_)
-#    domega_domega_ = gt.gradient(omega, model.elements.omega_)
-#    df_df_ = gt.gradient(f, model.elements.f_)
-#    
-#    # Derivatives of loss w.r.t. control variables for elements and R
-#    dL_da = gt.gradient(loss, model.elements.a_) / steps
-#    dL_de = gt.gradient(loss, model.elements.e_) / steps
-#    dL_dinc = gt.gradient(loss, model.elements.inc_) / steps
-#    dL_dOmega = gt.gradient(loss, model.elements.Omega_) / steps
-#    dL_domega = gt.gradient(loss, model.elements.omega_) / steps
-#    dL_df = gt.gradient(loss, model.elements.f_) / steps
-#    dL_dR = gt.gradient(loss, model.elements.R_) / steps
-#    del gt
 
 
 #    # Initial elements
