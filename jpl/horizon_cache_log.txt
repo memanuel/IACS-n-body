@@ -1,0 +1,47 @@
+$ python planets.py
+Loaded Horizons cache.
+Searching NASA Horizons for 'Sun'... Found: Sun (10).
+Searching NASA Horizons for '199'... Found: Mercury (199).
+Searching NASA Horizons for '299'... Found: Venus (299).
+Searching NASA Horizons for '399'... Found: Earth (399).
+Searching NASA Horizons for '301'... Found: Moon (301).
+Searching NASA Horizons for '599'... Found: Jupiter (599).
+Searching NASA Horizons for 'Io'... Found: Io (501).
+Searching NASA Horizons for 'Europa'... Found: Europa (502).
+Searching NASA Horizons for 'Ganymede'... Found: Ganymede (503).
+Searching NASA Horizons for 'Callisto'... Found: Callisto (504).
+Searching NASA Horizons for '699'... Found: Saturn (699).
+Searching NASA Horizons for 'Mimas'... Found: Mimas (601).
+Searching NASA Horizons for 'Enceladus'... Found: Enceladus (602).
+Searching NASA Horizons for 'Tethys'... Found: Tethys (603).
+Searching NASA Horizons for 'Dione'... Found: Dione (604).
+Searching NASA Horizons for 'Rhea'... Found: Rhea (605).
+Searching NASA Horizons for 'Titan'... Found: Titan (606).
+Searching NASA Horizons for 'Iapetus'... Found: Iapetus (608).
+Searching NASA Horizons for 'Phoebe'... Found: Phoebe (609).
+Searching NASA Horizons for '799'... Found: Uranus (799).
+Searching NASA Horizons for 'Ariel'... Found: Ariel (701).
+Searching NASA Horizons for 'Umbriel'... Found: Umbriel (702).
+Searching NASA Horizons for 'Titania'... Found: Titania (703).
+Searching NASA Horizons for 'Oberon'... Found: Oberon (704).
+Searching NASA Horizons for 'Miranda'... Found: Miranda (705).
+Searching NASA Horizons for '899'... Found: Neptune (899).
+Searching NASA Horizons for 'Triton'... Found: Triton (801).
+Searching NASA Horizons for 'Proteus'... Found: Proteus (808).
+Searching NASA Horizons for '999'... Found: Pluto (999).
+Searching NASA Horizons for 'Charon'... Found: Charon (901).
+Searching NASA Horizons for 'Ceres'... Searching NASA Horizons for 'Proteus'... Found: 1 Ceres.
+Searching NASA Horizons for 'Pallas'... Found: 2 Pallas.
+Searching NASA Horizons for 'Vesta'... Found: 4 Vesta.
+Searching NASA Horizons for 'Hygiea'... Found: 10 Hygiea.
+Searching NASA Horizons for 'Varuna'... Found: 20000 Varuna (2000 WR106).
+Searching NASA Horizons for 'Quaoar'... Found: 50000 Quaoar (2002 LM60).
+Searching NASA Horizons for '2002 UX25'... Found: 55637 (2002 UX25).
+Searching NASA Horizons for 'Orcus'... Found: 90482 Orcus (2004 DW).
+Searching NASA Horizons for 'Salacia'... Found: 120347 Salacia (2004 SB60).
+Searching NASA Horizons for 'Haumea'... Found: 136108 Haumea (2003 EL61).
+Searching NASA Horizons for 'Eris'... Found: 136199 Eris (2003 UB313).
+Searching NASA Horizons for 'Makemake'... Found: 136472 Makemake (2005 FY9).
+Searching NASA Horizons for 'Varda'... Found: 174567 Varda (2003 MW12).
+Searching NASA Horizons for '2007 OR10'... Found: 225088 (2007 OR10).
+Searching NASA Horizons for '229762'... Found: 229762 G!kun||'homdima (2007 UK1.
